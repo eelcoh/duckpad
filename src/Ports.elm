@@ -1,4 +1,4 @@
-port module Ports exposing (dbReady, dropTable, materialize, queryOutcome)
+port module Ports exposing (dbReady, dropTable, fileOpened, materialize, persist, queryOutcome, requestOpen, requestSave)
 
 import Json.Decode as D
 
@@ -25,3 +25,19 @@ port queryOutcome : (D.Value -> msg) -> Sub msg
 
 
 port dbReady : (D.Value -> msg) -> Sub msg
+
+
+{-| Keep the current buffer in browser storage so a reload does not lose work.
+This is a safety net, not the document: the file the user saves is the
+document.
+-}
+port persist : String -> Cmd msg
+
+
+port requestSave : { name : String, content : String } -> Cmd msg
+
+
+port requestOpen : () -> Cmd msg
+
+
+port fileOpened : (D.Value -> msg) -> Sub msg

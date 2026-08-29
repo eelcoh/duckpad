@@ -18,10 +18,11 @@ import Dsl.Check exposing (Cardinality(..))
 import Dsl.Compile exposing (Compiled)
 import Dsl.Schema as Schema exposing (Schema, Type(..))
 import Engine exposing (CellState)
-import Html exposing (Html, button, details, div, h1, input, li, p, pre, section, span, summary, table, tbody, td, text, textarea, th, thead, tr, ul)
+import Html exposing (Html, button, details, div, input, p, pre, section, span, summary, table, tbody, td, text, textarea, th, thead, tr)
 import Html.Attributes exposing (class, classList, disabled, placeholder, rows, title, value)
 import Html.Events exposing (onBlur, onClick, onInput)
 import Json.Decode as D
+import Notebook exposing (Notebook)
 import Ports
 import Query exposing (Outcome(..), Table)
 import Set
@@ -32,14 +33,20 @@ import Time
 -- MODEL
 
 
+type alias Flags =
+    { saved : Maybe String }
+
+
 type alias Model =
-    { cells : List Cell
+    { title : String
+    , cells : List Cell
     , states : Dict String CellState
     , baseSchema : Schema
     , queue : List String
     , current : Maybe String
     , db : DbStatus
     , nextId : Int
+    , notice : Maybe String
     }
 
 
@@ -58,9 +65,14 @@ type Msg
     | AddCell Kind
     | DeleteCell String
     | RunAll
+    | TitleEdited String
+    | SaveFile
+    | OpenFile
+    | FileOpened D.Value
+    | DismissNotice
 
 
-main : Program () Model Msg
+main : Program Flags Model Msg
 main =
     Browser.element
         { init = init
@@ -70,25 +82,79 @@ main =
         }
 
 
-init : () -> ( Model, Cmd Msg )
-init _ =
-    ( { cells = seedNotebook
-      , states =
-            seedNotebook
-                |> List.map (\c -> ( c.id, Engine.initialState ))
-                |> Dict.fromList
-      , baseSchema = Dict.empty
-      , queue = []
-      , current = Nothing
-      , db = Booting
-      , nextId = 1
-      }
+init : Flags -> ( Model, Cmd Msg )
+init flags =
+    let
+        ( notebook, notice ) =
+            restore flags
+    in
+    ( load notebook { title = notebook.title, cells = [], states = Dict.empty, baseSchema = Dict.empty, queue = [], current = Nothing, db = Booting, nextId = 1, notice = notice }
     , Cmd.none
     )
 
 
-seedNotebook : List Cell
-seedNotebook =
+{-| A buffer that no longer parses must not be swallowed: the notebook falls
+back to the seeded one and says so, rather than silently discarding whatever
+the reader had written.
+-}
+restore : Flags -> ( Notebook, Maybe String )
+restore flags =
+    case flags.saved of
+        Nothing ->
+            ( seeded, Nothing )
+
+        Just text ->
+            case Notebook.parse text of
+                Ok notebook ->
+                    ( notebook, Nothing )
+
+                Err message ->
+                    ( seeded, Just ("The saved notebook could not be read, so this is the starting one instead. " ++ message) )
+
+
+load : Notebook -> Model -> Model
+load notebook model =
+    let
+        cells =
+            nameProse notebook.cells
+    in
+    { model
+        | title = notebook.title
+        , cells = cells
+        , states = cells |> List.map (\c -> ( c.id, Engine.initialState )) |> Dict.fromList
+        , queue = []
+        , current = Nothing
+    }
+
+
+{-| Prose has no name in the file, but the model keys cell state by name, so
+one is assigned on load. It is never written back out.
+-}
+nameProse : List Cell -> List Cell
+nameProse cells =
+    cells
+        |> List.indexedMap
+            (\i c ->
+                if c.kind == Prose then
+                    { c | id = "note_" ++ String.fromInt i }
+
+                else
+                    c
+            )
+
+
+toNotebook : Model -> Notebook
+toNotebook model =
+    { title = model.title, cells = model.cells }
+
+
+seeded : Notebook
+seeded =
+    { title = "Orders", cells = seedCells }
+
+
+seedCells : List Cell
+seedCells =
     [ { id = "intro"
       , kind = Prose
       , source = "Query cells are compiled in the browser to SQL and to an Elm module, from one checked description. Edit a cell and blur it: everything downstream is marked stale and re-run in dependency order, skipping any cell whose inputs did not actually change."
@@ -203,11 +269,12 @@ update msg model =
             in
             -- Staleness propagates on every keystroke; compiling and running
             -- wait for the edit to be committed.
-            ( { updated
-                | states = Engine.markStale (Set.singleton id) (graphOf updated) updated.states
-              }
-            , Cmd.none
-            )
+            withPersist
+                ( { updated
+                    | states = Engine.markStale (Set.singleton id) (graphOf updated) updated.states
+                  }
+                , Cmd.none
+                )
 
         NameEdited id newName ->
             renameCell id (sanitiseName newName) model
@@ -229,13 +296,14 @@ update msg model =
                                 "Notes."
                     }
             in
-            ( { model
-                | cells = model.cells ++ [ fresh ]
-                , states = Dict.insert fresh.id Engine.initialState model.states
-                , nextId = model.nextId + 1
-              }
-            , Cmd.none
-            )
+            withPersist
+                ( { model
+                    | cells = model.cells ++ [ fresh ]
+                    , states = Dict.insert fresh.id Engine.initialState model.states
+                    , nextId = model.nextId + 1
+                  }
+                , Cmd.none
+                )
 
         DeleteCell id ->
             let
@@ -245,23 +313,120 @@ update msg model =
                         , states = Dict.remove id model.states
                     }
             in
-            ( { updated
-                | states =
-                    Engine.markStale
-                        (Dag.dependentsOf id (graphOf model))
-                        (graphOf updated)
-                        updated.states
-              }
-            , Ports.dropTable id
-            )
+            withPersist
+                ( { updated
+                    | states =
+                        Engine.markStale
+                            (Dag.dependentsOf id (graphOf model))
+                            (graphOf updated)
+                            updated.states
+                  }
+                , Ports.dropTable id
+                )
 
         RunAll ->
             schedule { model | states = invalidate model.states }
+
+        TitleEdited title ->
+            withPersist ( { model | title = title }, Cmd.none )
+
+        SaveFile ->
+            ( model
+            , Ports.requestSave
+                { name = fileNameFor model.title
+                , content = Notebook.serialize (toNotebook model)
+                }
+            )
+
+        OpenFile ->
+            ( model, Ports.requestOpen () )
+
+        FileOpened payload ->
+            case D.decodeValue openedDecoder payload of
+                Ok (Ok text) ->
+                    case Notebook.parse text of
+                        Ok notebook ->
+                            let
+                                loaded =
+                                    load notebook { model | notice = Nothing }
+                            in
+                            withPersist (schedule loaded)
+
+                        Err message ->
+                            ( { model | notice = Just ("That file is not a notebook this can read. " ++ message) }
+                            , Cmd.none
+                            )
+
+                Ok (Err message) ->
+                    ( { model | notice = Just message }, Cmd.none )
+
+                Err err ->
+                    ( { model | notice = Just (D.errorToString err) }, Cmd.none )
+
+        DismissNotice ->
+            ( { model | notice = Nothing }, Cmd.none )
 
 
 {-| The bridge reports the tables it built, so the checker knows what
 `access` may name before a single cell has run.
 -}
+withPersist : ( Model, Cmd Msg ) -> ( Model, Cmd Msg )
+withPersist ( model, cmd ) =
+    ( model
+    , Cmd.batch [ cmd, Ports.persist (Notebook.serialize (toNotebook model)) ]
+    )
+
+
+fileNameFor : String -> String
+fileNameFor title =
+    (title
+        |> String.toLower
+        |> String.map
+            (\c ->
+                if Char.isAlphaNum c then
+                    c
+
+                else
+                    '-'
+            )
+        |> String.foldr collapseDashes ""
+        |> orDefault "notebook"
+    )
+        ++ ".acadia.md"
+
+
+collapseDashes : Char -> String -> String
+collapseDashes c acc =
+    if c == '-' && String.startsWith "-" acc then
+        acc
+
+    else
+        String.cons c acc
+
+
+orDefault : String -> String -> String
+orDefault fallback text =
+    case String.trim (String.replace "-" " " text) of
+        "" ->
+            fallback
+
+        _ ->
+            text
+
+
+openedDecoder : D.Decoder (Result String String)
+openedDecoder =
+    D.field "ok" D.bool
+        |> D.andThen
+            (\ok ->
+                if ok then
+                    D.map Ok (D.field "content" D.string)
+
+                else
+                    D.map Err (D.field "error" D.string)
+            )
+
+
 bootDecoder : D.Decoder (Result String Schema)
 bootDecoder =
     D.field "ok" D.bool
@@ -339,9 +504,10 @@ renameCell old new model =
                     Nothing ->
                         model.states
         in
-        ( { model | cells = cells, states = invalidate states }
-        , Ports.dropTable old
-        )
+        withPersist
+            ( { model | cells = cells, states = invalidate states }
+            , Ports.dropTable old
+            )
 
 
 invalidate : Dict String CellState -> Dict String CellState
@@ -576,6 +742,7 @@ subscriptions _ =
     Sub.batch
         [ Ports.queryOutcome GotOutcome
         , Ports.dbReady DbReady
+        , Ports.fileOpened FileOpened
         ]
 
 
@@ -591,6 +758,7 @@ view model =
     in
     div [ class "app" ]
         [ viewHeader model graph
+        , viewNotice model.notice
         , div [ class "cells" ] (List.map (viewCell model graph) model.cells)
         , div [ class "add-row" ]
             [ button [ onClick (AddCell Query) ] [ text "+ query cell" ]
@@ -603,12 +771,20 @@ viewHeader : Model -> Graph -> Html Msg
 viewHeader model graph =
     div [ class "topbar" ]
         [ div []
-            [ h1 [] [ text "Acadia notebook" ]
+            [ input
+                [ class "notebook-title"
+                , value model.title
+                , onInput TitleEdited
+                , placeholder "Untitled notebook"
+                ]
+                []
             , p [ class "sub" ] [ text "reactive graph · DSL compiled in-browser · DuckDB-wasm" ]
             ]
         , div [ class "topbar-right" ]
             [ viewExecutionOrder graph
             , viewDbStatus model.db
+            , button [ onClick OpenFile, title "Open a notebook file" ] [ text "Open" ]
+            , button [ onClick SaveFile, title "Save this notebook as Markdown" ] [ text "Save" ]
             , button
                 [ onClick RunAll
                 , disabled (model.db /= Ready)
@@ -617,6 +793,19 @@ viewHeader model graph =
                 [ text "Run all" ]
             ]
         ]
+
+
+viewNotice : Maybe String -> Html Msg
+viewNotice notice =
+    case notice of
+        Nothing ->
+            text ""
+
+        Just message ->
+            div [ class "notice" ]
+                [ span [] [ text message ]
+                , button [ class "danger", onClick DismissNotice ] [ text "×" ]
+                ]
 
 
 viewDbStatus : DbStatus -> Html Msg
@@ -654,13 +843,18 @@ viewCell model graph cell =
     in
     section [ class "cell", classList [ ( "cell-prose", cell.kind == Prose ) ] ]
         [ div [ class "cell-head" ]
-            [ input
-                [ class "cell-name"
-                , value cell.id
-                , onInput (NameEdited cell.id)
-                , onBlur CommitEdit
-                ]
-                []
+            [ -- Prose has no name in the file, so it is not offered one here.
+              if cell.kind == Prose then
+                text ""
+
+              else
+                input
+                    [ class "cell-name"
+                    , value cell.id
+                    , onInput (NameEdited cell.id)
+                    , onBlur CommitEdit
+                    ]
+                    []
             , span [ class "kind" ] [ text (Cell.kindLabel cell.kind) ]
             , viewStatus cell state.status
             , viewSignature state

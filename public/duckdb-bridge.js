@@ -14,7 +14,99 @@ const BASE_TABLES = ['orders'];
 
 let conn = null;
 
-const app = window.Elm.Main.init({ node: document.getElementById('notebook') });
+const STORAGE_KEY = 'acadia.notebook';
+
+const app = window.Elm.Main.init({
+  node: document.getElementById('notebook'),
+  flags: { saved: readSaved() },
+});
+
+// Browser storage can throw outright (private windows, blocked site data), so
+// every access is guarded and a failure simply means starting fresh.
+function readSaved() {
+  try {
+    return localStorage.getItem(STORAGE_KEY);
+  } catch {
+    return null;
+  }
+}
+
+app.ports.persist.subscribe((content) => {
+  try {
+    localStorage.setItem(STORAGE_KEY, content);
+  } catch {
+    // Out of quota or storage disabled. The safety net is gone; the document
+    // is still whatever the reader last saved to a file.
+  }
+});
+
+// Saving prefers a real file handle so a reader can keep the notebook in a
+// repository next to the data it queries. Where that API is missing the
+// fallback is an ordinary download, which lands in the same place a browser
+// puts everything else.
+app.ports.requestSave.subscribe(async ({ name, content }) => {
+  if (window.showSaveFilePicker) {
+    try {
+      const handle = await window.showSaveFilePicker({
+        suggestedName: name,
+        types: [{ description: 'Acadia notebook', accept: { 'text/markdown': ['.md'] } }],
+      });
+      const writable = await handle.createWritable();
+      await writable.write(content);
+      await writable.close();
+      return;
+    } catch (err) {
+      // A cancelled picker is not a failure worth reporting.
+      if (err && err.name === 'AbortError') return;
+    }
+  }
+  download(name, content);
+});
+
+function download(name, content) {
+  const url = URL.createObjectURL(new Blob([content], { type: 'text/markdown' }));
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = name;
+  link.click();
+  URL.revokeObjectURL(url);
+}
+
+app.ports.requestOpen.subscribe(async () => {
+  try {
+    const text = await pickFile();
+    if (text !== null) app.ports.fileOpened.send({ ok: true, content: text });
+  } catch (err) {
+    app.ports.fileOpened.send({ ok: false, error: String(err) });
+  }
+});
+
+function pickFile() {
+  if (window.showOpenFilePicker) {
+    return window
+      .showOpenFilePicker({
+        types: [{ description: 'Acadia notebook', accept: { 'text/markdown': ['.md'] } }],
+      })
+      .then(([handle]) => handle.getFile())
+      .then((file) => file.text())
+      .catch((err) => {
+        if (err && err.name === 'AbortError') return null;
+        throw err;
+      });
+  }
+
+  return new Promise((resolve, reject) => {
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.accept = '.md,text/markdown';
+    input.onchange = () => {
+      const file = input.files && input.files[0];
+      if (!file) return resolve(null);
+      file.text().then(resolve, reject);
+    };
+    input.click();
+  });
+}
 
 boot()
   .then((schema) => app.ports.dbReady.send({ ok: true, schema }))

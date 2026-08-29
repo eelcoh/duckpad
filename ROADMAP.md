@@ -227,7 +227,7 @@ side.
   graph nodes with no compile step — just a bound value that
   re-triggers the graph on change.
 
-## Phase 7 — File format
+## Phase 7 — File format  [DONE]
 
 - Markdown container with typed fenced code blocks (Acadia-DSL, Elm,
   input-widget config) interleaved with prose.
@@ -240,6 +240,52 @@ side.
   build-cache directory keyed by (cell id, source hash).
 - Confirm round-trip load/save and clean single-cell git diffs.
 
+### Phase 7 as built
+
+A notebook is Markdown. Query cells are fenced blocks tagged `acadia`
+plus a name; everything else is prose:
+
+    ---
+    title: Orders
+    ---
+
+    Intro prose.
+
+    ```acadia delivered
+    access orders ()
+      |> filter (\o -> o.status == "delivered")
+      |> selectAll
+    ```
+
+One decision changed from the sketch: **prose has no identity**. The
+original plan gave every cell a name, but in a Markdown container prose
+is just the text between the fences, and naming it would put a label in
+the file that nothing can refer to. Only query cells are named, because
+only they are bindings. The model still needs a key for prose state, so
+one is assigned on load and never written back.
+
+Everything else held. Reading order is the file's order and is never
+sorted into dependency order. Results, generated SQL and generated Elm
+are not in the file. The parser only takes an interest in an `acadia`
+fence, so a notebook can contain a shell snippet or a JSON sample
+without confusing it.
+
+The diff property is tested rather than asserted: editing one cell's
+body changes exactly the one line it changed, and renaming a cell
+changes exactly its fence line.
+
+Deviation from the plan: there is no sibling build-cache directory,
+because there is no daemon and no filesystem to put one in. The compile
+and value caches already hold what it would have held, keyed the same
+way.
+
+Persistence has two layers, and they are not the same thing. The
+document is a file the reader saves, through the File System Access API
+where it exists and an ordinary download where it does not. Underneath
+that, every edit is mirrored into `localStorage` purely so a reload does
+not lose work; a buffer that no longer parses is reported rather than
+silently discarded.
+
 ## Phase 8 — Sharing story
 
 - "Export as static artifact": bake compiled JS + snapshotted/OPFS
@@ -250,7 +296,7 @@ side.
 ## Current state (2026-08-29)
 
 `mise run build` compiles the shell, `mise run serve` hosts it on :8080,
-`mise run test` runs 128 checks under node, and `mise run roundtrip`
+`mise run test` runs 145 checks under node, and `mise run roundtrip`
 executes every fixture's generated SQL against a real DuckDB and compiles
 every generated module with `elm make`.
 
@@ -259,6 +305,7 @@ Layout:
 - `src/Dsl/` — the compiler: `Schema`, `Ast`, `Parser`, `Check`, `Sql`,
   `ElmGen`, `Compile`.
 - `src/Dag.elm`, `src/Engine.elm`, `src/Hash.elm` — the reactive engine.
+- `src/Notebook.elm` — the Markdown file format.
 - `src/Main.elm` — the notebook shell.
 - `public/duckdb-bridge.js` — base tables, schema reporting, query
   execution, content hashing.
@@ -277,9 +324,10 @@ Standing findings:
 
 ## Next up
 
-Phase 6 (display verbs and input widgets) or Phase 7 (the file format).
-Phase 7 is the more valuable of the two: nothing is persisted yet, so
-every reload starts from the seeded notebook.
+Phase 6 (display verbs and input widgets) is the last piece of the
+original design that is not built. Phase 8 (export a run notebook as one
+static HTML file) is now mostly a packaging job, since the compiler
+already runs in the browser.
 
 Phase 4 has shrunk to "a daemon for hand-written Elm cells" and is only
 needed once those are wanted.

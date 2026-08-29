@@ -24,7 +24,14 @@
 
   .topbar { display: flex; align-items: flex-start; justify-content: space-between; gap: 24px;
             border-bottom: 1px solid var(--line); padding-bottom: 16px; margin-bottom: 24px; flex-wrap: wrap; }
-  h1 { font-size: 18px; margin: 0; letter-spacing: -0.01em; }
+  .notebook-title { font-size: 18px; font-weight: 600; border: 1px solid transparent; background: transparent;
+                    padding: 2px 6px; margin-left: -6px; border-radius: 4px; color: var(--ink);
+                    font-family: var(--sans); letter-spacing: -0.01em; width: 22ch; }
+  .notebook-title:hover, .notebook-title:focus { border-color: var(--line); background: var(--card); outline: none; }
+
+  .notice { display: flex; align-items: center; gap: 12px; justify-content: space-between;
+            background: #fffbf0; border: 1px solid #f0e0b8; color: var(--stale);
+            border-radius: 6px; padding: 9px 12px; font-size: 12px; margin-bottom: 16px; }
   .sub { margin: 4px 0 0; color: var(--muted); font-size: 12px; }
   .topbar-right { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
   .order { font-family: var(--mono); font-size: 11px; color: var(--muted); }
