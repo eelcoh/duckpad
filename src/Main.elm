@@ -158,11 +158,19 @@ seedCells : List Cell
 seedCells =
     [ { id = "intro"
       , kind = Prose
-      , source = "A source names external data; a query cell compiles to SQL and to an Elm module from one checked description. Sources can point at any https URL that allows cross-origin reads — try `csv \"https://cdn.jsdelivr.net/npm/vega-datasets@2/data/seattle-weather.csv\"`, or `parquet \"https://cdn.jsdelivr.net/npm/vega-datasets@3.2.0/data/flights-3m.parquet\"` for three million rows read a page at a time."
+      , source = "A source names external data; a query cell compiles to SQL and to an Elm module from one checked description. Sources can point at any https URL that allows cross-origin reads — try `parquet \"https://cdn.jsdelivr.net/npm/vega-datasets@3.2.0/data/flights-3m.parquet\"` for three million rows read a page at a time.\n\n`intersect` pairs two tables rather than merging them, so each side keeps its own names and a later lambda destructures: `\\(o, c) -> …`. Note that `hugo` has orders but no customer record, and `iris` is the other way round — swap `intersect` for `diff` or `exclude` to see them."
       }
     , { id = "orders"
       , kind = Source
       , source = "csv \"data/orders.csv\""
+      }
+    , { id = "customers"
+      , kind = Source
+      , source = "csv \"data/customers.csv\""
+      }
+    , { id = "by_tier"
+      , kind = Query
+      , source = "access orders ()\n  |> intersect .owner customers .owner\n  |> groupBy .tier\n  |> reduce (\\g ->\n       { tier = g.tier\n       , n = count g\n       , revenue = sum g.total\n       })\n  |> sortBy (desc .revenue)\n  |> selectAll"
       }
     , { id = "delivered"
       , kind = Query

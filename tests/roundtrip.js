@@ -15,6 +15,7 @@ const { Elm } = require('./fixtures.js');
 const REPO = path.resolve(__dirname, '..');
 const WORK = path.join(REPO, 'tests', '.roundtrip');
 const CSV = path.join(REPO, 'public', 'data', 'orders.csv');
+const CUSTOMERS = path.join(REPO, 'public', 'data', 'customers.csv');
 
 // The tables the fixture schema claims exist. Kept here rather than in a
 // checked-in .sql file so the schema and its DuckDB counterpart stay adjacent.
@@ -22,8 +23,7 @@ const SETUP = `
 CREATE TABLE orders AS SELECT * FROM read_csv_auto('${CSV}');
 CREATE TABLE vips AS SELECT DISTINCT owner FROM orders ORDER BY owner LIMIT 3;
 CREATE TABLE regions AS SELECT DISTINCT region FROM orders;
-CREATE TABLE customers AS
-  SELECT DISTINCT owner, CASE WHEN owner < 'e' THEN 'gold' ELSE 'silver' END AS tier FROM orders;
+CREATE TABLE customers AS SELECT * FROM read_csv_auto('${CUSTOMERS}');
 CREATE TABLE people AS SELECT DISTINCT owner AS person, length(owner) AS rank FROM orders;
 `;
 

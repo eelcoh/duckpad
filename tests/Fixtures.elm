@@ -43,7 +43,7 @@ schema =
           )
         , ( "vips", [ ( "owner", TString ) ] )
         , ( "regions", [ ( "region", TString ) ] )
-        , ( "customers", [ ( "owner", TString ), ( "tier", TString ) ] )
+        , ( "customers", [ ( "owner", TString ), ( "tier", TString ), ( "joined", TTimestamp ) ] )
         , ( "people", [ ( "person", TString ), ( "rank", TInt ) ] )
         ]
 
@@ -118,6 +118,22 @@ access orders ()
   |> diff .owner people .person
   |> map (\\(o, p) -> { who = o.owner, standing = p.rank, amount = o.total })
   |> limit 25
+  |> selectAll
+"""
+      )
+      -- The `by_tier` cell exactly as the seeded notebook ships it, so that
+      -- what a reader first sees is known to compile and run.
+    , ( "seeded_by_tier"
+      , """
+access orders ()
+  |> intersect .owner customers .owner
+  |> groupBy .tier
+  |> reduce (\\g ->
+       { tier = g.tier
+       , n = count g
+       , revenue = sum g.total
+       })
+  |> sortBy (desc .revenue)
   |> selectAll
 """
       )

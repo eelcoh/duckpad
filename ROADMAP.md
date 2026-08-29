@@ -329,7 +329,11 @@ Decisions:
   column whose only nulls lie past the sample renders as `?` rather than
   failing silently.
 - The hardcoded base table is gone. The seeded notebook uses a source
-  cell, so the mechanism is the only path in.
+  cell, so the mechanism is the only path in. It ships two: `orders` and
+  `customers`, keyed on `owner` so the combining stages have something
+  real to work on. `hugo` has orders but no customer record and `iris`
+  the reverse, so swapping `intersect` for `diff` or `exclude` visibly
+  changes the result.
 
 ### Data sources that work from a browser
 
