@@ -34,6 +34,11 @@ import Set
 type alias CellState =
     { status : Status
     , compiled : Maybe Compiled
+
+    -- What downstream cells compile against. A query cell gets this from its
+    -- own compilation; a source cell gets it from DuckDB, which is the only
+    -- thing that knows what is actually in the file.
+    , rowType : Maybe (List ( String, Type ))
     , compileKey : Maybe String
     , table : Maybe Table
     , valueHash : Maybe String
@@ -45,6 +50,7 @@ initialState : CellState
 initialState =
     { status = NeverRun
     , compiled = Nothing
+    , rowType = Nothing
     , compileKey = Nothing
     , table = Nothing
     , valueHash = Nothing
@@ -75,9 +81,9 @@ schemaFor base graph states id =
     Dag.dependenciesOf id graph
         |> Set.foldl
             (\dep acc ->
-                case Dict.get dep states |> Maybe.andThen .compiled of
-                    Just compiled ->
-                        Dict.insert dep compiled.rowType acc
+                case Dict.get dep states |> Maybe.andThen .rowType of
+                    Just rowType ->
+                        Dict.insert dep rowType acc
 
                     Nothing ->
                         acc
@@ -126,9 +132,9 @@ join parts =
 
 signatureOf : CellState -> String
 signatureOf state =
-    case state.compiled of
-        Just compiled ->
-            compiled.rowType
+    case state.rowType of
+        Just rowType ->
+            rowType
                 |> List.map (\( name, t ) -> name ++ ":" ++ Schema.typeName t)
                 |> String.join ","
 

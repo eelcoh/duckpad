@@ -153,7 +153,7 @@ compiledWith rowType =
 
 tableWith : String -> Table
 tableWith hash =
-    { columns = [], rows = [], rowCount = 0, truncated = False, hash = hash, millis = 0 }
+    { columns = [], rows = [], rowCount = 0, truncated = False, hash = hash, millis = 0, described = [] }
 
 
 {-| An upstream cell that has run: it has both a shape and a value, and the
@@ -163,6 +163,7 @@ upstreamState : List ( String, Type ) -> String -> CellState
 upstreamState rowType valueHash =
     { status = Fresh { cached = False, millis = 1 }
     , compiled = Just (compiledWith rowType)
+    , rowType = Just rowType
     , compileKey = Just "k"
     , table = Just (tableWith valueHash)
     , valueHash = Just valueHash

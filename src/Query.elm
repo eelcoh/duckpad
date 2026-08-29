@@ -1,8 +1,10 @@
 module Query exposing
     ( Column
+    , Described
     , Outcome(..)
     , Table
     , cellText
+    , describedDecoder
     , outcomeDecoder
     )
 
@@ -32,6 +34,21 @@ type alias Table =
     , truncated : Bool
     , hash : String
     , millis : Float
+
+    -- How DuckDB describes the materialised result. A query cell already knows
+    -- its row type from the compiler and ignores this; a source cell has no
+    -- other way to learn one.
+    , described : List Described
+    }
+
+
+{-| A column as DuckDB describes it, with nullability observed from the data
+rather than read off a declaration that a CREATE TABLE AS never set.
+-}
+type alias Described =
+    { name : String
+    , sqlType : String
+    , nullable : Bool
     }
 
 
@@ -55,13 +72,24 @@ outcomeDecoder =
 
 tableDecoder : Decoder Table
 tableDecoder =
-    D.map6 Table
+    D.map7 Table
         (D.field "columns" (D.list columnDecoder))
         (D.field "rows" (D.list D.value))
         (D.field "rowCount" D.int)
         (D.field "truncated" D.bool)
         (D.field "hash" D.string)
         (D.field "millis" D.float)
+        (D.field "described" describedDecoder)
+
+
+describedDecoder : Decoder (List Described)
+describedDecoder =
+    D.list
+        (D.map3 Described
+            (D.field "name" D.string)
+            (D.field "type" D.string)
+            (D.field "nullable" D.bool)
+        )
 
 
 columnDecoder : Decoder Column

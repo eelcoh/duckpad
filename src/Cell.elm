@@ -20,6 +20,9 @@ type alias Cell =
 
 type Kind
     = Query
+      -- External data the notebook reads but does not compute. A source is a
+      -- graph node like any other, so cells that read it are ordered after it.
+    | Source
     | Prose
 
 
@@ -51,6 +54,9 @@ isRunnable cell =
         Query ->
             String.trim cell.source /= ""
 
+        Source ->
+            String.trim cell.source /= ""
+
         Prose ->
             False
 
@@ -60,6 +66,9 @@ kindLabel kind =
     case kind of
         Query ->
             "query"
+
+        Source ->
+            "source"
 
         Prose ->
             "prose"

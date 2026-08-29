@@ -286,6 +286,74 @@ that, every edit is mirrored into `localStorage` purely so a reload does
 not lose work; a buffer that no longer parses is reported rather than
 silently discarded.
 
+## Data sources  [DONE]
+
+Not in the original plan, and it should have been: until this, every
+notebook could only query one bundled CSV, which made the whole thing a
+demo rather than a tool. It also comes first in dependency order —
+joins are pointless over a single table, and export cannot be designed
+until it is known how data gets in.
+
+A source is its own cell kind with its own fence:
+
+    ```source weather
+    csv "https://cdn.jsdelivr.net/npm/vega-datasets@2/data/seattle-weather.csv"
+    ```
+
+Formats are `csv`, `parquet` and `json`. Locations are https URLs or
+paths next to the notebook.
+
+Decisions:
+
+- **A source becomes a view, not a materialised table.** A source is a
+  reference to external data, not a computed value, and the difference
+  is load-bearing: a view lets DuckDB push filters and column pruning
+  into the file, so a query over a remote Parquet fetches the byte ranges
+  it needs. Materialising would pull every row into wasm memory and make
+  HTTP range requests pointless. Query cells still materialise, so the
+  value cache is unaffected.
+- **A source's identity is where it points, not what is behind it.** Its
+  hash is format, URI and row count. The notebook does not refetch to
+  discover whether a remote file changed; the row count is carried along
+  so a file that grew or shrank still invalidates dependents, which is
+  free to know for Parquet.
+- **The URI never reaches SQL.** The file is registered under a generated
+  name and only that name is interpolated.
+- **Schemes are restricted at parse time.** `file:`, `data:` and
+  `javascript:` are refused, as is plain http except on localhost. The
+  first attempt tested for `://` and let `data:` and `javascript:`
+  through as relative paths; the tests caught it.
+- **Nullability is sampled, not counted in full.** Scanning three million
+  Parquet rows to learn which columns can be absent would pull the whole
+  file and throw away the reason for reading it a page at a time. A
+  column whose only nulls lie past the sample renders as `?` rather than
+  failing silently.
+- The hardcoded base table is gone. The seeded notebook uses a source
+  cell, so the mechanism is the only path in.
+
+### Data sources that work from a browser
+
+CORS is the binding constraint, and it is not guessable — these were
+checked with a real preflight rather than assumed. All send
+`access-control-allow-origin: *` and support range requests.
+
+| Dataset | URI | Why |
+|---|---|---|
+| Seattle weather | `https://cdn.jsdelivr.net/npm/vega-datasets@2/data/seattle-weather.csv` | 1461 rows. A DATE, four DOUBLEs, and a `weather` column with exactly five values — an ideal `as` cast. The best default. |
+| Stocks | `https://cdn.jsdelivr.net/npm/vega-datasets@2/data/stocks.csv` | Small time series, symbol/date/price. Good for Phase 6 charts. |
+| Movies | `https://cdn.jsdelivr.net/npm/vega-datasets@2/data/movies.json` | 1.4 MB, exercises the JSON reader and a messier schema. |
+| Flights | `https://cdn.jsdelivr.net/npm/vega-datasets@3.2.0/data/flights-3m.parquet` | Three million rows in 13 MB. The real test of Parquet over HTTP: DuckDB reads the schema and a preview from metadata and byte ranges without pulling the file. |
+
+Checked and rejected:
+
+- **NYC TLC trip data** (`d37ci6vzurychx.cloudfront.net`) sends no CORS
+  header at all. It is the dataset everyone reaches for and it cannot be
+  read from a browser.
+- **palmerpenguins** encodes missing values as the string `NA`, so
+  DuckDB types every numeric column as VARCHAR and finds no nulls. It
+  needs a null-string option the source language does not have — a fair
+  argument for adding reader options later.
+
 ## Phase 8 — Sharing story
 
 - "Export as static artifact": bake compiled JS + snapshotted/OPFS
@@ -296,7 +364,7 @@ silently discarded.
 ## Current state (2026-08-29)
 
 `mise run build` compiles the shell, `mise run serve` hosts it on :8080,
-`mise run test` runs 145 checks under node, and `mise run roundtrip`
+`mise run test` runs 164 checks under node, and `mise run roundtrip`
 executes every fixture's generated SQL against a real DuckDB and compiles
 every generated module with `elm make`.
 
@@ -306,6 +374,7 @@ Layout:
   `ElmGen`, `Compile`.
 - `src/Dag.elm`, `src/Engine.elm`, `src/Hash.elm` — the reactive engine.
 - `src/Notebook.elm` — the Markdown file format.
+- `src/Dsl/Source.elm` — the source-cell language.
 - `src/Main.elm` — the notebook shell.
 - `public/duckdb-bridge.js` — base tables, schema reporting, query
   execution, content hashing.
@@ -324,10 +393,13 @@ Standing findings:
 
 ## Next up
 
-Phase 6 (display verbs and input widgets) is the last piece of the
-original design that is not built. Phase 8 (export a run notebook as one
-static HTML file) is now mostly a packaging job, since the compiler
-already runs in the browser.
+In dependency order: joins (now that a notebook can hold more than one
+table), then Phase 6 (display verbs and input widgets), then Phase 8
+(static export, which needs to know both how data gets in and what cell
+kinds exist).
+
+Reader options for sources — a null string, an explicit delimiter — are
+worth adding the next time a dataset needs them.
 
 Phase 4 has shrunk to "a daemon for hand-written Elm cells" and is only
 needed once those are wanted.

@@ -17,6 +17,7 @@ import Dsl.Ast exposing (Constructor, TypeDecl)
 import Dsl.Check exposing (Cardinality(..))
 import Dsl.Compile exposing (Compiled)
 import Dsl.Schema as Schema exposing (Schema, Type(..))
+import Dsl.Source
 import Engine exposing (CellState)
 import Html exposing (Html, button, details, div, input, p, pre, section, span, summary, table, tbody, td, text, textarea, th, thead, tr)
 import Html.Attributes exposing (class, classList, disabled, placeholder, rows, title, value)
@@ -157,7 +158,11 @@ seedCells : List Cell
 seedCells =
     [ { id = "intro"
       , kind = Prose
-      , source = "Query cells are compiled in the browser to SQL and to an Elm module, from one checked description. Edit a cell and blur it: everything downstream is marked stale and re-run in dependency order, skipping any cell whose inputs did not actually change."
+      , source = "A source names external data; a query cell compiles to SQL and to an Elm module from one checked description. Sources can point at any https URL that allows cross-origin reads — try `csv \"https://cdn.jsdelivr.net/npm/vega-datasets@2/data/seattle-weather.csv\"`, or `parquet \"https://cdn.jsdelivr.net/npm/vega-datasets@3.2.0/data/flights-3m.parquet\"` for three million rows read a page at a time."
+      }
+    , { id = "orders"
+      , kind = Source
+      , source = "csv \"data/orders.csv\""
       }
     , { id = "delivered"
       , kind = Query
@@ -185,8 +190,19 @@ known once the order exists.
 graphOf : Model -> Graph
 graphOf model =
     model.cells
-        |> List.filter (\c -> c.kind == Query)
-        |> List.map (\c -> ( c.id, Set.fromList (Dsl.Compile.readsOf c.source) ))
+        |> List.filter (\c -> c.kind /= Prose)
+        |> List.map
+            (\c ->
+                ( c.id
+                , case c.kind of
+                    Query ->
+                        Set.fromList (Dsl.Compile.readsOf c.source)
+
+                    _ ->
+                        -- A source reads external data, never another cell.
+                        Set.empty
+                )
+            )
         |> Dag.build
 
 
@@ -291,6 +307,9 @@ update msg model =
                         case kind of
                             Query ->
                                 "access orders ()\n  |> selectAll"
+
+                            Source ->
+                                "csv \"https://cdn.jsdelivr.net/npm/vega-datasets@2/data/seattle-weather.csv\""
 
                             Prose ->
                                 "Notes."
@@ -557,7 +576,63 @@ advance model =
                         advance { model | queue = rest }
 
                     else
-                        dispatch cell rest model
+                        case cell.kind of
+                            Source ->
+                                dispatchSource cell rest model
+
+                            _ ->
+                                dispatch cell rest model
+
+
+{-| A source is not compiled and not materialised. It becomes a view over the
+external data, and its identity is the location it points at rather than the
+rows behind it — so re-running does not refetch, and changing the URI
+invalidates everything downstream.
+-}
+dispatchSource : Cell -> List String -> Model -> ( Model, Cmd Msg )
+dispatchSource cell rest model =
+    case Dsl.Source.parse cell.source of
+        Err message ->
+            advance
+                { model
+                    | queue = rest
+                    , states = setStatus cell.id (Invalid message) model.states
+                }
+
+        Ok spec ->
+            let
+                state =
+                    stateOf cell.id model
+
+                key =
+                    Engine.valueKeyFor (graphOf model) model.states cell.id (Dsl.Source.formatName spec.format ++ " " ++ spec.uri)
+            in
+            if state.keyForValue == Just key && Engine.hasValue state then
+                advance
+                    { model
+                        | queue = rest
+                        , states =
+                            setStatus cell.id
+                                (Fresh
+                                    { cached = True
+                                    , millis = state.table |> Maybe.map .millis |> Maybe.withDefault 0
+                                    }
+                                )
+                                model.states
+                    }
+
+            else
+                ( { model
+                    | queue = rest
+                    , current = Just cell.id
+                    , states = setStatus cell.id Running model.states
+                  }
+                , Ports.loadSource
+                    { cellId = cell.id
+                    , format = Dsl.Source.formatName spec.format
+                    , uri = spec.uri
+                    }
+                )
 
 
 {-| Compile, then decide whether the database has to be touched at all.
@@ -635,7 +710,11 @@ runOrReuse cell rest model graph state compileKey artefacts =
             Engine.valueKeyFor graph model.states cell.id artefacts.sql
 
         remembered =
-            { state | compiled = Just artefacts, compileKey = Just compileKey }
+            { state
+                | compiled = Just artefacts
+                , rowType = Just artefacts.rowType
+                , compileKey = Just compileKey
+            }
     in
     if state.keyForValue == Just valueKey && Engine.hasValue state then
         advance
@@ -678,10 +757,30 @@ applyOutcome outcome model =
                 state =
                     stateOf id model
 
+                isSource =
+                    findCell id model |> Maybe.map (\c -> c.kind == Source) |> Maybe.withDefault False
+
                 valueKey =
-                    state.compiled
-                        |> Maybe.map
-                            (\c -> Engine.valueKeyFor (graphOf model) model.states id c.sql)
+                    if isSource then
+                        findCell id model
+                            |> Maybe.andThen (\c -> Dsl.Source.parse c.source |> Result.toMaybe)
+                            |> Maybe.map
+                                (\spec ->
+                                    Engine.valueKeyFor (graphOf model) model.states id
+                                        (Dsl.Source.formatName spec.format ++ " " ++ spec.uri)
+                                )
+
+                    else
+                        state.compiled
+                            |> Maybe.map
+                                (\c -> Engine.valueKeyFor (graphOf model) model.states id c.sql)
+
+                rowType =
+                    if isSource then
+                        Just (fromDescribed result.described)
+
+                    else
+                        state.compiled |> Maybe.map .rowType
             in
             advance
                 { model
@@ -691,6 +790,7 @@ applyOutcome outcome model =
                             { state
                                 | status = Fresh { cached = False, millis = result.millis }
                                 , table = Just result
+                                , rowType = rowType
                                 , valueHash = Just result.hash
                                 , keyForValue = valueKey
                             }
@@ -703,6 +803,28 @@ applyOutcome outcome model =
                     | current = Nothing
                     , states = setStatus id (Failed err) model.states
                 }
+
+
+{-| A column whose DuckDB type has no counterpart in the language is dropped
+rather than guessed at. It simply will not be nameable from a cell.
+-}
+fromDescribed : List Query.Described -> List ( String, Type )
+fromDescribed described =
+    described
+        |> List.filterMap
+            (\c ->
+                Schema.fromDuckDb c.sqlType
+                    |> Maybe.map
+                        (\t ->
+                            ( c.name
+                            , if c.nullable then
+                                TMaybe t
+
+                              else
+                                t
+                            )
+                        )
+            )
 
 
 sanitiseName : String -> String
@@ -719,6 +841,9 @@ freshName kind model =
             case kind of
                 Query ->
                     "cell_"
+
+                Source ->
+                    "data_"
 
                 Prose ->
                     "note_"
@@ -761,7 +886,8 @@ view model =
         , viewNotice model.notice
         , div [ class "cells" ] (List.map (viewCell model graph) model.cells)
         , div [ class "add-row" ]
-            [ button [ onClick (AddCell Query) ] [ text "+ query cell" ]
+            [ button [ onClick (AddCell Source) ] [ text "+ source" ]
+            , button [ onClick (AddCell Query) ] [ text "+ query cell" ]
             , button [ onClick (AddCell Prose) ] [ text "+ prose cell" ]
             ]
         ]
@@ -870,6 +996,9 @@ viewCell model graph cell =
                 (case cell.kind of
                     Query ->
                         "access orders () |> selectAll"
+
+                    Source ->
+                        "csv \"https://…\""
 
                     Prose ->
                         "Notes…"

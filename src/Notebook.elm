@@ -37,9 +37,22 @@ fence =
     "```"
 
 
-opening : String
-opening =
-    fence ++ "acadia "
+{-| The fence tags that make a block a cell. Everything else, fenced or not,
+is prose — so a notebook can carry a shell snippet or a JSON sample without
+the parser taking an interest in it.
+-}
+tags : List ( String, Kind )
+tags =
+    [ ( "acadia", Query ), ( "source", Source ) ]
+
+
+tagFor : Kind -> String
+tagFor kind =
+    tags
+        |> List.filter (\( _, k ) -> k == kind)
+        |> List.head
+        |> Maybe.map Tuple.first
+        |> Maybe.withDefault "acadia"
 
 
 
@@ -66,9 +79,6 @@ frontmatter notebook =
 block : Cell -> Maybe String
 block cell =
     case cell.kind of
-        Query ->
-            Just (opening ++ cell.id ++ "\n" ++ trimBlank cell.source ++ "\n" ++ fence)
-
         Prose ->
             let
                 text =
@@ -79,6 +89,18 @@ block cell =
 
             else
                 Just text
+
+        _ ->
+            Just
+                (fence
+                    ++ tagFor cell.kind
+                    ++ " "
+                    ++ cell.id
+                    ++ "\n"
+                    ++ trimBlank cell.source
+                    ++ "\n"
+                    ++ fence
+                )
 
 
 {-| Strip blank lines from the ends without touching the indentation inside.
@@ -186,33 +208,49 @@ readBlocks lines prose acc =
             Ok (List.reverse (flushProse prose acc))
 
         first :: rest ->
-            if String.startsWith opening first then
+            case openingTag first of
+                Just ( kind, name ) ->
+                    if not (validName name) then
+                        Err (badName name)
+
+                    else
+                        let
+                            ( source, remaining ) =
+                                spanUntil fence rest
+                        in
+                        readBlocks remaining
+                            []
+                            ({ id = name
+                             , kind = kind
+                             , source = String.join "\n" source
+                             }
+                                :: flushProse prose acc
+                            )
+
+                Nothing ->
+                    readBlocks rest (first :: prose) acc
+
+
+{-| A fence line that starts a cell, and the name it binds. A tagged fence
+with no name is reported as a bad name rather than quietly read as prose,
+because it is much more likely to be a typo than intended text.
+-}
+openingTag : String -> Maybe ( Kind, String )
+openingTag line =
+    tags
+        |> List.filterMap
+            (\( tag, kind ) ->
                 let
-                    name =
-                        String.trim (String.dropLeft (String.length opening) first)
+                    prefix =
+                        fence ++ tag
                 in
-                if not (validName name) then
-                    Err (badName name)
+                if line == prefix || String.startsWith (prefix ++ " ") line then
+                    Just ( kind, String.trim (String.dropLeft (String.length prefix) line) )
 
                 else
-                    let
-                        ( source, remaining ) =
-                            spanUntil fence rest
-                    in
-                    readBlocks remaining
-                        []
-                        ({ id = name
-                         , kind = Query
-                         , source = String.join "\n" source
-                         }
-                            :: flushProse prose acc
-                        )
-
-            else if String.trim first == String.trim opening then
-                Err "a query block needs a name, as in ```acadia my_cell"
-
-            else
-                readBlocks rest (first :: prose) acc
+                    Nothing
+            )
+        |> List.head
 
 
 flushProse : List String -> List Cell -> List Cell
@@ -253,7 +291,7 @@ uniqueNames : List Cell -> Result String (List Cell)
 uniqueNames cells =
     let
         names =
-            cells |> List.filter (\c -> c.kind == Query) |> List.map .id
+            cells |> List.filter (\c -> c.kind /= Prose) |> List.map .id
 
         duplicate =
             names |> List.filter (\n -> List.length (List.filter ((==) n) names) > 1) |> List.head

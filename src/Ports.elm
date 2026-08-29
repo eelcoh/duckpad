@@ -1,4 +1,4 @@
-port module Ports exposing (dbReady, dropTable, fileOpened, materialize, persist, queryOutcome, requestOpen, requestSave)
+port module Ports exposing (dbReady, dropTable, fileOpened, loadSource, materialize, persist, queryOutcome, requestOpen, requestSave)
 
 import Json.Decode as D
 
@@ -14,8 +14,18 @@ that asked for an order needs the stricter one that folds them as they lie.
 port materialize : { cellId : String, sql : String, orderSignificant : Bool } -> Cmd msg
 
 
-{-| Forget a cell's table, when it is deleted or renamed. Without this a
-renamed cell leaves its old table behind and a later cell of that name would
+{-| Point a source cell at external data.
+
+The result comes back on `queryOutcome` like a query does, but carries the
+schema DuckDB inferred, because for a source that is the only place a row type
+can come from.
+
+-}
+port loadSource : { cellId : String, format : String, uri : String } -> Cmd msg
+
+
+{-| Forget a cell's table or view, when it is deleted or renamed. Without this
+a renamed cell leaves its old one behind and a later cell of that name would
 silently read a ghost.
 -}
 port dropTable : String -> Cmd msg

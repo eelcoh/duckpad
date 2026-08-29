@@ -9,9 +9,21 @@
 import * as duckdb from 'https://cdn.jsdelivr.net/npm/@duckdb/duckdb-wasm@1.32.0/+esm';
 
 const PREVIEW_ROWS = 200;
-const SEED_CSV = 'data/orders.csv';
-const BASE_TABLES = ['orders'];
 
+// Nullability for a source is observed from at most this many rows. Scanning a
+// three-million-row Parquet just to learn which columns can be absent would
+// pull the whole file over the network and throw away the point of reading it
+// a page at a time. A column whose only nulls lie past this shows as
+// non-nullable and renders as `?`, which is visible rather than silent.
+const NULL_SAMPLE = 200000;
+
+const READERS = {
+  csv: 'read_csv_auto',
+  parquet: 'read_parquet',
+  json: 'read_json_auto',
+};
+
+let db = null;
 let conn = null;
 
 const STORAGE_KEY = 'acadia.notebook';
@@ -109,7 +121,7 @@ function pickFile() {
 }
 
 boot()
-  .then((schema) => app.ports.dbReady.send({ ok: true, schema }))
+  .then(() => app.ports.dbReady.send({ ok: true, schema: [] }))
   .catch((err) => app.ports.dbReady.send({ ok: false, error: String(err) }));
 
 async function boot() {
@@ -118,7 +130,7 @@ async function boot() {
     new Blob([`importScripts("${bundle.mainWorker}");`], { type: 'text/javascript' })
   );
   const worker = new Worker(workerUrl);
-  const db = new duckdb.AsyncDuckDB(
+  db = new duckdb.AsyncDuckDB(
     new duckdb.ConsoleLogger(duckdb.LogLevel.WARNING),
     worker
   );
@@ -126,41 +138,83 @@ async function boot() {
   URL.revokeObjectURL(workerUrl);
 
   conn = await db.connect();
-
-  const csv = await fetch(SEED_CSV).then((r) => r.text());
-  await db.registerFileText('orders.csv', csv);
-  await conn.query(
-    `CREATE TABLE "orders" AS SELECT * FROM read_csv_auto('orders.csv')`
-  );
-
-  return Promise.all(BASE_TABLES.map(describe));
 }
+
+// A source becomes a view, not a materialised table.
+//
+// A source is a reference to external data, not a computed value, and the
+// difference is load-bearing: a view lets DuckDB push filters and column
+// pruning down into the file, so a query over a remote Parquet fetches the
+// byte ranges it needs instead of the whole thing. Materialising it here would
+// pull every row into wasm memory and make the range requests pointless.
+app.ports.loadSource.subscribe(async ({ cellId, format, uri }) => {
+  const started = performance.now();
+  const name = quoteIdent(cellId);
+  const reader = READERS[format];
+  try {
+    if (!reader) throw new Error(`unknown source format: ${format}`);
+
+    // Registered under a name of our own, so the URI never reaches SQL.
+    const vfsName = `source_${cellId}.${format}`;
+    const absolute = new URL(uri, window.location.href).href;
+    await db.registerFileURL(vfsName, absolute, duckdb.DuckDBDataProtocol.HTTP, false);
+
+    await conn.query(
+      `CREATE OR REPLACE VIEW ${name} AS SELECT * FROM ${reader}('${vfsName}')`
+    );
+
+    const described = await describe(name);
+    const counted = plainRows(await conn.query(`SELECT count(*) AS n FROM ${name}`))[0];
+    const rowCount = Number(counted.n);
+    const preview = await conn.query(`SELECT * FROM ${name} LIMIT ${PREVIEW_ROWS}`);
+    const rows = plainRows(preview);
+
+    app.ports.queryOutcome.send({
+      ok: true,
+      cellId,
+      columns: schemaOf(preview),
+      described,
+      rows,
+      rowCount,
+      truncated: rowCount > rows.length,
+
+      // A source's identity is where it points, not what is behind it: the
+      // notebook does not refetch to find out whether a remote file changed.
+      // The row count rides along so that a file which grew or shrank does
+      // invalidate everything downstream, which is cheap to know for Parquet
+      // and free for anything already read.
+      hash: `${format}|${absolute}|${rowCount}`,
+      millis: performance.now() - started,
+    });
+  } catch (err) {
+    app.ports.queryOutcome.send({ ok: false, cellId, error: cleanError(err) });
+  }
+});
 
 // The compiler needs to know which columns exist, what they hold, and which
 // can be absent.
 //
-// `information_schema` is no help for the last part: a table built by CREATE
-// TABLE AS carries no NOT NULL constraints, so every column reports itself as
-// nullable and the row type would drown in Maybe. What the notebook actually
-// wants to know is whether a column *does* contain nulls, which is a question
-// about the data, so it is answered by counting.
-async function describe(table) {
-  const name = quoteIdent(table);
+// `information_schema` is no help for the last part: nothing here carries NOT
+// NULL constraints, so every column reports itself as nullable and the row
+// type would drown in Maybe. What the notebook actually wants to know is
+// whether a column *does* contain nulls, which is a question about the data.
+async function describe(name) {
   const described = plainRows(await conn.query(`DESCRIBE ${name}`));
 
   const nullCounts = described
     .map((c) => `count(*) - count(${quoteIdent(c.column_name)}) AS ${quoteIdent(c.column_name)}`)
     .join(', ');
-  const observed = plainRows(await conn.query(`SELECT ${nullCounts} FROM ${name}`))[0];
+  const observed = plainRows(
+    await conn.query(
+      `SELECT ${nullCounts} FROM (SELECT * FROM ${name} LIMIT ${NULL_SAMPLE})`
+    )
+  )[0];
 
-  return {
-    name: table,
-    columns: described.map((c) => ({
-      name: c.column_name,
-      type: c.column_type,
-      nullable: Number(observed[c.column_name]) > 0,
-    })),
-  };
+  return described.map((c) => ({
+    name: c.column_name,
+    type: c.column_type,
+    nullable: Number(observed[c.column_name]) > 0,
+  }));
 }
 
 app.ports.materialize.subscribe(async ({ cellId, sql, orderSignificant }) => {
@@ -184,6 +238,7 @@ app.ports.materialize.subscribe(async ({ cellId, sql, orderSignificant }) => {
       ok: true,
       cellId,
       columns: schemaOf(preview),
+      described: await describe(name),
       rows,
       rowCount: Number(n),
       truncated: Number(n) > rows.length,
@@ -214,10 +269,14 @@ function hashQuery(name, orderSignificant) {
 
 app.ports.dropTable.subscribe(async (cellId) => {
   if (!conn) return;
-  try {
-    await conn.query(`DROP TABLE IF EXISTS ${quoteIdent(cellId)}`);
-  } catch {
-    // A table that was never created is not an error worth reporting.
+  // A cell is a table if it was a query and a view if it was a source, and by
+  // the time this runs the cell is gone and cannot say which.
+  for (const kind of ['VIEW', 'TABLE']) {
+    try {
+      await conn.query(`DROP ${kind} IF EXISTS ${quoteIdent(cellId)}`);
+    } catch {
+      // Nothing of that kind under that name. Not worth reporting.
+    }
   }
 });
 
