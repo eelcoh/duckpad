@@ -1,0 +1,507 @@
+module DslTests exposing (checks)
+
+{-| Tests for the DSL front end: parsing, checking, and the two codegen
+targets.
+-}
+
+import Check exposing (Check, assert, equal, isErr)
+import Dict
+import Dsl.Ast exposing (..)
+import Dsl.Check exposing (Cardinality(..))
+import Dsl.Compile
+import Dsl.Parser
+import Dsl.Schema exposing (Schema, Type(..))
+
+
+checks : List Check
+checks =
+    parserChecks ++ checkerChecks ++ sqlChecks ++ elmChecks
+
+
+{-| The fixture schema every checker test runs against. `delivered_at` is
+nullable on purpose: it is the column a constructor payload is drawn from, and
+it is null for every row that is not delivered.
+-}
+schema : Schema
+schema =
+    Dict.fromList
+        [ ( "orders"
+          , [ ( "id", TInt )
+            , ( "owner", TString )
+            , ( "region", TString )
+            , ( "status", TString )
+            , ( "delivered_at", TMaybe TTimestamp )
+            , ( "total", TFloat )
+            ]
+          )
+        , ( "vips", [ ( "owner", TString ) ] )
+        , ( "regions", [ ( "region", TString ) ] )
+        ]
+
+
+compile : String -> Result String Dsl.Compile.Compiled
+compile =
+    Dsl.Compile.compile schema "Generated"
+
+
+rowTypeOf : String -> Result String (List ( String, String ))
+rowTypeOf source =
+    compile source
+        |> Result.map (.rowType >> List.map (\( n, t ) -> ( n, Dsl.Schema.typeName t )))
+
+
+sqlOf : String -> Result String String
+sqlOf source =
+    compile source |> Result.map .sql
+
+
+elmOf : String -> Result String String
+elmOf source =
+    compile source |> Result.map .elmModule
+
+
+contains : String -> String -> Result String String -> Check
+contains name needle result =
+    case result of
+        Err e ->
+            { name = name, ok = False, detail = "compilation failed: " ++ e }
+
+        Ok text ->
+            { name = name
+            , ok = String.contains needle text
+            , detail =
+                if String.contains needle text then
+                    ""
+
+                else
+                    "expected to find:\n      " ++ needle ++ "\n    in:\n" ++ text
+            }
+
+
+ok : String -> Result String Pipeline
+ok =
+    Dsl.Parser.parse
+
+
+{-| Most tests only care about the stages, not the boilerplate around them.
+-}
+stagesOf : String -> Result String (List Stage)
+stagesOf source =
+    Dsl.Parser.parse source |> Result.map .stages
+
+
+bodyOf : String -> Result String Expr
+bodyOf source =
+    stagesOf source
+        |> Result.andThen
+            (\stages ->
+                case stages of
+                    (Filter l) :: _ ->
+                        Ok l.body
+
+                    (Map l) :: _ ->
+                        Ok l.body
+
+                    (Reduce l) :: _ ->
+                        Ok l.body
+
+                    _ ->
+                        Err "no lambda stage"
+            )
+
+
+filterExpr : String -> Result String Expr
+filterExpr body =
+    bodyOf ("access t ()\n  |> filter (\\o -> " ++ body ++ ")")
+
+
+parserChecks : List Check
+parserChecks =
+    [ equal "parse: bare source and terminator"
+        (Ok { declarations = [], source = "orders", stages = [ SelectAll ] })
+        (ok "access orders () |> selectAll")
+    , equal "parse: selectAll is not read as select followed by junk"
+        (Ok [ SelectAll ])
+        (stagesOf "access t () |> selectAll")
+    , equal "parse: select is its own terminator"
+        (Ok [ Select ])
+        (stagesOf "access t () |> select")
+    , equal "parse: a pipeline spanning several lines"
+        (Ok [ Filter { param = "o", body = Binary Gt (Access "o" "total") (Lit (LInt 100)) }, SelectAll ])
+        (stagesOf "access orders ()\n  |> filter (\\o -> o.total > 100)\n  |> selectAll")
+    , equal "parse: line comments are ignored"
+        (Ok [ SelectAll ])
+        (stagesOf "-- a note\naccess t () -- trailing\n  |> selectAll")
+
+    -- Operator handling is where a hand-rolled expression grammar usually
+    -- breaks, so each hazard gets its own case.
+    , equal "parse: division is not mistaken for inequality"
+        (Ok (Binary Div (Access "o" "a") (Access "o" "b")))
+        (filterExpr "o.a / o.b")
+    , equal "parse: inequality is not mistaken for division"
+        (Ok (Binary Neq (Access "o" "a") (Access "o" "b")))
+        (filterExpr "o.a /= o.b")
+    , equal "parse: <= is one token, not < then ="
+        (Ok (Binary Lte (Access "o" "a") (Lit (LInt 3))))
+        (filterExpr "o.a <= 3")
+    , equal "parse: multiplication binds tighter than addition"
+        (Ok (Binary Add (Access "o" "a") (Binary Mul (Access "o" "b") (Lit (LInt 2)))))
+        (filterExpr "o.a + o.b * 2")
+    , equal "parse: comparison binds looser than arithmetic"
+        (Ok (Binary Gt (Binary Add (Access "o" "a") (Access "o" "b")) (Lit (LInt 10))))
+        (filterExpr "o.a + o.b > 10")
+    , equal "parse: && binds looser than comparison"
+        (Ok
+            (Binary And
+                (Binary Gt (Access "o" "a") (Lit (LInt 1)))
+                (Binary Lt (Access "o" "b") (Lit (LInt 2)))
+            )
+        )
+        (filterExpr "o.a > 1 && o.b < 2")
+    , equal "parse: || binds looser than &&"
+        (Ok
+            (Binary Or
+                (Binary And (Access "o" "a") (Access "o" "b"))
+                (Access "o" "c")
+            )
+        )
+        (filterExpr "o.a && o.b || o.c")
+    , equal "parse: subtraction is left-associative"
+        (Ok (Binary Sub (Binary Sub (Access "o" "a") (Access "o" "b")) (Access "o" "c")))
+        (filterExpr "o.a - o.b - o.c")
+    , equal "parse: parentheses override precedence"
+        (Ok (Binary Mul (Binary Add (Access "o" "a") (Access "o" "b")) (Lit (LInt 2))))
+        (filterExpr "(o.a + o.b) * 2")
+    , equal "parse: not applies to the operand, not the comparison"
+        (Ok (Binary And (Not (Access "o" "flag")) (Access "o" "other")))
+        (filterExpr "not o.flag && o.other")
+    , equal "parse: string and boolean literals"
+        (Ok (Binary Or (Binary Eq (Access "o" "s") (Lit (LString "hi"))) (Lit (LBool True))))
+        (filterExpr "o.s == \"hi\" || true")
+    , equal "parse: float and negative literals"
+        (Ok (Binary Lt (Access "o" "x") (Lit (LFloat -1.5))))
+        (filterExpr "o.x < -1.5")
+
+    -- Records, aggregates, and the remaining stages.
+    , equal "parse: map builds a record"
+        (Ok
+            [ Map
+                { param = "o"
+                , body =
+                    Record
+                        [ { name = "who", value = Access "o" "owner" }
+                        , { name = "amount", value = Access "o" "total" }
+                        ]
+                }
+            , SelectAll
+            ]
+        )
+        (stagesOf "access t () |> map (\\o -> { who = o.owner, amount = o.total }) |> selectAll")
+    , equal "parse: groupBy takes an accessor"
+        (Ok [ GroupBy "region", SelectAll ])
+        (stagesOf "access t () |> groupBy .region |> selectAll")
+    , equal "parse: aggregates over the group and over a column"
+        (Ok
+            [ Reduce
+                { param = "g"
+                , body =
+                    Record
+                        [ { name = "n", value = Aggregate "count" (Var "g") }
+                        , { name = "revenue", value = Aggregate "sum" (Access "g" "total") }
+                        ]
+                }
+            ]
+        )
+        (stagesOf "access t () |> reduce (\\g -> { n = count g, revenue = sum g.total })")
+    , equal "parse: sortBy defaults to ascending"
+        (Ok [ SortBy { column = "total", direction = Asc } ])
+        (stagesOf "access t () |> sortBy .total")
+    , equal "parse: sortBy takes an explicit direction"
+        (Ok [ SortBy { column = "revenue", direction = Desc } ])
+        (stagesOf "access t () |> sortBy (desc .revenue)")
+    , equal "parse: limit and intersect"
+        (Ok [ Intersect "other_cell", Limit 10 ])
+        (stagesOf "access t () |> intersect other_cell |> limit 10")
+    , equal "parse: a cast on a column"
+        (Ok (Cast (Access "o" "status") "Status"))
+        (bodyOf "access t () |> map (\\o -> o.status as Status)")
+
+    -- Type declarations.
+    , equal "parse: an enum declaration with wire tags"
+        (Ok
+            [ { name = "Status"
+              , constructors =
+                    [ { name = "Submitted", tag = "submitted", payloadColumn = Nothing }
+                    , { name = "InTransit", tag = "in_transit", payloadColumn = Nothing }
+                    ]
+              }
+            ]
+        )
+        (Dsl.Parser.parse "type Status\n  = Submitted \"submitted\"\n  | InTransit \"in_transit\"\n\naccess t () |> selectAll"
+            |> Result.map .declarations
+        )
+    , equal "parse: a constructor can draw its payload from another column"
+        (Ok (Just "delivered_at"))
+        (Dsl.Parser.parse "type S = Delivered \"delivered\" from .delivered_at\naccess t () |> selectAll"
+            |> Result.map .declarations
+            |> Result.map (List.concatMap .constructors)
+            |> Result.andThen
+                (\cs ->
+                    case cs of
+                        c :: _ ->
+                            Ok c.payloadColumn
+
+                        [] ->
+                            Err "no constructors"
+                )
+        )
+    , equal "parse: several declarations precede the pipeline"
+        (Ok 2)
+        (Dsl.Parser.parse "type A = X \"x\"\ntype B = Y \"y\"\naccess t () |> selectAll"
+            |> Result.map (.declarations >> List.length)
+        )
+
+    -- Failures should be failures, not silent successes.
+    , isErr "parse: a pipeline must have a source"
+        (ok "|> selectAll")
+    , isErr "parse: an unclosed paren is rejected"
+        (ok "access t () |> filter (\\o -> o.a > 1")
+    , isErr "parse: an unknown operator is rejected"
+        (filterExpr "o.a <> o.b")
+    , isErr "parse: trailing junk after the pipeline is rejected"
+        (ok "access t () |> selectAll garbage")
+    , isErr "parse: a stage must follow the pipe"
+        (ok "access t () |> ")
+    ]
+
+
+-- CHECKER
+
+
+checkerChecks : List Check
+checkerChecks =
+    [ isErr "check: an unknown source table is rejected"
+        (compile "access nope () |> selectAll")
+    , isErr "check: an unknown column is rejected"
+        (compile "access orders () |> filter (\\o -> o.nope > 1) |> selectAll")
+    , isErr "check: a lambda cannot reach a name it did not bind"
+        (compile "access orders () |> filter (\\o -> x.total > 1) |> selectAll")
+    , isErr "check: filter needs a condition, not a value"
+        (compile "access orders () |> filter (\\o -> o.total) |> selectAll")
+    , isErr "check: a string cannot be compared with a number"
+        (compile "access orders () |> filter (\\o -> o.owner > 1) |> selectAll")
+    , isErr "check: a pipeline must terminate"
+        (compile "access orders () |> filter (\\o -> o.total > 1)")
+    , isErr "check: nothing may follow the terminator"
+        (compile "access orders () |> selectAll |> limit 5")
+    , isErr "check: a row is not a value on its own"
+        (compile "access orders () |> filter (\\o -> o) |> selectAll")
+    , equal "check: with no projection the row type is the source table"
+        (Ok
+            [ ( "id", "Int" )
+            , ( "owner", "String" )
+            , ( "region", "String" )
+            , ( "status", "String" )
+            , ( "delivered_at", "Maybe Timestamp" )
+            , ( "total", "Float" )
+            ]
+        )
+        (rowTypeOf "access orders () |> selectAll")
+    , equal "check: map determines the row type"
+        (Ok [ ( "who", "String" ), ( "amount", "Float" ) ])
+        (rowTypeOf "access orders () |> map (\\o -> { who = o.owner, amount = o.total }) |> selectAll")
+    , equal "check: arithmetic on an Int and a Float widens to Float"
+        (Ok [ ( "x", "Float" ) ])
+        (rowTypeOf "access orders () |> map (\\o -> { x = o.id + o.total }) |> selectAll")
+    , equal "check: division always yields a Float"
+        (Ok [ ( "x", "Float" ) ])
+        (rowTypeOf "access orders () |> map (\\o -> { x = o.id / o.id }) |> selectAll")
+    , isErr "check: a projection cannot name a column twice"
+        (compile "access orders () |> map (\\o -> { a = o.id, a = o.total }) |> selectAll")
+    , isErr "check: a projection cannot be empty"
+        (compile "access orders () |> map (\\o -> { }) |> selectAll")
+    , isErr "check: map must produce a record"
+        (compile "access orders () |> map (\\o -> o.total) |> selectAll")
+
+    -- Grouping. The rule the checker exists to enforce.
+    , isErr "check: an aggregate outside reduce is rejected"
+        (compile "access orders () |> map (\\o -> { n = count o }) |> selectAll")
+    , isErr "check: reduce without groupBy is rejected"
+        (compile "access orders () |> reduce (\\g -> { n = count g }) |> selectAll")
+    , isErr "check: a non-key column in reduce must be aggregated"
+        (compile "access orders () |> groupBy .region |> reduce (\\g -> { o = g.owner }) |> selectAll")
+    , equal "check: the grouping key may be used bare in reduce"
+        (Ok [ ( "region", "String" ), ( "n", "Int" ), ( "revenue", "Float" ) ])
+        (rowTypeOf "access orders () |> groupBy .region |> reduce (\\g -> { region = g.region, n = count g, revenue = sum g.total }) |> selectAll")
+    , equal "check: avg widens an Int column to Float"
+        (Ok [ ( "a", "Float" ) ])
+        (rowTypeOf "access orders () |> groupBy .region |> reduce (\\g -> { a = avg g.id }) |> selectAll")
+    , equal "check: min keeps its column's type"
+        (Ok [ ( "m", "String" ) ])
+        (rowTypeOf "access orders () |> groupBy .region |> reduce (\\g -> { m = min g.owner }) |> selectAll")
+    , isErr "check: sum needs a number"
+        (compile "access orders () |> groupBy .region |> reduce (\\g -> { s = sum g.owner }) |> selectAll")
+    , isErr "check: filter cannot follow groupBy"
+        (compile "access orders () |> groupBy .region |> filter (\\o -> o.total > 1) |> selectAll")
+
+    -- Casts and declarations.
+    , equal "check: a cast gives the column a declared type"
+        (Ok [ ( "owner", "String" ), ( "s", "Status" ) ])
+        (rowTypeOf declaredStatus)
+    , isErr "check: casting to an undeclared type is rejected"
+        (compile "access orders () |> map (\\o -> { s = o.status as Nope }) |> selectAll")
+    , isErr "check: a cast needs a text column"
+        (compile "type S = A \"a\"\naccess orders () |> map (\\o -> { s = o.total as S }) |> selectAll")
+    , isErr "check: a payload column has to exist"
+        (compile "type S = A \"a\" from .nope\naccess orders () |> map (\\o -> { s = o.status as S }) |> selectAll")
+    , isErr "check: two constructors cannot share a tag"
+        (compile "type S = A \"x\" | B \"x\"\naccess orders () |> map (\\o -> { s = o.status as S }) |> selectAll")
+
+    -- Sorting, limits, set operations, metadata.
+    , isErr "check: sortBy must name an output column"
+        (compile "access orders () |> map (\\o -> { a = o.total }) |> sortBy .total |> selectAll")
+    , assert "check: sortBy may name a projection alias"
+        (sqlOf "access orders () |> map (\\o -> { amount = o.total }) |> sortBy (desc .amount) |> selectAll"
+            |> Result.map (String.contains "ORDER BY \"amount\" DESC")
+            |> Result.withDefault False
+        )
+    , isErr "check: limit must be positive"
+        (compile "access orders () |> limit 0 |> selectAll")
+    , isErr "check: intersect needs matching columns"
+        (compile "access orders () |> intersect vips |> selectAll")
+    , assert "check: intersect accepts a matching row type"
+        (compile "access orders () |> map (\\o -> { owner = o.owner }) |> intersect vips |> selectAll"
+            |> resultOk
+        )
+    , equal "check: reads names the source and everything intersected"
+        (Ok [ "orders", "vips" ])
+        (compile "access orders () |> map (\\o -> { owner = o.owner }) |> intersect vips |> selectAll"
+            |> Result.map .reads
+        )
+    , equal "check: selectAll is many rows"
+        (Ok Many)
+        (compile "access orders () |> selectAll" |> Result.map .cardinality)
+    , equal "check: select is one row"
+        (Ok One)
+        (compile "access orders () |> select" |> Result.map .cardinality)
+    , equal "check: a cell that never sorts has no significant order"
+        (Ok False)
+        (compile "access orders () |> selectAll" |> Result.map .orderSignificant)
+    , equal "check: sorting makes the row order significant"
+        (Ok True)
+        (compile "access orders () |> sortBy .total |> selectAll" |> Result.map .orderSignificant)
+    , equal "check: limiting makes the row order significant"
+        (Ok True)
+        (compile "access orders () |> limit 5 |> selectAll" |> Result.map .orderSignificant)
+    ]
+
+
+resultOk : Result e a -> Bool
+resultOk r =
+    case r of
+        Ok _ ->
+            True
+
+        Err _ ->
+            False
+
+
+{-| The worked example the whole phase is aimed at: a declared type rebuilt
+from a tag column, with one constructor drawing a payload from a sibling.
+-}
+declaredStatus : String
+declaredStatus =
+    """
+type Status
+  = Submitted "submitted"
+  | InTransit "in_transit"
+  | Delivered "delivered" from .delivered_at
+
+access orders ()
+  |> filter (\\o -> o.total > 100.0)
+  |> map (\\o -> { owner = o.owner, s = o.status as Status })
+  |> selectAll
+"""
+
+
+
+-- SQL CODEGEN
+
+
+sqlChecks : List Check
+sqlChecks =
+    [ equal "sql: the simplest pipeline"
+        (Ok "SELECT *\nFROM \"orders\"")
+        (sqlOf "access orders () |> selectAll")
+    , equal "sql: filter becomes WHERE"
+        (Ok "SELECT *\nFROM \"orders\"\nWHERE (\"total\" > 100)")
+        (sqlOf "access orders () |> filter (\\o -> o.total > 100) |> selectAll")
+    , equal "sql: two filters are conjoined"
+        (Ok "SELECT *\nFROM \"orders\"\nWHERE ((\"total\" > 100) AND (\"owner\" = 'ada'))")
+        (sqlOf "access orders () |> filter (\\o -> o.total > 100) |> filter (\\o -> o.owner == \"ada\") |> selectAll")
+    , equal "sql: inequality uses the SQL spelling"
+        (Ok "SELECT *\nFROM \"orders\"\nWHERE (\"owner\" <> 'ada')")
+        (sqlOf "access orders () |> filter (\\o -> o.owner /= \"ada\") |> selectAll")
+    , equal "sql: map becomes an aliased projection"
+        (Ok "SELECT \"owner\" AS \"who\", \"total\" AS \"amount\"\nFROM \"orders\"")
+        (sqlOf "access orders () |> map (\\o -> { who = o.owner, amount = o.total }) |> selectAll")
+    , equal "sql: groupBy and aggregates"
+        (Ok "SELECT \"region\" AS \"region\", count(*) AS \"n\", sum(\"total\") AS \"revenue\"\nFROM \"orders\"\nGROUP BY \"region\"")
+        (sqlOf "access orders () |> groupBy .region |> reduce (\\g -> { region = g.region, n = count g, revenue = sum g.total }) |> selectAll")
+    , equal "sql: sort and limit"
+        (Ok "SELECT *\nFROM \"orders\"\nORDER BY \"total\" DESC\nLIMIT 5")
+        (sqlOf "access orders () |> sortBy (desc .total) |> limit 5 |> selectAll")
+    , equal "sql: a string literal is escaped, not interpolated"
+        (Ok "SELECT *\nFROM \"orders\"\nWHERE (\"owner\" = 'it''s')")
+        (sqlOf "access orders () |> filter (\\o -> o.owner == \"it's\") |> selectAll")
+    , contains "sql: intersect wraps both branches"
+        "INTERSECT\n(SELECT * FROM \"vips\")"
+        (sqlOf "access orders () |> map (\\o -> { owner = o.owner }) |> intersect vips |> selectAll")
+    , contains "sql: a cast selects the underlying tag column"
+        "\"status\" AS \"s\""
+        (sqlOf declaredStatus)
+    , contains "sql: a payload column is selected even though it is not a field"
+        "\"delivered_at\""
+        (sqlOf declaredStatus)
+    ]
+
+
+
+-- ELM CODEGEN
+
+
+elmChecks : List Check
+elmChecks =
+    [ contains "elm: the row alias mirrors the projection"
+        "type alias Row =\n    { who : String\n    , amount : Float\n    }"
+        (elmOf "access orders () |> map (\\o -> { who = o.owner, amount = o.total }) |> selectAll")
+    , contains "elm: selectAll yields a list"
+        "type alias Value =\n    List Row"
+        (elmOf "access orders () |> selectAll")
+    , contains "elm: select yields a Maybe"
+        "type alias Value =\n    Maybe Row"
+        (elmOf "access orders () |> select")
+    , contains "elm: a decoder reads the projection's alias, not the source column"
+        "(D.field \"d\" (D.nullable posix))"
+        (elmOf "access orders () |> map (\\o -> { d = o.delivered_at }) |> selectAll")
+    , contains "elm: the declared type is emitted with its payload"
+        "type Status\n    = Submitted\n    | InTransit\n    | Delivered Time.Posix"
+        (elmOf declaredStatus)
+    , contains "elm: the tag decoder is parameterised by column"
+        "statusFrom : String -> D.Decoder Status"
+        (elmOf declaredStatus)
+    , contains "elm: an unknown tag fails the decode"
+        "D.fail (\"unknown Status: \" ++ other)"
+        (elmOf declaredStatus)
+    , contains "elm: the payload is read from the sibling column"
+        "D.map Delivered (D.field \"delivered_at\" posix)"
+        (elmOf declaredStatus)
+    , contains "elm: the row decoder is assembled with andMap"
+        "D.succeed Row\n        |> andMap"
+        (elmOf declaredStatus)
+    , assert "elm: Time is only imported when something needs it"
+        (elmOf "access orders () |> map (\\o -> { a = o.owner }) |> selectAll"
+            |> Result.map (\t -> not (String.contains "import Time" t))
+            |> Result.withDefault False
+        )
+    ]

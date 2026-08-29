@@ -63,7 +63,7 @@ opportunistic parallel track, not a blocker. Everything below assumes (b).
   validate the riskiest integration point (Arrow/JS -> typed Elm) with
   the fewest moving parts, before any codegen exists.
 
-## Phase 3 — The DSL and its compiler
+## Phase 3 — The DSL and its compiler  [DONE]
 
 - Formal grammar (PEG) for the pipeline subset: `access`, `filter`,
   `map`, `reduce`, `intersect`, `select`/`selectAll`, lambda +
@@ -74,6 +74,79 @@ opportunistic parallel track, not a blocker. Everything below assumes (b).
   decoder).
 - Unit-test against fixtures in isolation before wiring into anything
   live.
+
+### Phase 3 as built
+
+Written in Elm rather than as a native binary. The Phase 4 daemon exists
+because `elm make` has no browser build; our own compiler has no such
+constraint, so it runs client-side. Query cells therefore need no daemon
+at all, and a shared static notebook can recompile its own queries. Only
+hand-written Elm escape-hatch cells still require the daemon, which
+shrinks Phase 4 rather than growing it.
+
+Modules, all under `src/Dsl/`:
+
+- `Schema.elm` — the type language and the DuckDB type mapping.
+- `Ast.elm` — surface syntax.
+- `Parser.elm` — `elm/parser`, lexeme style. Binary operators are read by
+  maximal munch into a flat list and folded by precedence afterwards,
+  which is what keeps `/` from biting off half of `/=` and forcing the
+  grammar to backtrack.
+- `Check.elm` — AST + schema into a typed IR.
+- `Sql.elm` and `ElmGen.elm` — the two renderings of that one IR.
+- `Compile.elm` — the front door.
+
+The language:
+
+    type Status
+      = Submitted "submitted"
+      | InTransit "in_transit"
+      | Delivered "delivered" from .delivered_at
+
+    access orders ()
+      |> filter (\o -> o.total > 100.0)
+      |> map (\o -> { owner = o.owner, status = o.status as Status })
+      |> selectAll
+
+Stages: `access`, `filter`, `map`, `groupBy`, `reduce`, `sortBy`,
+`limit`, `intersect`, `select`, `selectAll`. Aggregates: `count`, `sum`,
+`avg`, `min`, `max`.
+
+Decisions worth remembering:
+
+- The checker enforces SQL's grouping rule at the language level: inside
+  `reduce`, a bare column is only legal if it is the grouping key.
+  "column must appear in the GROUP BY clause" becomes a message about
+  the cell being edited.
+- A constructor's `from .column` payload makes the compiler select a
+  column the row type does not expose. Hand-written pairs drift exactly
+  here, which is the case for co-deriving both artifacts from one IR.
+- `select` generates `Maybe Row`, not `Row`. A query matching nothing is
+  an ordinary outcome. Rejecting a result that has more than one row is
+  a runtime concern and lands in Phase 5.
+- `Compiled.reads` is exact, so the syntactic `Deps.identifiers` guess
+  can be retired for DSL cells when Phase 5 wires this in.
+- `Compiled.orderSignificant` is true only when a cell sorts or limits,
+  which is what the order-insensitive content hash needs in order to be
+  safe.
+
+Deliberately not in Phase 3, and each an honest gap rather than an
+oversight:
+
+- Joins. Only `intersect` combines two tables.
+- `filter` after `groupBy`, i.e. HAVING. Rejected with a message saying
+  to move the filter earlier.
+- Opaque newtype wrappers (`type OrderId = OrderId UInt64`). Only
+  enum-style ADTs with string wire tags are supported; the mechanism for
+  attaching a declared type to a column is proven, the wrapper shape is
+  not built.
+- User-defined functions and modules, which real Acadia has.
+
+Verified by 124 checks in `mise run test`, plus `mise run roundtrip`,
+which executes every fixture's generated SQL against a real DuckDB built
+from the sample CSV and puts every generated module through `elm make`.
+That harness was negative-controlled: deliberately corrupting codegen
+makes it fail.
 
 ## Phase 4 — Compile daemon + per-cell module scheme
 
@@ -162,5 +235,13 @@ Findings worth carrying into Phase 3:
 
 ## Next up
 
-Phase 3: the DSL grammar, type checker, and the two co-derived codegen
-targets. `Spike.Orders` is the exact shape the Elm target must emit.
+Phase 5, wiring, is now the natural next step rather than Phase 4: the
+DSL compiler runs in the browser, so query cells can be switched from
+raw SQL to the DSL without a daemon existing. That means replacing the
+notebook's SQL cells with DSL cells, feeding real DuckDB schemas into
+the checker, retiring `Deps.identifiers` in favour of `Compiled.reads`,
+and using `orderSignificant` to decide how strictly the value cache
+compares a cell.
+
+Phase 4 shrinks to "a daemon for hand-written Elm cells" and can wait
+until those are wanted.

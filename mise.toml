@@ -17,3 +17,10 @@ run = """
 elm make tests/TestRunner.elm --output=tests/tests.js > /dev/null
 node tests/run.js
 """
+
+[tasks.roundtrip]
+description = "Execute every fixture's generated SQL in DuckDB and compile its generated Elm"
+run = """
+elm make tests/Fixtures.elm --output=tests/fixtures.js > /dev/null
+node tests/roundtrip.js
+"""
