@@ -354,34 +354,91 @@ Checked and rejected:
   needs a null-string option the source language does not have — a fair
   argument for adding reader options later.
 
-## Joins  [DONE]
+## Combining rows  [DONE]
 
     access orders ()
-      |> join customers (\o c -> o.owner == c.owner)
-      |> leftJoin people (\r p -> r.owner == p.person)
+      |> intersect .owner customers .owner
+      |> map (\(o, c) -> { who = o.owner, tier = c.tier })
+      |> selectAll
 
-Two parameters, because the whole question a join asks is which side a
-column came from.
+`intersect` is an inner join, `diff` a left join, `exclude` an anti-join.
+The vocabulary is Acadia's own, and so is the shape.
 
-The design problem was what a row looks like afterwards. Collisions on
-`id` or `date` are the norm, and the expression language has only
-single-level field access, so there is nowhere to put a qualifier.
+### What the real Acadia docs changed
 
-The resolution: an equality between two columns of the *same name*
-compiles to `USING`, so the key appears once. Any other shared name is a
-compile error that says to project one side in its own cell first. Those
-two rules together make every name in the merged row unique — which is
-what lets join predicates, and every stage after them, refer to columns
-without qualifying them by table at all. The SQL renderer never emits a
-table prefix.
+This was first built as `join`/`leftJoin` taking a boolean predicate and
+producing a flat merged row, with an equi-join on a shared name compiled
+to `USING` and any other shared name a compile error. That was invented,
+not borrowed: the DSL had been designed from the homepage's marketing
+copy, which names only `map`, `filter`, `reduce` and `intersect`.
 
-`leftJoin` wraps the right side's columns in `Maybe`. An outer join that
-matched nothing is a runtime surprise in SQL and a type here.
+Acadia's full API documentation turns out to be public, just not linked
+as a file. The site is an Elm SPA that fetches hashed assets under `/_/`;
+fetching a page and grepping for `/_/[a-f0-9]+\.(md|json)` finds them.
+`b402657d…json` is the complete docs.json, 28 modules. The language is by
+Evan Czaplicki, the creator of Elm.
 
-Restriction worth knowing: a same-name equality has to be the *whole*
-condition. `o.k == c.k && o.a > c.b` cannot become `USING`, and as `ON`
-it would leave `k` ambiguous, so it is rejected. Rename in an upstream
-cell.
+Its `Rows` module has joins under set-operation names:
+
+    intersect : (a -> key) -> Rows a -> (b -> key) -> Rows b -> Rows ( a, b )
+    diff      : (a -> key) -> Rows a -> (b -> key) -> Rows b -> Rows ( a, Maybe b )
+    exclude   : (a -> key) -> Rows a -> (b -> key) -> Rows b -> Rows a
+
+Two of those ideas are better than what had been built here, and both
+were adopted:
+
+- **Key extractors, not a predicate.** These are equi-joins by
+  construction. There is no way to write a non-equi join, and therefore
+  no way to write an accidental cross product.
+- **Paired rows, not merged ones.** Each side keeps its own namespace, so
+  two tables that both have `id` need no renaming and no collision rule.
+  The whole `USING`-plus-error mechanism was machinery solving a problem
+  that only existed because rows were flattened. It is gone. A later
+  lambda destructures instead: `\(o, c) -> …`, with arity checked against
+  the number of sides. A table combined with itself gets a distinct alias
+  and works, which the flat design could never have managed.
+
+Also corrected: the old `intersect` stage was SQL `INTERSECT`, a set
+operation over identical row types. That was a misreading of the verb
+from a marketing list. Acadia has no SQL-style set operations at all —
+`union` and `xunion` are key-based joins too. The stage is removed.
+
+### Design notes
+
+- The SQL aliases every table and qualifies every column, which is what
+  lets sides keep separate namespaces.
+- `groupBy` and columns inside `reduce` take a bare accessor with no
+  pattern to disambiguate them, so they resolve across sides and refuse
+  an ambiguous name rather than guessing.
+- A pipeline that combines tables must project with `map` before
+  selecting: the output row has to be a record.
+- `exclude` contributes no columns, so it adds no side and becomes a
+  `NOT EXISTS` in the WHERE clause.
+
+### Still divergent from real Acadia
+
+- Acadia's `Rows` are first-class values combined by a function over two
+  of them; ours is a single pipeline per cell, so combining is a stage
+  and the right side is named rather than piped.
+- `select` there returns exactly one row and `selectMaybe` returns
+  `Maybe`. Ours has only `select`, which behaves as `selectMaybe`.
+- `groupBy` there takes a `Reducer` directly and yields `(key, summary)`
+  pairs. `Reducer` is an applicative built from `count`, `min`, `max`,
+  `median`, `mode` and `percentile` with `map2..map9` — and notably has
+  no `sum` or `avg`.
+- `access foods Security.Unrestricted` passes a security policy where
+  ours writes `()`. Row-level security is not modelled here at all.
+- No `union`/`xunion` (full outer joins).
+
+### The principle behind all of it
+
+Acadia has no recursion and no `for` loops, deliberately, because Datalog
+is Prolog without unbounded recursion. That buys three guarantees: the
+1+N query problem cannot be expressed, all queries terminate, and all
+queries terminate in time polynomial to the data. Our DSL inherits the
+same guarantees for the same reason — it has no recursion and no
+user-defined functions — which is worth stating explicitly before anyone
+adds either.
 
 ## Phase 8 — Sharing story
 
@@ -393,7 +450,7 @@ cell.
 ## Current state (2026-08-29)
 
 `mise run build` compiles the shell, `mise run serve` hosts it on :8080,
-`mise run test` runs 184 checks under node, and `mise run roundtrip`
+`mise run test` runs 182 checks under node, and `mise run roundtrip`
 executes every fixture's generated SQL against a real DuckDB and compiles
 every generated module with `elm make`.
 

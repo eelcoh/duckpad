@@ -1,8 +1,8 @@
 module Dsl.Ast exposing
     ( Constructor
+    , CombineKind(..)
     , Expr(..)
-    , JoinKind(..)
-    , Lambda2
+    , Pattern(..)
     , Field
     , Lambda
     , Literal(..)
@@ -56,22 +56,30 @@ type alias Constructor =
     }
 
 
-type JoinKind
-    = Inner
-    | LeftOuter
+{-| How two collections of rows are combined.
+
+Named after Acadia's own vocabulary rather than SQL's. All three take a key
+extractor from each side, so they are equi-joins by construction: there is no
+way to write a non-equi join, and therefore no way to write an accidental
+cross product.
+
+-}
+type CombineKind
+    = Intersect
+    | Diff
+    | Exclude
 
 
 type Stage
     = Filter Lambda
-      -- `join customers (\o c -> o.customer_id == c.id)`. Two parameters,
-      -- because the whole point is to say which side a column came from.
-    | Join JoinKind String Lambda2
+      -- `intersect .customer_id customers .id` — combine the rows so far with
+      -- another table, matching on a key from each side.
+    | Combine CombineKind String String String
     | Map Lambda
     | GroupBy String
     | Reduce Lambda
     | SortBy SortSpec
     | Limit Int
-    | Intersect String
     | Select
     | SelectAll
 
@@ -87,15 +95,21 @@ type SortDir
     | Desc
 
 
+{-| What a lambda binds.
+
+Before any combining a row has one side, and a lambda names it: `\o -> …`.
+After combining it has several, and the lambda destructures them:
+`\(o, c) -> …`. The arity has to match, which makes it impossible to forget
+that a row has grown.
+
+-}
+type Pattern
+    = Single String
+    | Destructure (List String)
+
+
 type alias Lambda =
-    { param : String
-    , body : Expr
-    }
-
-
-type alias Lambda2 =
-    { left : String
-    , right : String
+    { pattern : Pattern
     , body : Expr
     }
 

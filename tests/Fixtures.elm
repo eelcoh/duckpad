@@ -92,32 +92,41 @@ access orders ()
   |> selectAll
 """
       )
-    , ( "intersected"
+    , ( "excluded"
       , """
 access orders ()
-  |> map (\\o -> { owner = o.owner })
-  |> intersect vips
+  |> exclude .owner vips .owner
+  |> map (\\o -> { owner = o.owner, total = o.total })
   |> sortBy .owner
   |> selectAll
 """
       )
-    , ( "join_using"
+    , ( "intersected"
       , """
 access orders ()
-  |> join customers (\\o c -> o.owner == c.owner)
-  |> filter (\\r -> r.tier == "gold")
-  |> groupBy .owner
-  |> reduce (\\g -> { owner = g.owner, spend = sum g.total })
+  |> intersect .owner customers .owner
+  |> filter (\\(o, c) -> c.tier == "gold")
+  |> groupBy .tier
+  |> reduce (\\g -> { tier = g.tier, spend = sum g.total, n = count g })
   |> sortBy (desc .spend)
   |> selectAll
 """
       )
-    , ( "left_join"
+    , ( "differenced"
       , """
 access orders ()
-  |> leftJoin people (\\o p -> o.owner == p.person)
-  |> map (\\r -> { who = r.owner, standing = r.rank, amount = r.total })
+  |> diff .owner people .person
+  |> map (\\(o, p) -> { who = o.owner, standing = p.rank, amount = o.total })
   |> limit 25
+  |> selectAll
+"""
+      )
+    , ( "self_combined"
+      , """
+access orders ()
+  |> intersect .owner orders .owner
+  |> map (\\(a, b) -> { left = a.id, right = b.id, who = a.owner })
+  |> limit 10
   |> selectAll
 """
       )

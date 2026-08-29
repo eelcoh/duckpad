@@ -68,8 +68,8 @@ reserved : Set String
 reserved =
     Set.fromList
         [ "access", "filter", "map", "groupBy", "reduce", "sortBy", "limit"
-        , "intersect", "select", "selectAll", "type", "from", "as", "asc"
-        , "desc", "not", "true", "false", "join", "leftJoin"
+        , "intersect", "diff", "exclude", "select", "selectAll", "type"
+        , "from", "as", "asc", "desc", "not", "true", "false"
         ]
 
 
@@ -173,14 +173,14 @@ stage =
         |. sym "|>"
         |= Parser.oneOf
             [ Parser.map Filter (lambdaStage "filter")
-            , joinStage "leftJoin" LeftOuter
-            , joinStage "join" Inner
+            , combineStage "intersect" Intersect
+            , combineStage "diff" Diff
+            , combineStage "exclude" Exclude
             , Parser.map Map (lambdaStage "map")
             , Parser.map Reduce (lambdaStage "reduce")
             , Parser.succeed GroupBy |. kw "groupBy" |= accessor
             , Parser.succeed SortBy |. kw "sortBy" |= sortSpec
             , Parser.succeed Limit |. kw "limit" |= (Parser.int |. ws)
-            , Parser.succeed Intersect |. kw "intersect" |= lname
 
             -- `selectAll` first: `select` is a prefix of it.
             , Parser.succeed SelectAll |. kw "selectAll"
@@ -188,24 +188,19 @@ stage =
             ]
 
 
-joinStage : String -> JoinKind -> Parser Stage
-joinStage name kind =
-    Parser.succeed (Join kind)
+{-| `intersect .customer_id customers .id`
+
+Key extractor, table, key extractor — the same order Acadia writes it in,
+with the left-hand rows supplied by the pipeline rather than named.
+
+-}
+combineStage : String -> CombineKind -> Parser Stage
+combineStage name kind =
+    Parser.succeed (Combine kind)
         |. kw name
+        |= accessor
         |= lname
-        |. sym "("
-        |= lambda2
-        |. sym ")"
-
-
-lambda2 : Parser Lambda2
-lambda2 =
-    Parser.succeed Lambda2
-        |. sym "\\"
-        |= lname
-        |= lname
-        |. sym "->"
-        |= expr
+        |= accessor
 
 
 lambdaStage : String -> Parser Lambda
@@ -221,9 +216,27 @@ lambda : Parser Lambda
 lambda =
     Parser.succeed Lambda
         |. sym "\\"
-        |= lname
+        |= pattern
         |. sym "->"
         |= expr
+
+
+pattern : Parser Pattern
+pattern =
+    Parser.oneOf
+        [ Parser.succeed Destructure
+            |. sym "("
+            |= names
+            |. sym ")"
+        , Parser.map Single lname
+        ]
+
+
+names : Parser (List String)
+names =
+    Parser.succeed (::)
+        |= lname
+        |= many (Parser.succeed identity |. sym "," |= lname)
 
 
 accessor : Parser String

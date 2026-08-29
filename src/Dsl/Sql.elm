@@ -8,73 +8,101 @@ what keeps it in step with the generated Elm.
 
 -}
 
-import Dsl.Ast as Ast exposing (JoinKind(..), Literal(..), Op(..), SortDir(..))
-import Dsl.Check exposing (Checked, CheckedJoin, Projection(..), TExpr(..))
+import Dsl.Ast as Ast exposing (CombineKind(..), Literal(..), Op(..), SortDir(..))
+import Dsl.Check exposing (Checked, CheckedCombine, Projection(..), TExpr(..))
 import Dsl.Schema exposing (Type(..))
 
 
 render : Checked -> String
 render checked =
-    let
-        core =
-            ([ "SELECT " ++ projection checked
-             , "FROM " ++ ident checked.source
-             ]
-                ++ List.map joinClause checked.joins
-            )
-                ++ maybeLine "WHERE " (Maybe.map expr checked.filter)
-                ++ maybeLine "GROUP BY " (Maybe.map (ident << Tuple.first) checked.groupBy)
-                |> String.join "\n"
-
-        withIntersects =
-            case checked.intersects of
-                [] ->
-                    core
-
-                others ->
-                    -- Parenthesised so the trailing ORDER BY / LIMIT applies
-                    -- to the whole set operation rather than its last branch.
-                    ("(" ++ core ++ ")")
-                        :: List.map (\o -> "INTERSECT\n(SELECT * FROM " ++ ident o ++ ")") others
-                        |> String.join "\n"
-    in
-    (withIntersects :: tail checked)
+    ([ "SELECT " ++ projection checked
+     , "FROM " ++ ident checked.source ++ " AS " ++ ident checked.sourceAlias
+     ]
+        ++ List.filterMap joinClause checked.combines
+        ++ maybeLine "WHERE " (whereClause checked)
+        ++ maybeLine "GROUP BY " (Maybe.map groupKey checked.groupBy)
+        ++ maybeLine "ORDER BY " (Maybe.map sort checked.sort)
+        ++ maybeLine "LIMIT " (Maybe.map String.fromInt checked.limit)
+    )
         |> String.join "\n"
 
 
-{-| Columns are never qualified by table here, and do not need to be: the
-checker rejects a join whose sides share a column name, except the equi-join
-key it turns into `USING`. Every name in the merged row is therefore unique.
+groupKey : ( String, String, a ) -> String
+groupKey ( alias, column, _ ) =
+    qualified alias column
+
+
+{-| `intersect` and `diff` become joins; `exclude` is an anti-join and is
+expressed in the WHERE clause instead, because it contributes no columns.
 -}
-joinClause : CheckedJoin -> String
-joinClause join =
+joinClause : CheckedCombine -> Maybe String
+joinClause combine =
+    case combine.kind of
+        Exclude ->
+            Nothing
+
+        Intersect ->
+            Just (joinLine "JOIN " combine)
+
+        Diff ->
+            Just (joinLine "LEFT JOIN " combine)
+
+
+joinLine : String -> CheckedCombine -> String
+joinLine keyword combine =
+    keyword
+        ++ ident combine.table
+        ++ " AS "
+        ++ ident combine.alias
+        ++ " ON "
+        ++ qualified combine.leftAlias combine.leftKey
+        ++ " = "
+        ++ qualified combine.alias combine.rightKey
+
+
+whereClause : Checked -> Maybe String
+whereClause checked =
     let
-        keyword =
-            case join.kind of
-                Inner ->
-                    "JOIN "
-
-                LeftOuter ->
-                    "LEFT JOIN "
-
-        condition =
-            case ( join.using, join.on ) of
-                ( Just key, _ ) ->
-                    " USING (" ++ ident key ++ ")"
-
-                ( Nothing, Just predicate ) ->
-                    " ON " ++ expr predicate
-
-                ( Nothing, Nothing ) ->
-                    ""
+        conditions =
+            (checked.filter |> Maybe.map expr |> maybeToList)
+                ++ List.filterMap antiJoin checked.combines
     in
-    keyword ++ ident join.table ++ condition
+    case conditions of
+        [] ->
+            Nothing
+
+        _ ->
+            Just (String.join " AND " conditions)
 
 
-tail : Checked -> List String
-tail checked =
-    maybeLine "ORDER BY " (Maybe.map sort checked.sort)
-        ++ maybeLine "LIMIT " (Maybe.map String.fromInt checked.limit)
+maybeToList : Maybe a -> List a
+maybeToList m =
+    case m of
+        Just x ->
+            [ x ]
+
+        Nothing ->
+            []
+
+
+antiJoin : CheckedCombine -> Maybe String
+antiJoin combine =
+    case combine.kind of
+        Exclude ->
+            Just
+                ("NOT EXISTS (SELECT 1 FROM "
+                    ++ ident combine.table
+                    ++ " AS "
+                    ++ ident combine.alias
+                    ++ " WHERE "
+                    ++ qualified combine.alias combine.rightKey
+                    ++ " = "
+                    ++ qualified combine.leftAlias combine.leftKey
+                    ++ ")"
+                )
+
+        _ ->
+            Nothing
 
 
 maybeLine : String -> Maybe String -> List String
@@ -113,7 +141,7 @@ projection checked =
                 -- Payload columns the generated decoder reads but the row type
                 -- does not expose. Selected under their own names.
                 hidden =
-                    List.map (ident << Tuple.first) checked.hidden
+                    List.map (\( alias, name, _ ) -> qualified alias name ++ " AS " ++ ident name) checked.hidden
             in
             String.join ", " (visible ++ hidden)
 
@@ -121,8 +149,8 @@ projection checked =
 expr : TExpr -> String
 expr e =
     case e of
-        TCol name _ ->
-            ident name
+        TCol alias name _ ->
+            qualified alias name
 
         TLit literal _ ->
             lit literal
@@ -136,8 +164,8 @@ expr e =
         TAgg fn Nothing _ ->
             fn ++ "(*)"
 
-        TAgg fn (Just column) _ ->
-            fn ++ "(" ++ ident column ++ ")"
+        TAgg fn (Just ( alias, column )) _ ->
+            fn ++ "(" ++ qualified alias column ++ ")"
 
         TCast inner _ ->
             -- A custom type exists only in the Elm output; SQL carries the
@@ -181,6 +209,11 @@ lit literal =
 
         LString s ->
             "'" ++ String.replace "'" "''" s ++ "'"
+
+
+qualified : String -> String -> String
+qualified alias column =
+    ident alias ++ "." ++ ident column
 
 
 ident : String -> String

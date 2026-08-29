@@ -1,8 +1,9 @@
 module Dsl.Check exposing
     ( Cardinality(..)
     , Checked
-    , CheckedJoin
+    , CheckedCombine
     , Projection(..)
+    , Side
     , TExpr(..)
     , check
     , typeOf
@@ -10,14 +11,17 @@ module Dsl.Check exposing
 
 {-| Surface AST plus a schema, into a typed IR.
 
-Everything downstream reads this IR and nothing re-derives it, which is the
-point: the SQL and the Elm module are two renderings of one checked structure,
-so they cannot disagree about what a column is called or what type it holds.
+Everything downstream reads this IR and nothing re-derives it: the SQL and the
+Elm module are two renderings of one checked structure, so they cannot
+disagree about what a column is called or what type it holds.
 
-The checker also enforces SQL's grouping rule at the language level — inside
-`reduce`, a bare column reference is only legal if it is the grouping key —
-so the usual "column must appear in the GROUP BY clause" runtime error becomes
-a message about the cell you are editing.
+The shape a row takes after combining two tables is the design decision this
+module is built around. Rows are **paired, not merged**: after
+`intersect .customer_id customers .id` the row has two sides, and a later
+lambda destructures them with `\(o, c) -> …`. Each side keeps its own
+namespace, so two tables that both have an `id` need no renaming, no
+qualification rule, and no collision error. The SQL renderer aliases the
+tables and qualifies every column, which is what makes that work.
 
 -}
 
@@ -28,16 +32,13 @@ import Dsl.Schema as Schema exposing (Schema, Type(..))
 
 type alias Checked =
     { source : String
+    , sourceAlias : String
     , reads : List String
-    , joins : List CheckedJoin
+    , combines : List CheckedCombine
     , filter : Maybe TExpr
-    , groupBy : Maybe ( String, Type )
+    , groupBy : Maybe ( String, String, Type )
     , projection : Projection
-
-    -- Columns the SQL must select but the row type must not expose: payloads
-    -- that a cast's decoder reads out of a sibling column.
-    , hidden : List ( String, Type )
-    , intersects : List String
+    , hidden : List ( String, String, Type )
     , sort : Maybe SortSpec
     , limit : Maybe Int
     , cardinality : Cardinality
@@ -47,25 +48,29 @@ type alias Checked =
     }
 
 
+{-| One collection of rows in scope. A pipeline starts with one and gains
+another for every `intersect` or `diff`.
+-}
+type alias Side =
+    { alias : String
+    , table : String
+    , columns : List ( String, Type )
+    }
+
+
+type alias CheckedCombine =
+    { kind : CombineKind
+    , table : String
+    , alias : String
+    , leftAlias : String
+    , leftKey : String
+    , rightKey : String
+    }
+
+
 type Projection
     = All
     | Fields (List ( String, TExpr ))
-
-
-{-| Either a `USING` key or an `ON` predicate, never both.
-
-An equality between two columns of the same name becomes `USING`, so the key
-appears once in the result. That is not a convenience: it is what keeps every
-name in the merged row unique, which in turn is what lets join predicates and
-every later stage refer to columns without qualifying them by table.
-
--}
-type alias CheckedJoin =
-    { kind : JoinKind
-    , table : String
-    , using : Maybe String
-    , on : Maybe TExpr
-    }
 
 
 type Cardinality
@@ -74,19 +79,18 @@ type Cardinality
 
 
 type TExpr
-    = TCol String Type
+    = TCol String String Type
     | TLit Literal Type
     | TBin Op TExpr TExpr Type
     | TNot TExpr
-      -- function, column (Nothing is `count g`, i.e. count(*)), result type
-    | TAgg String (Maybe String) Type
+    | TAgg String (Maybe ( String, String )) Type
     | TCast TExpr String
 
 
 typeOf : TExpr -> Type
 typeOf expr =
     case expr of
-        TCol _ t ->
+        TCol _ _ t ->
             t
 
         TLit _ t ->
@@ -113,8 +117,7 @@ check : Schema -> Pipeline -> Result String Checked
 check schema ast =
     case Schema.columnsOf ast.source schema of
         Nothing ->
-            Err
-                ("`" ++ ast.source ++ "` is not a table or an earlier cell. Known: " ++ knownTables schema)
+            Err ("`" ++ ast.source ++ "` is not a table or an earlier cell. Known: " ++ knownTables schema)
 
         Just columns ->
             validateDeclarations columns ast.declarations
@@ -140,14 +143,13 @@ type Phase
 
 type alias Builder =
     { source : String
-    , columns : List ( String, Type )
-    , joins : List CheckedJoin
+    , sides : List Side
+    , combines : List CheckedCombine
     , phase : Phase
     , filter : Maybe TExpr
-    , groupBy : Maybe ( String, Type )
+    , groupBy : Maybe ( String, String, Type )
     , projection : Projection
-    , hidden : List ( String, Type )
-    , intersects : List String
+    , hidden : List ( String, String, Type )
     , sort : Maybe SortSpec
     , limit : Maybe Int
     , cardinality : Maybe Cardinality
@@ -158,14 +160,13 @@ type alias Builder =
 start : String -> List ( String, Type ) -> Builder
 start source columns =
     { source = source
-    , columns = columns
-    , joins = []
+    , sides = [ { alias = source, table = source, columns = columns } ]
+    , combines = []
     , phase = Rows
     , filter = Nothing
     , groupBy = Nothing
     , projection = All
     , hidden = []
-    , intersects = []
     , sort = Nothing
     , limit = Nothing
     , cardinality = Nothing
@@ -188,7 +189,8 @@ applyStage schema ast stage builder =
             Err "nothing may follow `select` or `selectAll` — the pipeline ends there"
 
         ( Filter lambda, Rows ) ->
-            checkExpr (envFor ast builder lambda.param False Nothing) lambda.body
+            bind ast builder lambda
+                |> Result.andThen (\env -> checkExpr env lambda.body)
                 |> Result.andThen
                     (\texpr ->
                         if Schema.typeName (typeOf texpr) == "Bool" then
@@ -201,14 +203,15 @@ applyStage schema ast stage builder =
         ( Filter _, _ ) ->
             Err "`filter` has to come before `groupBy`, `reduce` or `map` — filtering grouped rows is not supported yet"
 
-        ( Join kind table lambda, Rows ) ->
-            applyJoin schema ast kind table lambda builder
+        ( Combine kind leftKey table rightKey, Rows ) ->
+            combine schema kind leftKey table rightKey builder
 
-        ( Join _ _ _, _ ) ->
-            Err "a join has to come before `groupBy`, `reduce` or `map`"
+        ( Combine _ _ _ _, _ ) ->
+            Err "combining rows has to come before `groupBy`, `reduce` or `map`"
 
         ( Map lambda, Rows ) ->
-            checkProjection (envFor ast builder lambda.param False Nothing) lambda.body
+            bind ast builder lambda
+                |> Result.andThen (\env -> checkProjection env lambda.body)
                 |> Result.map
                     (\( fields, hidden ) ->
                         { builder
@@ -222,22 +225,18 @@ applyStage schema ast stage builder =
             Err "`map` cannot follow `groupBy` or `reduce` — use `reduce` to build the grouped row"
 
         ( GroupBy column, Rows ) ->
-            case lookupColumn column builder.columns of
-                Nothing ->
-                    Err (unknownColumn column builder.columns)
-
-                Just t ->
-                    Ok { builder | groupBy = Just ( column, t ), phase = Grouped }
+            resolve column builder.sides
+                |> Result.map
+                    (\( alias, t ) ->
+                        { builder | groupBy = Just ( alias, column, t ), phase = Grouped }
+                    )
 
         ( GroupBy _, _ ) ->
             Err "`groupBy` has to come before any projection"
 
         ( Reduce lambda, Grouped ) ->
-            let
-                key =
-                    Maybe.map Tuple.first builder.groupBy
-            in
-            checkProjection (envFor ast builder lambda.param True key) lambda.body
+            groupEnv ast builder lambda
+                |> Result.andThen (\env -> checkProjection env lambda.body)
                 |> Result.map
                     (\( fields, hidden ) ->
                         { builder
@@ -251,8 +250,8 @@ applyStage schema ast stage builder =
             Err "`reduce` needs a `groupBy` immediately before it"
 
         ( SortBy spec, _ ) ->
-            if lookupOutput spec.column builder == Nothing then
-                Err (unknownColumn spec.column (outputColumns builder))
+            if lookupColumn spec.column (outputColumns builder |> Result.withDefault []) == Nothing then
+                Err (unknownColumn spec.column (outputColumns builder |> Result.withDefault []))
 
             else
                 Ok { builder | sort = Just spec }
@@ -264,140 +263,11 @@ applyStage schema ast stage builder =
             else
                 Ok { builder | limit = Just n }
 
-        ( Intersect other, _ ) ->
-            checkIntersect schema other builder
-
         ( Select, _ ) ->
             Ok { builder | cardinality = Just One, phase = Done }
 
         ( SelectAll, _ ) ->
             Ok { builder | cardinality = Just Many, phase = Done }
-
-
-{-| Merge another table into the row.
-
-The predicate is checked with both sides in scope, then the shape of it decides
-how the join is written: an equality between two columns of the same name is a
-`USING`, anything else an `ON`.
-
--}
-applyJoin : Schema -> Pipeline -> JoinKind -> String -> Lambda2 -> Builder -> Result String Builder
-applyJoin schema ast kind table lambda builder =
-    case Schema.columnsOf table schema of
-        Nothing ->
-            Err ("`" ++ table ++ "` is not a table or an earlier cell. Known: " ++ knownTables schema)
-
-        Just rightColumns ->
-            let
-                -- A left join can leave the right side absent, and the row type
-                -- has to say so. This is the kind of thing that is a runtime
-                -- surprise in SQL and a `Maybe` here.
-                contributed =
-                    case kind of
-                        Inner ->
-                            rightColumns
-
-                        LeftOuter ->
-                            List.map (\( n, t ) -> ( n, optional t )) rightColumns
-
-                using =
-                    detectUsing lambda lambda.body
-            in
-            checkExpr (joinEnv ast lambda builder.columns rightColumns) lambda.body
-                |> Result.andThen requirePredicate
-                |> Result.andThen
-                    (\predicate ->
-                        noSharedNames table builder.columns contributed using
-                            |> Result.map
-                                (\_ ->
-                                    { builder
-                                        | columns = merge builder.columns contributed using
-                                        , joins =
-                                            builder.joins
-                                                ++ [ { kind = kind
-                                                     , table = table
-                                                     , using = using
-                                                     , on =
-                                                        case using of
-                                                            Just _ ->
-                                                                Nothing
-
-                                                            Nothing ->
-                                                                Just predicate
-                                                     }
-                                                   ]
-                                    }
-                                )
-                    )
-
-
-requirePredicate : TExpr -> Result String TExpr
-requirePredicate predicate =
-    if Schema.typeName (typeOf predicate) == "Bool" then
-        Ok predicate
-
-    else
-        Err ("a join needs a condition, but this expression is a " ++ Schema.typeName (typeOf predicate))
-
-
-{-| Detected from the surface syntax rather than the checked expression,
-because by then which side a column came from has been forgotten — and that is
-exactly the question being asked.
--}
-detectUsing : Lambda2 -> Expr -> Maybe String
-detectUsing lambda body =
-    case body of
-        Binary Eq (Access a c1) (Access b c2) ->
-            if c1 == c2 && ((a == lambda.left && b == lambda.right) || (a == lambda.right && b == lambda.left)) then
-                Just c1
-
-            else
-                Nothing
-
-        _ ->
-            Nothing
-
-
-optional : Type -> Type
-optional t =
-    case t of
-        TMaybe _ ->
-            t
-
-        _ ->
-            TMaybe t
-
-
-merge : List ( String, Type ) -> List ( String, Type ) -> Maybe String -> List ( String, Type )
-merge left right using =
-    left ++ List.filter (\( n, _ ) -> Just n /= using) right
-
-
-noSharedNames : String -> List ( String, Type ) -> List ( String, Type ) -> Maybe String -> Result String ()
-noSharedNames table left right using =
-    let
-        leftNames =
-            List.map Tuple.first left
-    in
-    right
-        |> List.map Tuple.first
-        |> List.filter (\n -> Just n /= using)
-        |> List.filter (\n -> List.member n leftNames)
-        |> List.head
-        |> (\shared ->
-                case shared of
-                    Nothing ->
-                        Ok ()
-
-                    Just name ->
-                        Err
-                            ("both sides of this join have a column `"
-                                ++ name
-                                ++ "`. Only an equality between two columns of the same name is merged, and it has to be the whole condition; otherwise project `"
-                                ++ table
-                                ++ "` in its own cell first and rename the column there."
-                            )
-           )
 
 
 conjoin : Maybe TExpr -> TExpr -> TExpr
@@ -410,41 +280,262 @@ conjoin existing next =
             TBin And prior next TBool
 
 
-{-| Both sides of an INTERSECT have to agree on names and types, or the result
-has no row type at all.
+
+-- COMBINING
+
+
+{-| Add another table to the row.
+
+`intersect` and `diff` give the row a new side; `exclude` does not, because an
+anti-join contributes no columns — it only removes rows.
+
 -}
-checkIntersect : Schema -> String -> Builder -> Result String Builder
-checkIntersect schema other builder =
-    case Schema.columnsOf other schema of
+combine : Schema -> CombineKind -> String -> String -> String -> Builder -> Result String Builder
+combine schema kind leftKey table rightKey builder =
+    case Schema.columnsOf table schema of
         Nothing ->
-            Err ("`intersect " ++ other ++ "` refers to something that is not a table or an earlier cell")
+            Err ("`" ++ table ++ "` is not a table or an earlier cell. Known: " ++ knownTables schema)
 
-        Just theirs ->
-            let
-                mine =
-                    outputColumns builder
-            in
-            if mine == theirs then
-                Ok { builder | intersects = builder.intersects ++ [ other ] }
+        Just rightColumns ->
+            Result.map2 Tuple.pair
+                (resolve leftKey builder.sides)
+                (columnOf rightKey table rightColumns)
+                |> Result.andThen
+                    (\( ( leftAlias, leftType ), rightType ) ->
+                        if not (comparable (baseType leftType) (baseType rightType)) then
+                            Err
+                                ("these keys cannot match: `"
+                                    ++ leftKey
+                                    ++ "` is a "
+                                    ++ Schema.typeName leftType
+                                    ++ " and `"
+                                    ++ table
+                                    ++ "."
+                                    ++ rightKey
+                                    ++ "` is a "
+                                    ++ Schema.typeName rightType
+                                )
 
-            else
-                Err
-                    ("`intersect "
-                        ++ other
-                        ++ "` needs both sides to have the same columns.\n    this side: "
-                        ++ describeColumns mine
-                        ++ "\n    "
-                        ++ other
-                        ++ ": "
-                        ++ describeColumns theirs
+                        else
+                            let
+                                alias =
+                                    uniqueAlias table builder.sides
+
+                                entry =
+                                    { kind = kind
+                                    , table = table
+                                    , alias = alias
+                                    , leftAlias = leftAlias
+                                    , leftKey = leftKey
+                                    , rightKey = rightKey
+                                    }
+                            in
+                            Ok
+                                { builder
+                                    | combines = builder.combines ++ [ entry ]
+                                    , sides =
+                                        case kind of
+                                            Exclude ->
+                                                builder.sides
+
+                                            Diff ->
+                                                -- A row with no match leaves this
+                                                -- side absent, and the row type
+                                                -- has to say so.
+                                                builder.sides
+                                                    ++ [ { alias = alias
+                                                         , table = table
+                                                         , columns = List.map (\( n, t ) -> ( n, optional t )) rightColumns
+                                                         }
+                                                       ]
+
+                                            Intersect ->
+                                                builder.sides
+                                                    ++ [ { alias = alias, table = table, columns = rightColumns } ]
+                                }
                     )
 
 
-describeColumns : List ( String, Type ) -> String
-describeColumns columns =
-    columns
-        |> List.map (\( name, t ) -> name ++ " : " ++ Schema.typeName t)
-        |> String.join ", "
+{-| A table may appear twice in one pipeline, so aliases are made unique.
+-}
+uniqueAlias : String -> List Side -> String
+uniqueAlias table sides =
+    let
+        taken =
+            List.map .alias sides
+
+        candidate n =
+            if n == 1 then
+                table
+
+            else
+                table ++ "_" ++ String.fromInt n
+
+        pick n =
+            if List.member (candidate n) taken then
+                pick (n + 1)
+
+            else
+                candidate n
+    in
+    pick 1
+
+
+optional : Type -> Type
+optional t =
+    case t of
+        TMaybe _ ->
+            t
+
+        _ ->
+            TMaybe t
+
+
+
+-- SCOPE
+
+
+type alias Env =
+    { bindings : List ( String, Side )
+    , declarations : List TypeDecl
+    , inReduce : Bool
+    , groupKey : Maybe String
+    , sides : List Side
+    }
+
+
+{-| Match a lambda's pattern against the sides currently in scope.
+
+An arity mismatch is the error that makes combining safe: a row that has
+grown cannot go on being read as though it had not.
+
+-}
+bind : Pipeline -> Builder -> Lambda -> Result String Env
+bind ast builder lambda =
+    case ( lambda.pattern, builder.sides ) of
+        ( Single name, [ only ] ) ->
+            Ok (envWith ast builder [ ( name, only ) ])
+
+        ( Single _, sides ) ->
+            Err
+                ("this row has "
+                    ++ String.fromInt (List.length sides)
+                    ++ " sides after combining, so the lambda has to name all of them, as in `\\("
+                    ++ String.join ", " (List.map .alias sides)
+                    ++ ") -> …`"
+                )
+
+        ( Destructure names, sides ) ->
+            if List.length names /= List.length sides then
+                Err
+                    ("this lambda names "
+                        ++ String.fromInt (List.length names)
+                        ++ " rows but there are "
+                        ++ String.fromInt (List.length sides)
+                        ++ " in scope: "
+                        ++ String.join ", " (List.map .alias sides)
+                    )
+
+            else
+                Ok (envWith ast builder (List.map2 Tuple.pair names sides))
+
+
+{-| `reduce` binds the group as a whole rather than destructuring it, so a
+column inside an aggregate is resolved across every side.
+-}
+groupEnv : Pipeline -> Builder -> Lambda -> Result String Env
+groupEnv ast builder lambda =
+    case lambda.pattern of
+        Single name ->
+            Ok
+                { bindings = List.map (\side -> ( name, side )) builder.sides
+                , declarations = ast.declarations
+                , inReduce = True
+                , groupKey = builder.groupBy |> Maybe.map (\( _, c, _ ) -> c)
+                , sides = builder.sides
+                }
+
+        Destructure _ ->
+            Err "`reduce` binds the whole group, so it takes a single name, as in `\\g -> …`"
+
+
+envWith : Pipeline -> Builder -> List ( String, Side ) -> Env
+envWith ast builder bindings =
+    { bindings = bindings
+    , declarations = ast.declarations
+    , inReduce = False
+    , groupKey = Nothing
+    , sides = builder.sides
+    }
+
+
+{-| Find a column by name across every side in scope, refusing if more than
+one side has it. Used where there is no pattern to say which side is meant:
+`groupBy .region`, and columns inside `reduce`.
+-}
+resolve : String -> List Side -> Result String ( String, Type )
+resolve column sides =
+    case List.filterMap (\side -> lookupColumn column side.columns |> Maybe.map (\t -> ( side.alias, t ))) sides of
+        [ found ] ->
+            Ok found
+
+        [] ->
+            Err (unknownColumn column (List.concatMap .columns sides))
+
+        several ->
+            Err
+                ("`"
+                    ++ column
+                    ++ "` is ambiguous — it is a column of "
+                    ++ String.join " and " (List.map Tuple.first several)
+                    ++ ". Rename one of them by projecting that side in its own cell first."
+                )
+
+
+columnOf : String -> String -> List ( String, Type ) -> Result String Type
+columnOf column table columns =
+    case lookupColumn column columns of
+        Just t ->
+            Ok t
+
+        Nothing ->
+            Err ("`" ++ table ++ "` has no column `" ++ column ++ "`. It has: " ++ (columns |> List.map Tuple.first |> String.join ", "))
+
+
+boundSide : String -> Env -> Maybe Side
+boundSide name env =
+    env.bindings
+        |> List.filter (\( bound, _ ) -> bound == name)
+        |> List.head
+        |> Maybe.map Tuple.second
+
+
+paramNames : Env -> String
+paramNames env =
+    env.bindings |> List.map (\( bound, _ ) -> "`" ++ bound ++ "`") |> String.join " and "
+
+
+
+-- OUTPUT
+
+
+outputColumns : Builder -> Result String (List ( String, Type ))
+outputColumns builder =
+    case ( builder.projection, builder.sides ) of
+        ( All, [ only ] ) ->
+            Ok only.columns
+
+        ( All, sides ) ->
+            Err
+                ("this pipeline combines "
+                    ++ String.fromInt (List.length sides)
+                    ++ " tables, so it has to say what the row should be with `map (\\("
+                    ++ String.join ", " (List.map .alias sides)
+                    ++ ") -> { … })` before selecting"
+                )
+
+        ( Fields fields, _ ) ->
+            Ok (List.map (\( name, expr ) -> ( name, typeOf expr )) fields)
 
 
 finish : Builder -> Result String Checked
@@ -454,49 +545,36 @@ finish builder =
             Err "a pipeline has to end with `select` or `selectAll`"
 
         Just cardinality ->
-            Ok
-                { source = builder.source
-                , joins = builder.joins
-                , reads = builder.source :: (List.map .table builder.joins ++ builder.intersects)
-                , filter = builder.filter
-                , groupBy = builder.groupBy
-                , projection = builder.projection
-                , hidden = builder.hidden
-                , intersects = builder.intersects
-                , sort = builder.sort
-                , limit = builder.limit
-                , cardinality = cardinality
+            outputColumns builder
+                |> Result.map
+                    (\rowType ->
+                        { source = builder.source
+                        , sourceAlias =
+                            List.head builder.sides |> Maybe.map .alias |> Maybe.withDefault builder.source
+                        , reads = builder.source :: List.map .table builder.combines
+                        , combines = builder.combines
+                        , filter = builder.filter
+                        , groupBy = builder.groupBy
+                        , projection = builder.projection
+                        , hidden = builder.hidden
+                        , sort = builder.sort
+                        , limit = builder.limit
+                        , cardinality = cardinality
 
-                -- The Phase 2 finding made actionable: the value cache can
-                -- only ignore row order for cells that never asked for one.
-                , orderSignificant = builder.sort /= Nothing || builder.limit /= Nothing
-                , rowType = outputColumns builder
-                , declarations = builder.declarations
-                }
-
-
-outputColumns : Builder -> List ( String, Type )
-outputColumns builder =
-    case builder.projection of
-        All ->
-            builder.columns
-
-        Fields fields ->
-            List.map (\( name, expr ) -> ( name, typeOf expr )) fields
-
-
-lookupOutput : String -> Builder -> Maybe Type
-lookupOutput name builder =
-    lookupColumn name (outputColumns builder)
+                        -- The value cache's content hash is order-insensitive,
+                        -- so only a cell that asked for an order needs the
+                        -- stricter comparison.
+                        , orderSignificant = builder.sort /= Nothing || builder.limit /= Nothing
+                        , rowType = rowType
+                        , declarations = builder.declarations
+                        }
+                    )
 
 
 
 -- DECLARATIONS
 
 
-{-| A declaration is only usable if every payload column it names exists and
-every constructor is distinguishable by its wire tag.
--}
 validateDeclarations : List ( String, Type ) -> List TypeDecl -> Result String ()
 validateDeclarations columns decls =
     decls
@@ -552,59 +630,7 @@ countOf x =
 -- EXPRESSIONS
 
 
-{-| A lambda's parameters and the columns each one stands for.
-
-Most stages bind one row. A join binds two, which is the whole reason its
-predicate takes two parameters: `o.id` and `c.id` have to be distinguishable
-before the checker can decide whether they are the same column.
-
--}
-type alias Env =
-    { bindings : List ( String, List ( String, Type ) )
-    , declarations : List TypeDecl
-    , inReduce : Bool
-    , groupKey : Maybe String
-    }
-
-
-envFor : Pipeline -> Builder -> String -> Bool -> Maybe String -> Env
-envFor ast builder param inReduce groupKey =
-    { bindings = [ ( param, builder.columns ) ]
-    , declarations = ast.declarations
-    , inReduce = inReduce
-    , groupKey = groupKey
-    }
-
-
-joinEnv : Pipeline -> Lambda2 -> List ( String, Type ) -> List ( String, Type ) -> Env
-joinEnv ast lambda leftColumns rightColumns =
-    { bindings = [ ( lambda.left, leftColumns ), ( lambda.right, rightColumns ) ]
-    , declarations = ast.declarations
-    , inReduce = False
-    , groupKey = Nothing
-    }
-
-
-boundColumns : String -> Env -> Maybe (List ( String, Type ))
-boundColumns name env =
-    env.bindings
-        |> List.filter (\( bound, _ ) -> bound == name)
-        |> List.head
-        |> Maybe.map Tuple.second
-
-
-paramNames : Env -> String
-paramNames env =
-    env.bindings |> List.map (\( bound, _ ) -> "`" ++ bound ++ "`") |> String.join " and "
-
-
-{-| A projection is the only place a record is legal, and it is required
-there: a cell's value is a table, so its rows must have named columns.
-
-Returns the visible fields and any hidden payload columns the casts need.
-
--}
-checkProjection : Env -> Expr -> Result String ( List ( String, TExpr ), List ( String, Type ) )
+checkProjection : Env -> Expr -> Result String ( List ( String, TExpr ), List ( String, String, Type ) )
 checkProjection env expr =
     case expr of
         Record [] ->
@@ -639,38 +665,42 @@ checkProjection env expr =
             Err "this stage has to produce a record, like `{ name = o.owner, total = o.total }`"
 
 
-{-| Payload columns referenced by any cast in the projection, minus anything
-already visible under its own name.
--}
-hiddenFor : Env -> List ( String, TExpr ) -> List ( String, Type )
+hiddenFor : Env -> List ( String, TExpr ) -> List ( String, String, Type )
 hiddenFor env fields =
     let
         visible =
             List.map Tuple.first fields
-
-        needed =
-            fields
-                |> List.concatMap (\( _, expr ) -> castPayloads env expr)
     in
-    needed
-        |> List.filter (\( name, _ ) -> not (List.member name visible))
+    fields
+        |> List.concatMap (\( _, expr ) -> castPayloads env expr)
+        |> List.filter (\( _, name, _ ) -> not (List.member name visible))
         |> dedupeColumns
 
 
-castPayloads : Env -> TExpr -> List ( String, Type )
+castPayloads : Env -> TExpr -> List ( String, String, Type )
 castPayloads env expr =
     case expr of
-        TCast _ typeName ->
+        TCast inner typeName ->
+            let
+                alias =
+                    case inner of
+                        TCol a _ _ ->
+                            a
+
+                        _ ->
+                            ""
+            in
             env.declarations
                 |> List.filter (\d -> d.name == typeName)
                 |> List.concatMap .constructors
                 |> List.filterMap .payloadColumn
                 |> List.filterMap
                     (\col ->
-                        env.bindings
-                            |> List.concatMap Tuple.second
+                        env.sides
+                            |> List.filter (\s -> s.alias == alias)
+                            |> List.concatMap .columns
                             |> lookupColumn col
-                            |> Maybe.map (\t -> ( col, t ))
+                            |> Maybe.map (\t -> ( alias, col, t ))
                     )
 
         TBin _ l r _ ->
@@ -683,11 +713,11 @@ castPayloads env expr =
             []
 
 
-dedupeColumns : List ( String, Type ) -> List ( String, Type )
+dedupeColumns : List ( String, String, Type ) -> List ( String, String, Type )
 dedupeColumns =
     List.foldl
         (\c acc ->
-            if List.any (\( n, _ ) -> n == Tuple.first c) acc then
+            if List.any (\( _, n, _ ) -> n == (\( _, x, _ ) -> x) c) acc then
                 acc
 
             else
@@ -703,7 +733,7 @@ checkExpr env expr =
             Ok (TLit literal (literalType literal))
 
         Var name ->
-            case boundColumns name env of
+            case boundSide name env of
                 Just _ ->
                     Err ("`" ++ name ++ "` is a whole row — index it with a column, like `" ++ name ++ ".total`")
 
@@ -711,29 +741,37 @@ checkExpr env expr =
                     Err ("there is no value called `" ++ name ++ "` here")
 
         Access obj column ->
-            case boundColumns obj env of
+            case boundSide obj env of
                 Nothing ->
                     Err ("`" ++ obj ++ "` is not in scope — this lambda binds " ++ paramNames env)
 
-                Just columns ->
-                    case lookupColumn column columns of
-                        Nothing ->
-                            Err (unknownColumn column columns)
+                Just side ->
+                    if env.inReduce then
+                        resolve column env.sides
+                            |> Result.andThen
+                                (\( alias, t ) ->
+                                    if env.groupKey /= Just column then
+                                        Err
+                                            ("`"
+                                                ++ column
+                                                ++ "` is not the grouping key, so it has no single value per group. Wrap it in an aggregate, like `sum "
+                                                ++ obj
+                                                ++ "."
+                                                ++ column
+                                                ++ "`"
+                                            )
 
-                        Just t ->
-                            if env.inReduce && env.groupKey /= Just column then
-                                Err
-                                    ("`"
-                                        ++ column
-                                        ++ "` is not the grouping key, so it has no single value per group. Wrap it in an aggregate, like `sum "
-                                        ++ obj
-                                        ++ "."
-                                        ++ column
-                                        ++ "`"
-                                    )
+                                    else
+                                        Ok (TCol alias column t)
+                                )
 
-                            else
-                                Ok (TCol column t)
+                    else
+                        case lookupColumn column side.columns of
+                            Nothing ->
+                                Err (unknownColumn column side.columns)
+
+                            Just t ->
+                                Ok (TCol side.alias column t)
 
         Record _ ->
             Err "a record is only allowed as the whole result of `map` or `reduce`"
@@ -861,10 +899,6 @@ arithmetic op left right lt rt =
             )
 
 
-{-| Int and Float compare freely; everything else has to match exactly. A
-custom type never compares, because its wire form is a string and comparing
-against that would defeat having declared it.
--}
 comparable : Type -> Type -> Bool
 comparable a b =
     if Schema.isNumeric a && Schema.isNumeric b then
@@ -900,7 +934,7 @@ checkAggregate env fn arg =
     else
         case arg of
             Var name ->
-                if boundColumns name env == Nothing then
+                if boundSide name env == Nothing then
                     Err ("`" ++ name ++ "` is not in scope — this group is " ++ paramNames env)
 
                 else if fn == "count" then
@@ -910,50 +944,44 @@ checkAggregate env fn arg =
                     Err ("`" ++ fn ++ "` needs a column, like `" ++ fn ++ " " ++ name ++ ".total`")
 
             Access obj column ->
-                case boundColumns obj env of
-                    Nothing ->
-                        Err ("`" ++ obj ++ "` is not in scope — this group is " ++ paramNames env)
+                if boundSide obj env == Nothing then
+                    Err ("`" ++ obj ++ "` is not in scope — this group is " ++ paramNames env)
 
-                    Just columns ->
-                        case lookupColumn column columns of
-                            Nothing ->
-                                Err (unknownColumn column columns)
-
-                            Just t ->
-                                aggregateResult fn column (baseType t)
+                else
+                    resolve column env.sides
+                        |> Result.andThen
+                            (\( alias, t ) -> aggregateResult fn alias column (baseType t))
 
             _ ->
                 Err ("`" ++ fn ++ "` takes a column, not an expression")
 
 
-aggregateResult : String -> String -> Type -> Result String TExpr
-aggregateResult fn column t =
+aggregateResult : String -> String -> String -> Type -> Result String TExpr
+aggregateResult fn alias column t =
     case fn of
         "count" ->
-            Ok (TAgg fn (Just column) TInt)
+            Ok (TAgg fn (Just ( alias, column )) TInt)
 
         "avg" ->
             if Schema.isNumeric t then
-                Ok (TAgg fn (Just column) TFloat)
+                Ok (TAgg fn (Just ( alias, column )) TFloat)
 
             else
                 Err ("`avg` needs a number, but `" ++ column ++ "` is a " ++ Schema.typeName t)
 
         "sum" ->
             if Schema.isNumeric t then
-                Ok (TAgg fn (Just column) t)
+                Ok (TAgg fn (Just ( alias, column )) t)
 
             else
                 Err ("`sum` needs a number, but `" ++ column ++ "` is a " ++ Schema.typeName t)
 
         _ ->
-            -- min and max keep their column's type, and work on anything
-            -- orderable, which for our type language is everything but Bool.
             if t == TBool then
                 Err ("`" ++ fn ++ "` does not work on a Bool")
 
             else
-                Ok (TAgg fn (Just column) t)
+                Ok (TAgg fn (Just ( alias, column )) t)
 
 
 checkCast : Env -> Expr -> String -> Result String TExpr

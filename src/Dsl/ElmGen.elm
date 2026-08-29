@@ -119,9 +119,9 @@ columnsOf checked =
 lookupHidden : String -> Checked -> Maybe Type
 lookupHidden name checked =
     checked.hidden
-        |> List.filter (\( n, _ ) -> n == name)
+        |> List.filter (\( _, n, _ ) -> n == name)
         |> List.head
-        |> Maybe.map Tuple.second
+        |> Maybe.map (\( _, _, t ) -> t)
 
 
 customType : TypeDecl -> String

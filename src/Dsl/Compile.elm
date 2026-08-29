@@ -79,10 +79,7 @@ readsOf source =
 tableTarget : Stage -> Maybe String
 tableTarget stage =
     case stage of
-        Intersect other ->
-            Just other
-
-        Join _ other _ ->
+        Combine _ _ other _ ->
             Just other
 
         _ ->

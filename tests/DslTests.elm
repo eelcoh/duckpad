@@ -136,7 +136,7 @@ parserChecks =
         (Ok [ Select ])
         (stagesOf "access t () |> select")
     , equal "parse: a pipeline spanning several lines"
-        (Ok [ Filter { param = "o", body = Binary Gt (Access "o" "total") (Lit (LInt 100)) }, SelectAll ])
+        (Ok [ Filter { pattern = Single "o", body = Binary Gt (Access "o" "total") (Lit (LInt 100)) }, SelectAll ])
         (stagesOf "access orders ()\n  |> filter (\\o -> o.total > 100)\n  |> selectAll")
     , equal "parse: line comments are ignored"
         (Ok [ SelectAll ])
@@ -195,7 +195,7 @@ parserChecks =
     , equal "parse: map builds a record"
         (Ok
             [ Map
-                { param = "o"
+                { pattern = Single "o"
                 , body =
                     Record
                         [ { name = "who", value = Access "o" "owner" }
@@ -212,7 +212,7 @@ parserChecks =
     , equal "parse: aggregates over the group and over a column"
         (Ok
             [ Reduce
-                { param = "g"
+                { pattern = Single "g"
                 , body =
                     Record
                         [ { name = "n", value = Aggregate "count" (Var "g") }
@@ -228,9 +228,9 @@ parserChecks =
     , equal "parse: sortBy takes an explicit direction"
         (Ok [ SortBy { column = "revenue", direction = Desc } ])
         (stagesOf "access t () |> sortBy (desc .revenue)")
-    , equal "parse: limit and intersect"
-        (Ok [ Intersect "other_cell", Limit 10 ])
-        (stagesOf "access t () |> intersect other_cell |> limit 10")
+    , equal "parse: limit"
+        (Ok [ Limit 10 ])
+        (stagesOf "access t () |> limit 10")
     , equal "parse: a cast on a column"
         (Ok (Cast (Access "o" "status") "Status"))
         (bodyOf "access t () |> map (\\o -> o.status as Status)")
@@ -376,17 +376,6 @@ checkerChecks =
         )
     , isErr "check: limit must be positive"
         (compile "access orders () |> limit 0 |> selectAll")
-    , isErr "check: intersect needs matching columns"
-        (compile "access orders () |> intersect vips |> selectAll")
-    , assert "check: intersect accepts a matching row type"
-        (compile "access orders () |> map (\\o -> { owner = o.owner }) |> intersect vips |> selectAll"
-            |> resultOk
-        )
-    , equal "check: reads names the source and everything intersected"
-        (Ok [ "orders", "vips" ])
-        (compile "access orders () |> map (\\o -> { owner = o.owner }) |> intersect vips |> selectAll"
-            |> Result.map .reads
-        )
     , equal "check: selectAll is many rows"
         (Ok Many)
         (compile "access orders () |> selectAll" |> Result.map .cardinality)
@@ -440,34 +429,31 @@ access orders ()
 sqlChecks : List Check
 sqlChecks =
     [ equal "sql: the simplest pipeline"
-        (Ok "SELECT *\nFROM \"orders\"")
+        (Ok "SELECT *\nFROM \"orders\" AS \"orders\"")
         (sqlOf "access orders () |> selectAll")
     , equal "sql: filter becomes WHERE"
-        (Ok "SELECT *\nFROM \"orders\"\nWHERE (\"total\" > 100)")
+        (Ok "SELECT *\nFROM \"orders\" AS \"orders\"\nWHERE (\"orders\".\"total\" > 100)")
         (sqlOf "access orders () |> filter (\\o -> o.total > 100) |> selectAll")
     , equal "sql: two filters are conjoined"
-        (Ok "SELECT *\nFROM \"orders\"\nWHERE ((\"total\" > 100) AND (\"owner\" = 'ada'))")
+        (Ok "SELECT *\nFROM \"orders\" AS \"orders\"\nWHERE ((\"orders\".\"total\" > 100) AND (\"orders\".\"owner\" = 'ada'))")
         (sqlOf "access orders () |> filter (\\o -> o.total > 100) |> filter (\\o -> o.owner == \"ada\") |> selectAll")
     , equal "sql: inequality uses the SQL spelling"
-        (Ok "SELECT *\nFROM \"orders\"\nWHERE (\"owner\" <> 'ada')")
+        (Ok "SELECT *\nFROM \"orders\" AS \"orders\"\nWHERE (\"orders\".\"owner\" <> 'ada')")
         (sqlOf "access orders () |> filter (\\o -> o.owner /= \"ada\") |> selectAll")
     , equal "sql: map becomes an aliased projection"
-        (Ok "SELECT \"owner\" AS \"who\", \"total\" AS \"amount\"\nFROM \"orders\"")
+        (Ok "SELECT \"orders\".\"owner\" AS \"who\", \"orders\".\"total\" AS \"amount\"\nFROM \"orders\" AS \"orders\"")
         (sqlOf "access orders () |> map (\\o -> { who = o.owner, amount = o.total }) |> selectAll")
     , equal "sql: groupBy and aggregates"
-        (Ok "SELECT \"region\" AS \"region\", count(*) AS \"n\", sum(\"total\") AS \"revenue\"\nFROM \"orders\"\nGROUP BY \"region\"")
+        (Ok "SELECT \"orders\".\"region\" AS \"region\", count(*) AS \"n\", sum(\"orders\".\"total\") AS \"revenue\"\nFROM \"orders\" AS \"orders\"\nGROUP BY \"orders\".\"region\"")
         (sqlOf "access orders () |> groupBy .region |> reduce (\\g -> { region = g.region, n = count g, revenue = sum g.total }) |> selectAll")
     , equal "sql: sort and limit"
-        (Ok "SELECT *\nFROM \"orders\"\nORDER BY \"total\" DESC\nLIMIT 5")
+        (Ok "SELECT *\nFROM \"orders\" AS \"orders\"\nORDER BY \"total\" DESC\nLIMIT 5")
         (sqlOf "access orders () |> sortBy (desc .total) |> limit 5 |> selectAll")
     , equal "sql: a string literal is escaped, not interpolated"
-        (Ok "SELECT *\nFROM \"orders\"\nWHERE (\"owner\" = 'it''s')")
+        (Ok "SELECT *\nFROM \"orders\" AS \"orders\"\nWHERE (\"orders\".\"owner\" = 'it''s')")
         (sqlOf "access orders () |> filter (\\o -> o.owner == \"it's\") |> selectAll")
-    , contains "sql: intersect wraps both branches"
-        "INTERSECT\n(SELECT * FROM \"vips\")"
-        (sqlOf "access orders () |> map (\\o -> { owner = o.owner }) |> intersect vips |> selectAll")
     , contains "sql: a cast selects the underlying tag column"
-        "\"status\" AS \"s\""
+        "\"orders\".\"status\" AS \"s\""
         (sqlOf declaredStatus)
     , contains "sql: a payload column is selected even though it is not a field"
         "\"delivered_at\""
@@ -527,9 +513,9 @@ readsChecks =
     [ equal "reads: the source table"
         [ "orders" ]
         (Dsl.Compile.readsOf "access orders () |> selectAll")
-    , equal "reads: intersect targets count too"
-        [ "orders", "vips" ]
-        (Dsl.Compile.readsOf "access orders () |> map (\\o -> { owner = o.owner }) |> intersect vips |> selectAll")
+    , equal "reads: combine targets count too"
+        [ "orders", "customers" ]
+        (Dsl.Compile.readsOf "access orders () |> intersect .owner customers .owner |> selectAll")
     , equal "reads: a cell that does not parse reads nothing"
         []
         (Dsl.Compile.readsOf "access orders () |> filter (")
@@ -543,85 +529,84 @@ readsChecks =
 
 
 
--- JOINS
+-- COMBINING ROWS
 
 
+{-| Acadia's vocabulary: `intersect` is an inner join, `diff` a left join,
+`exclude` an anti-join. Each takes a key extractor from either side, so a
+non-equi join cannot be written at all.
+-}
 joinChecks : List Check
 joinChecks =
-    [ equal "join: parses with two parameters"
-        (Ok
-            [ Join Inner
-                "customers"
-                { left = "o", right = "c", body = Binary Eq (Access "o" "owner") (Access "c" "owner") }
-            , SelectAll
-            ]
-        )
-        (stagesOf "access orders () |> join customers (\\o c -> o.owner == c.owner) |> selectAll")
-    , equal "join: leftJoin is its own stage"
-        (Ok [ Join LeftOuter "people" { left = "o", right = "p", body = Binary Eq (Access "o" "owner") (Access "p" "person") } ])
-        (stagesOf "access orders () |> leftJoin people (\\o p -> o.owner == p.person)")
+    [ equal "combine: intersect parses as key, table, key"
+        (Ok [ Combine Intersect "owner" "customers" "owner", SelectAll ])
+        (stagesOf "access orders () |> intersect .owner customers .owner |> selectAll")
+    , equal "combine: diff and exclude are their own stages"
+        (Ok [ Combine Diff "owner" "people" "person", Combine Exclude "owner" "vips" "owner" ])
+        (stagesOf "access orders () |> diff .owner people .person |> exclude .owner vips .owner")
 
-    -- An equality between two columns of the same name is what makes the
-    -- merged row unambiguous, so it gets its own treatment.
-    , contains "join: a shared key becomes USING, not ON"
-        "JOIN \"customers\" USING (\"owner\")"
-        (sqlOf "access orders () |> join customers (\\o c -> o.owner == c.owner) |> selectAll")
-    , equal "join: a USING key appears once in the row type"
-        (Ok 7)
-        (rowTypeOf "access orders () |> join customers (\\o c -> o.owner == c.owner) |> selectAll"
-            |> Result.map List.length
-        )
-    , contains "join: differently named columns become ON"
-        "JOIN \"people\" ON (\"owner\" = \"person\")"
-        (sqlOf "access orders () |> join people (\\o p -> o.owner == p.person) |> selectAll")
-    , contains "join: leftJoin says so in the SQL"
-        "LEFT JOIN \"people\""
-        (sqlOf "access orders () |> leftJoin people (\\o p -> o.owner == p.person) |> selectAll")
-    , equal "join: an inner join keeps the right side's types"
+    -- Rows are paired, not merged, so a later lambda destructures them.
+    , equal "combine: a combined row has to be destructured"
         (Ok [ ( "who", "String" ), ( "tier", "String" ) ])
-        (rowTypeOf "access orders () |> join customers (\\o c -> o.owner == c.owner) |> map (\\r -> { who = r.owner, tier = r.tier }) |> selectAll")
-    , equal "join: a left join makes the right side optional"
-        -- The type-level consequence of an outer join, which SQL leaves to be
-        -- discovered at runtime.
+        (rowTypeOf "access orders () |> intersect .owner customers .owner |> map (\\(o, c) -> { who = o.owner, tier = c.tier }) |> selectAll")
+    , equal "combine: each side keeps its own namespace"
+        -- `owner` exists on both sides. Under a flat merge that would be a
+        -- collision; paired, it is simply two different columns.
+        (Ok [ ( "a", "String" ), ( "b", "String" ) ])
+        (rowTypeOf "access orders () |> intersect .owner owners .owner |> map (\\(o, w) -> { a = o.region, b = w.region }) |> selectAll")
+    , equal "combine: diff makes the right side optional"
         (Ok [ ( "who", "String" ), ( "rank", "Maybe Int" ) ])
-        (rowTypeOf "access orders () |> leftJoin people (\\o p -> o.owner == p.person) |> map (\\r -> { who = r.owner, rank = r.rank }) |> selectAll")
-    , equal "join: the joined table is a dependency"
+        (rowTypeOf "access orders () |> diff .owner people .person |> map (\\(o, p) -> { who = o.owner, rank = p.rank }) |> selectAll")
+    , equal "combine: exclude adds no side, so the row is unchanged"
+        (Ok [ ( "who", "String" ) ])
+        (rowTypeOf "access orders () |> exclude .owner vips .owner |> map (\\o -> { who = o.owner }) |> selectAll")
+
+    -- SQL.
+    , contains "sql: intersect is an inner join on the two keys"
+        "JOIN \"customers\" AS \"customers\" ON \"orders\".\"owner\" = \"customers\".\"owner\""
+        (sqlOf "access orders () |> intersect .owner customers .owner |> map (\\(o, c) -> { t = c.tier }) |> selectAll")
+    , contains "sql: diff is a left join"
+        "LEFT JOIN \"people\" AS \"people\""
+        (sqlOf "access orders () |> diff .owner people .person |> map (\\(o, p) -> { r = p.rank }) |> selectAll")
+    , contains "sql: exclude is an anti-join in the where clause"
+        "NOT EXISTS (SELECT 1 FROM \"vips\" AS \"vips\" WHERE \"vips\".\"owner\" = \"orders\".\"owner\")"
+        (sqlOf "access orders () |> exclude .owner vips .owner |> map (\\o -> { w = o.owner }) |> selectAll")
+    , contains "sql: a table combined with itself gets a distinct alias"
+        "AS \"orders_2\""
+        (sqlOf "access orders () |> intersect .owner orders .owner |> map (\\(a, b) -> { x = a.id, y = b.id }) |> selectAll")
+
+    -- Scope and arity.
+    , isErr "combine: a single name cannot read a combined row"
+        (compile "access orders () |> intersect .owner customers .owner |> map (\\o -> { w = o.owner }) |> selectAll")
+    , isErr "combine: the pattern's arity has to match the number of sides"
+        (compile "access orders () |> intersect .owner customers .owner |> map (\\(o, c, x) -> { w = o.owner }) |> selectAll")
+    , isErr "combine: destructuring a row that has one side is rejected"
+        (compile "access orders () |> map (\\(o, c) -> { w = o.owner }) |> selectAll")
+    , isErr "combine: a combined row must be projected before selecting"
+        (compile "access orders () |> intersect .owner customers .owner |> selectAll")
+    , isErr "combine: an unknown table is rejected"
+        (compile "access orders () |> intersect .owner nowhere .owner |> selectAll")
+    , isErr "combine: the right key has to be a column of the right table"
+        (compile "access orders () |> intersect .owner customers .nope |> selectAll")
+    , isErr "combine: keys of different types cannot match"
+        (compile "access orders () |> intersect .owner people .rank |> selectAll")
+    , isErr "combine: combining cannot follow a projection"
+        (compile "access orders () |> map (\\o -> { a = o.owner }) |> intersect .a customers .owner |> selectAll")
+
+    -- Downstream stages.
+    , equal "combine: reduce resolves a column across sides"
+        (Ok [ ( "tier", "String" ), ( "revenue", "Float" ) ])
+        (rowTypeOf "access orders () |> intersect .owner customers .owner |> groupBy .tier |> reduce (\\g -> { tier = g.tier, revenue = sum g.total }) |> selectAll")
+    , isErr "combine: an ambiguous column is refused rather than guessed"
+        (compile "access orders () |> intersect .owner owners .owner |> groupBy .region |> reduce (\\g -> { r = g.region }) |> selectAll")
+    , equal "combine: the combined table is a dependency"
         (Ok [ "orders", "customers" ])
-        (compile "access orders () |> join customers (\\o c -> o.owner == c.owner) |> selectAll"
+        (compile "access orders () |> intersect .owner customers .owner |> map (\\(o, c) -> { t = c.tier }) |> selectAll"
             |> Result.map .reads
         )
-    , equal "join: reads reports join targets before parsing a schema"
-        [ "orders", "customers" ]
-        (Dsl.Compile.readsOf "access orders () |> join customers (\\o c -> o.owner == c.owner) |> selectAll")
-
-    -- Scope, and the cases that must not compile.
-    , isErr "join: a column has to come from one of the two bound rows"
-        (compile "access orders () |> join customers (\\o c -> o.owner == x.owner) |> selectAll")
-    , isErr "join: the right row cannot supply a column it does not have"
-        (compile "access orders () |> join customers (\\o c -> o.owner == c.nope) |> selectAll")
-    , isErr "join: an unknown table is rejected"
-        (compile "access orders () |> join nowhere (\\o c -> o.owner == c.owner) |> selectAll")
-    , isErr "join: the condition has to be a condition"
-        (compile "access orders () |> join customers (\\o c -> o.total) |> selectAll")
-    , isErr "join: two sides sharing an unmerged column name is rejected"
-        (compile "access orders () |> join owners (\\o w -> o.owner == w.owner) |> selectAll")
-    , isErr "join: a join cannot follow a projection"
-        (compile "access orders () |> map (\\o -> { a = o.owner }) |> join customers (\\o c -> o.a == c.owner) |> selectAll")
-    , isErr "join: a join cannot follow groupBy"
-        (compile "access orders () |> groupBy .region |> join customers (\\o c -> o.owner == c.owner) |> selectAll")
-
-    -- Joined columns behave like any other downstream.
-    , equal "join: a later filter sees both sides"
-        (Ok True)
-        (sqlOf "access orders () |> join customers (\\o c -> o.owner == c.owner) |> filter (\\r -> r.tier == \"gold\") |> selectAll"
-            |> Result.map (String.contains "WHERE (\"tier\" = 'gold')")
-        )
-    , equal "join: a later reduce can aggregate across the join"
-        (Ok [ ( "tier", "String" ), ( "revenue", "Float" ) ])
-        (rowTypeOf "access orders () |> join customers (\\o c -> o.owner == c.owner) |> groupBy .tier |> reduce (\\g -> { tier = g.tier, revenue = sum g.total }) |> selectAll")
-    , equal "join: joins chain"
+    , equal "combine: combines chain"
         (Ok [ "orders", "customers", "people" ])
-        (compile "access orders () |> join customers (\\o c -> o.owner == c.owner) |> leftJoin people (\\r p -> r.owner == p.person) |> selectAll"
+        (compile "access orders () |> intersect .owner customers .owner |> diff .tier people .person |> map (\\(o, c, p) -> { t = c.tier, r = p.rank }) |> selectAll"
             |> Result.map .reads
         )
     ]
