@@ -1,28 +1,40 @@
 module Engine exposing
     ( CellState
     , blockingUpstream
-    , cacheKeyFor
+    , compileKeyFor
     , hasValue
     , initialState
     , markStale
+    , schemaFor
+    , valueKeyFor
     )
 
 {-| The pure half of the reactive engine: what is stale, what may run, and
-whether a run can be skipped. Everything here is a function of the graph and
-the current cell states, so it can be reasoned about without DuckDB in the
-picture.
+whether either half of the work can be skipped.
+
+There are two caches, and they answer different questions. The compile cache
+asks "could this cell's SQL have changed?", which depends on the cell's source
+and on the *row types* of its inputs. The value cache asks "could this cell's
+rows have changed?", which depends on the generated SQL and on the *values* of
+its inputs. An upstream edit that alters rows but not the shape of them
+invalidates the second and not the first.
+
 -}
 
 import Cell exposing (Cell, Status(..))
 import Dag exposing (Graph)
 import Dict exposing (Dict)
+import Dsl.Compile exposing (Compiled)
+import Dsl.Schema as Schema exposing (Schema, Type)
 import Hash
 import Query exposing (Table)
-import Set exposing (Set)
+import Set
 
 
 type alias CellState =
     { status : Status
+    , compiled : Maybe Compiled
+    , compileKey : Maybe String
     , table : Maybe Table
     , valueHash : Maybe String
     , keyForValue : Maybe String
@@ -32,6 +44,8 @@ type alias CellState =
 initialState : CellState
 initialState =
     { status = NeverRun
+    , compiled = Nothing
+    , compileKey = Nothing
     , table = Nothing
     , valueHash = Nothing
     , keyForValue = Nothing
@@ -48,33 +62,83 @@ hasValue state =
             False
 
 
-{-| The value-cache key: this cell's own identity and source, plus the *values*
-its upstreams currently hold.
+{-| The schema a cell compiles against: the database's own tables, plus the row
+type of every cell upstream of it.
 
-Keying on upstream values rather than on "did an upstream re-run" is what stops
-propagation early: editing a cell in a way that produces an identical result
-leaves every downstream key unchanged, so nothing below it re-executes. The
-cell's own id is part of the key because the id is also the name of the table
-this cell materialises into.
+Only direct dependencies are added. A cell cannot name a table it never
+declared it reads, so exposing the whole notebook here would let a typo
+silently resolve against an unrelated cell.
 
 -}
-cacheKeyFor : Graph -> Dict String CellState -> Cell -> String
-cacheKeyFor graph states cell =
-    let
-        upstreamHashes =
-            Dag.dependenciesOf cell.id graph
-                |> Set.toList
-                |> List.map
-                    (\dep ->
-                        Dict.get dep states
-                            |> Maybe.andThen .valueHash
-                            |> Maybe.withDefault "?"
-                    )
-    in
-    (cell.id :: cell.source :: upstreamHashes)
-        |> String.join "\u{0000}"
-        |> Hash.ofString
+schemaFor : Schema -> Graph -> Dict String CellState -> String -> Schema
+schemaFor base graph states id =
+    Dag.dependenciesOf id graph
+        |> Set.foldl
+            (\dep acc ->
+                case Dict.get dep states |> Maybe.andThen .compiled of
+                    Just compiled ->
+                        Dict.insert dep compiled.rowType acc
+
+                    Nothing ->
+                        acc
+            )
+            base
+
+
+{-| Keyed on the source and on the shape of the inputs, because those are the
+only things the generated SQL can depend on.
+-}
+compileKeyFor : Graph -> Dict String CellState -> Cell -> String
+compileKeyFor graph states cell =
+    (cell.id :: cell.source :: upstream signatureOf graph states cell.id)
+        |> join
         |> Hash.toString
+
+
+{-| Keyed on the generated SQL rather than the source: two different sources
+that compile to the same query really do have the same value, and an upstream
+whose row type changed shows up here through the SQL as well as through the
+value hashes.
+-}
+valueKeyFor : Graph -> Dict String CellState -> String -> String -> String
+valueKeyFor graph states id sql =
+    (id :: sql :: upstream valueHashOf graph states id)
+        |> join
+        |> Hash.toString
+
+
+upstream : (CellState -> String) -> Graph -> Dict String CellState -> String -> List String
+upstream extract graph states id =
+    Dag.dependenciesOf id graph
+        |> Set.toList
+        |> List.map
+            (\dep ->
+                Dict.get dep states
+                    |> Maybe.map extract
+                    |> Maybe.withDefault "?"
+            )
+
+
+join : List String -> Hash.Hash
+join parts =
+    Hash.ofString (String.join "\u{0000}" parts)
+
+
+signatureOf : CellState -> String
+signatureOf state =
+    case state.compiled of
+        Just compiled ->
+            compiled.rowType
+                |> List.map (\( name, t ) -> name ++ ":" ++ Schema.typeName t)
+                |> String.join ","
+
+        Nothing ->
+            "?"
+
+
+valueHashOf : CellState -> String
+valueHashOf state =
+    Maybe.withDefault "?" state.valueHash
 
 
 {-| The first upstream cell that cannot supply a value, if any.
@@ -103,12 +167,12 @@ isUsable id states =
 
 {-| Mark the seeds and everything downstream of them stale.
 
-The previous value is deliberately kept on the state: it is what the value
-cache may still be able to reuse. The `Stale` status is what stops the UI from
-presenting it as current.
+The previous value and compilation are deliberately kept: they are what the
+caches may still be able to reuse. The `Stale` status is what stops the UI from
+presenting the value as current.
 
 -}
-markStale : Set String -> Graph -> Dict String CellState -> Dict String CellState
+markStale : Set.Set String -> Graph -> Dict String CellState -> Dict String CellState
 markStale seeds graph states =
     Dag.downstreamClosure seeds graph
         |> Set.foldl

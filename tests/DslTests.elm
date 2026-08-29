@@ -15,7 +15,7 @@ import Dsl.Schema exposing (Schema, Type(..))
 
 checks : List Check
 checks =
-    parserChecks ++ checkerChecks ++ sqlChecks ++ elmChecks
+    parserChecks ++ checkerChecks ++ sqlChecks ++ elmChecks ++ readsChecks
 
 
 {-| The fixture schema every checker test runs against. `delivered_at` is
@@ -504,4 +504,30 @@ elmChecks =
             |> Result.map (\t -> not (String.contains "import Time" t))
             |> Result.withDefault False
         )
+    ]
+
+
+
+-- DEPENDENCY EXTRACTION
+
+
+{-| What the notebook builds its graph from, before any schema exists.
+-}
+readsChecks : List Check
+readsChecks =
+    [ equal "reads: the source table"
+        [ "orders" ]
+        (Dsl.Compile.readsOf "access orders () |> selectAll")
+    , equal "reads: intersect targets count too"
+        [ "orders", "vips" ]
+        (Dsl.Compile.readsOf "access orders () |> map (\\o -> { owner = o.owner }) |> intersect vips |> selectAll")
+    , equal "reads: a cell that does not parse reads nothing"
+        []
+        (Dsl.Compile.readsOf "access orders () |> filter (")
+    , equal "reads: a column named like a table is not a dependency"
+        [ "orders" ]
+        (Dsl.Compile.readsOf "access orders () |> map (\\o -> { vips = o.owner }) |> selectAll")
+    , equal "reads: a string literal is not a dependency"
+        [ "orders" ]
+        (Dsl.Compile.readsOf "access orders () |> filter (\\o -> o.owner == \"vips\") |> selectAll")
     ]

@@ -1,28 +1,31 @@
 module Main exposing (main)
 
-{-| Phase 1 + 2 spike: a reactive notebook shell over DuckDB-wasm.
+{-| The notebook shell.
 
-The query cells hold raw SQL, which is a stand-in. Phase 3 replaces the cell
-body with the pipeline DSL and the hand-written decoder in `Spike.Orders` with
-generated code; the engine underneath is meant to survive that swap unchanged,
-which is exactly what this spike is for.
+Query cells are written in the DSL and compiled in the browser, so nothing
+here needs a daemon. Each edit walks the same path: parse for dependencies,
+compile in topological order against the row types of the cells upstream, then
+materialise in DuckDB only where a cached value cannot be reused.
 
 -}
 
 import Browser
 import Cell exposing (Cell, Kind(..), Status(..))
 import Dag exposing (Graph)
-import Deps
 import Dict exposing (Dict)
+import Dsl.Ast exposing (Constructor, TypeDecl)
+import Dsl.Check exposing (Cardinality(..))
+import Dsl.Compile exposing (Compiled)
+import Dsl.Schema as Schema exposing (Schema, Type(..))
 import Engine exposing (CellState)
-import Html exposing (Html, button, div, h1, h2, input, label, li, ol, p, section, span, table, tbody, td, text, textarea, th, thead, tr, ul)
+import Html exposing (Html, button, details, div, h1, input, li, p, pre, section, span, summary, table, tbody, td, text, textarea, th, thead, tr, ul)
 import Html.Attributes exposing (class, classList, disabled, placeholder, rows, title, value)
 import Html.Events exposing (onBlur, onClick, onInput)
 import Json.Decode as D
 import Ports
 import Query exposing (Outcome(..), Table)
-import Set exposing (Set)
-import Spike.Orders as Orders
+import Set
+import Time
 
 
 
@@ -32,6 +35,7 @@ import Spike.Orders as Orders
 type alias Model =
     { cells : List Cell
     , states : Dict String CellState
+    , baseSchema : Schema
     , queue : List String
     , current : Maybe String
     , db : DbStatus
@@ -73,6 +77,7 @@ init _ =
             seedNotebook
                 |> List.map (\c -> ( c.id, Engine.initialState ))
                 |> Dict.fromList
+      , baseSchema = Dict.empty
       , queue = []
       , current = Nothing
       , db = Booting
@@ -82,26 +87,23 @@ init _ =
     )
 
 
-{-| A three-deep chain, so the graph has something to actually order, plus a
-prose cell to show that narrative is a first-class part of the file.
--}
 seedNotebook : List Cell
 seedNotebook =
     [ { id = "intro"
       , kind = Prose
-      , source = "Edit any query and blur the field: this cell and everything downstream of it are marked stale, then re-run in dependency order. Cells whose inputs did not actually change come back as `cached` without touching DuckDB."
-      }
-    , { id = "orders"
-      , kind = Query
-      , source = "SELECT id, owner, region, status,\n       epoch_ms(delivered_at) AS delivered_at,\n       total\nFROM read_csv_auto('orders.csv')"
+      , source = "Query cells are compiled in the browser to SQL and to an Elm module, from one checked description. Edit a cell and blur it: everything downstream is marked stale and re-run in dependency order, skipping any cell whose inputs did not actually change."
       }
     , { id = "delivered"
       , kind = Query
-      , source = "SELECT * FROM orders WHERE status = 'delivered'"
+      , source = "access orders ()\n  |> filter (\\o -> o.status == \"delivered\")\n  |> selectAll"
       }
     , { id = "by_region"
       , kind = Query
-      , source = "SELECT region,\n       count(*) AS n,\n       round(sum(total), 2) AS revenue\nFROM delivered\nGROUP BY region\nORDER BY revenue DESC"
+      , source = "access delivered ()\n  |> groupBy .region\n  |> reduce (\\g ->\n       { region = g.region\n       , n = count g\n       , revenue = sum g.total\n       , biggest = max g.total\n       })\n  |> sortBy (desc .revenue)\n  |> selectAll"
+      }
+    , { id = "typed"
+      , kind = Query
+      , source = "type Status\n  = Submitted \"submitted\"\n  | InTransit \"in_transit\"\n  | Delivered \"delivered\" from .delivered_at\n\naccess orders ()\n  |> filter (\\o -> o.total > 600.0)\n  |> map (\\o ->\n       { id = o.id\n       , owner = o.owner\n       , status = o.status as Status\n       })\n  |> selectAll"
       }
     ]
 
@@ -110,11 +112,15 @@ seedNotebook =
 -- GRAPH
 
 
+{-| Dependencies come from parsing alone, which is what makes the ordering
+possible: compiling a cell needs its inputs' row types, and those are only
+known once the order exists.
+-}
 graphOf : Model -> Graph
 graphOf model =
     model.cells
         |> List.filter (\c -> c.kind == Query)
-        |> List.map (\c -> ( c.id, Deps.identifiers c.source ))
+        |> List.map (\c -> ( c.id, Set.fromList (Dsl.Compile.readsOf c.source) ))
         |> Dag.build
 
 
@@ -139,6 +145,11 @@ setStatus id status states =
         states
 
 
+moduleNameFor : String -> String
+moduleNameFor id =
+    "Cell_" ++ String.toUpper (String.left 1 id) ++ String.dropLeft 1 id
+
+
 
 -- UPDATE
 
@@ -147,11 +158,11 @@ update : Msg -> Model -> ( Model, Cmd Msg )
 update msg model =
     case msg of
         DbReady payload ->
-            case D.decodeValue dbReadyDecoder payload of
-                Ok Nothing ->
-                    schedule { model | db = Ready }
+            case D.decodeValue bootDecoder payload of
+                Ok (Ok schema) ->
+                    schedule { model | db = Ready, baseSchema = schema }
 
-                Ok (Just err) ->
+                Ok (Err err) ->
                     ( { model | db = DbFailed err }, Cmd.none )
 
                 Err err ->
@@ -163,8 +174,6 @@ update msg model =
                     applyOutcome outcome model
 
                 Err err ->
-                    -- A malformed payload is a bug in the bridge, not in the
-                    -- notebook; surface it on the cell that was running.
                     case model.current of
                         Just id ->
                             advance
@@ -178,22 +187,22 @@ update msg model =
 
         SourceEdited id newSource ->
             let
-                cells =
-                    model.cells
-                        |> List.map
-                            (\c ->
-                                if c.id == id then
-                                    { c | source = newSource }
-
-                                else
-                                    c
-                            )
-
                 updated =
-                    { model | cells = cells }
+                    { model
+                        | cells =
+                            model.cells
+                                |> List.map
+                                    (\c ->
+                                        if c.id == id then
+                                            { c | source = newSource }
+
+                                        else
+                                            c
+                                    )
+                    }
             in
-            -- Staleness propagates on every keystroke; execution waits for the
-            -- edit to be committed. A debounce timer would go here instead.
+            -- Staleness propagates on every keystroke; compiling and running
+            -- wait for the edit to be committed.
             ( { updated
                 | states = Engine.markStale (Set.singleton id) (graphOf updated) updated.states
               }
@@ -214,7 +223,7 @@ update msg model =
                     , source =
                         case kind of
                             Query ->
-                                ""
+                                "access orders ()\n  |> selectAll"
 
                             Prose ->
                                 "Notes."
@@ -230,12 +239,9 @@ update msg model =
 
         DeleteCell id ->
             let
-                remaining =
-                    List.filter (\c -> c.id /= id) model.cells
-
                 updated =
                     { model
-                        | cells = remaining
+                        | cells = List.filter (\c -> c.id /= id) model.cells
                         , states = Dict.remove id model.states
                     }
             in
@@ -250,25 +256,61 @@ update msg model =
             )
 
         RunAll ->
-            schedule (invalidateAll model)
+            schedule { model | states = invalidate model.states }
 
 
-dbReadyDecoder : D.Decoder (Maybe String)
-dbReadyDecoder =
+{-| The bridge reports the tables it built, so the checker knows what
+`access` may name before a single cell has run.
+-}
+bootDecoder : D.Decoder (Result String Schema)
+bootDecoder =
     D.field "ok" D.bool
         |> D.andThen
             (\ok ->
                 if ok then
-                    D.succeed Nothing
+                    D.map Ok (D.field "schema" schemaDecoder)
 
                 else
-                    D.map Just (D.field "error" D.string)
+                    D.map Err (D.field "error" D.string)
             )
 
 
-{-| Renaming is an identity change: the old table has to go, and every cell has
-to be reconsidered because an edge may have appeared or vanished.
+schemaDecoder : D.Decoder Schema
+schemaDecoder =
+    D.list tableDecoder |> D.map Dict.fromList
+
+
+tableDecoder : D.Decoder ( String, List ( String, Type ) )
+tableDecoder =
+    D.map2 Tuple.pair
+        (D.field "name" D.string)
+        (D.field "columns" (D.list columnDecoder) |> D.map (List.filterMap identity))
+
+
+{-| A column whose DuckDB type has no counterpart in the language is dropped
+rather than guessed at. It simply will not be nameable from a cell.
 -}
+columnDecoder : D.Decoder (Maybe ( String, Type ))
+columnDecoder =
+    D.map3
+        (\name rawType nullable ->
+            Schema.fromDuckDb rawType
+                |> Maybe.map
+                    (\t ->
+                        ( name
+                        , if nullable then
+                            TMaybe t
+
+                          else
+                            t
+                        )
+                    )
+        )
+        (D.field "name" D.string)
+        (D.field "type" D.string)
+        (D.field "nullable" D.bool)
+
+
 renameCell : String -> String -> Model -> ( Model, Cmd Msg )
 renameCell old new model =
     if new == old || new == "" || List.any (\c -> c.id == new) model.cells then
@@ -292,31 +334,24 @@ renameCell old new model =
                     Just s ->
                         model.states
                             |> Dict.remove old
-                            |> Dict.insert new { s | status = Stale, keyForValue = Nothing }
+                            |> Dict.insert new s
 
                     Nothing ->
                         model.states
-
-            updated =
-                { model | cells = cells, states = states }
         in
-        ( { updated | states = invalidate updated.states }
+        ( { model | cells = cells, states = invalidate states }
         , Ports.dropTable old
         )
 
 
-invalidateAll : Model -> Model
-invalidateAll model =
-    { model | states = invalidate model.states }
-
-
 invalidate : Dict String CellState -> Dict String CellState
 invalidate =
-    Dict.map (\_ s -> { s | status = Stale, keyForValue = Nothing })
+    Dict.map
+        (\_ s ->
+            { s | status = Stale, keyForValue = Nothing, compileKey = Nothing }
+        )
 
 
-{-| Rebuild the run queue in topological order and start walking it.
--}
 schedule : Model -> ( Model, Cmd Msg )
 schedule model =
     if model.db /= Ready then
@@ -340,12 +375,6 @@ schedule model =
                 advance { model | queue = order, current = Nothing }
 
 
-{-| Walk the queue until something has to actually hit the database.
-
-Cache hits and blocked cells are resolved inline, so a run where nothing
-changed completes without a single round trip.
-
--}
 advance : Model -> ( Model, Cmd Msg )
 advance model =
     case model.queue of
@@ -365,6 +394,13 @@ advance model =
                         dispatch cell rest model
 
 
+{-| Compile, then decide whether the database has to be touched at all.
+
+Both caches are consulted here: the compile cache can hand back a `Compiled`
+without re-running the front end, and the value cache can then skip the query
+entirely. Only a genuine miss reaches DuckDB.
+
+-}
 dispatch : Cell -> List String -> Model -> ( Model, Cmd Msg )
 dispatch cell rest model =
     let
@@ -373,9 +409,6 @@ dispatch cell rest model =
 
         state =
             stateOf cell.id model
-
-        key =
-            Engine.cacheKeyFor graph model.states cell
     in
     case Engine.blockingUpstream graph model.states cell.id of
         Just upstream ->
@@ -386,28 +419,89 @@ dispatch cell rest model =
                 }
 
         Nothing ->
-            if state.keyForValue == Just key && Engine.hasValue state then
-                advance
-                    { model
-                        | queue = rest
-                        , states =
-                            setStatus cell.id
-                                (Fresh
+            let
+                compileKey =
+                    Engine.compileKeyFor graph model.states cell
+
+                compiled =
+                    if state.compileKey == Just compileKey then
+                        case state.compiled of
+                            Just cached ->
+                                Ok cached
+
+                            Nothing ->
+                                compileCell graph model cell
+
+                    else
+                        compileCell graph model cell
+            in
+            case compiled of
+                Err message ->
+                    advance
+                        { model
+                            | queue = rest
+                            , states =
+                                Dict.insert cell.id
+                                    { state
+                                        | status = Invalid message
+                                        , compiled = Nothing
+                                        , compileKey = Nothing
+                                    }
+                                    model.states
+                        }
+
+                Ok artefacts ->
+                    runOrReuse cell rest model graph state compileKey artefacts
+
+
+compileCell : Graph -> Model -> Cell -> Result String Compiled
+compileCell graph model cell =
+    Dsl.Compile.compile
+        (Engine.schemaFor model.baseSchema graph model.states cell.id)
+        (moduleNameFor cell.id)
+        cell.source
+
+
+runOrReuse : Cell -> List String -> Model -> Graph -> CellState -> String -> Compiled -> ( Model, Cmd Msg )
+runOrReuse cell rest model graph state compileKey artefacts =
+    let
+        valueKey =
+            Engine.valueKeyFor graph model.states cell.id artefacts.sql
+
+        remembered =
+            { state | compiled = Just artefacts, compileKey = Just compileKey }
+    in
+    if state.keyForValue == Just valueKey && Engine.hasValue state then
+        advance
+            { model
+                | queue = rest
+                , states =
+                    Dict.insert cell.id
+                        { remembered
+                            | status =
+                                Fresh
                                     { cached = True
                                     , millis = state.table |> Maybe.map .millis |> Maybe.withDefault 0
                                     }
-                                )
-                                model.states
-                    }
+                        }
+                        model.states
+            }
 
-            else
-                ( { model
-                    | queue = rest
-                    , current = Just cell.id
-                    , states = setStatus cell.id Running model.states
-                  }
-                , Ports.materialize { cellId = cell.id, sql = cell.source }
-                )
+    else
+        ( { model
+            | queue = rest
+            , current = Just cell.id
+            , states = Dict.insert cell.id { remembered | status = Running } model.states
+          }
+        , Ports.materialize
+            { cellId = cell.id
+            , sql = artefacts.sql
+
+            -- Only a cell that asked for an order needs the stricter,
+            -- order-sensitive content hash.
+            , orderSignificant = artefacts.orderSignificant
+            }
+        )
 
 
 applyOutcome : Outcome -> Model -> ( Model, Cmd Msg )
@@ -415,27 +509,29 @@ applyOutcome outcome model =
     case outcome of
         Success id result ->
             let
-                key =
-                    findCell id model
-                        |> Maybe.map (Engine.cacheKeyFor (graphOf model) model.states)
+                state =
+                    stateOf id model
+
+                valueKey =
+                    state.compiled
+                        |> Maybe.map
+                            (\c -> Engine.valueKeyFor (graphOf model) model.states id c.sql)
             in
             advance
                 { model
                     | current = Nothing
                     , states =
                         Dict.insert id
-                            { status = Fresh { cached = False, millis = result.millis }
-                            , table = Just result
-                            , valueHash = Just result.hash
-                            , keyForValue = key
+                            { state
+                                | status = Fresh { cached = False, millis = result.millis }
+                                , table = Just result
+                                , valueHash = Just result.hash
+                                , keyForValue = valueKey
                             }
                             model.states
                 }
 
         Failure id err ->
-            -- Downstream cells are not marked here: `advance` reaches them in
-            -- topological order and blocks them through `blockingUpstream`,
-            -- so there is one code path for "an input is unusable".
             advance
                 { model
                     | current = Nothing
@@ -508,7 +604,7 @@ viewHeader model graph =
     div [ class "topbar" ]
         [ div []
             [ h1 [] [ text "Acadia notebook" ]
-            , p [ class "sub" ] [ text "Phase 1+2 spike — reactive graph over DuckDB-wasm" ]
+            , p [ class "sub" ] [ text "reactive graph · DSL compiled in-browser · DuckDB-wasm" ]
             ]
         , div [ class "topbar-right" ]
             [ viewExecutionOrder graph
@@ -567,6 +663,7 @@ viewCell model graph cell =
                 []
             , span [ class "kind" ] [ text (Cell.kindLabel cell.kind) ]
             , viewStatus cell state.status
+            , viewSignature state
             , span [ class "spacer" ] []
             , viewEdges graph cell
             , button [ class "danger", onClick (DeleteCell cell.id) ] [ text "×" ]
@@ -578,7 +675,7 @@ viewCell model graph cell =
             , placeholder
                 (case cell.kind of
                     Query ->
-                        "SELECT …"
+                        "access orders () |> selectAll"
 
                     Prose ->
                         "Notes…"
@@ -588,7 +685,37 @@ viewCell model graph cell =
             ]
             []
         , viewOutput cell state
+        , viewArtefacts state
         ]
+
+
+{-| The compiler's view of the cell: what it evaluates to, and in what shape.
+-}
+viewSignature : CellState -> Html Msg
+viewSignature state =
+    case state.compiled of
+        Nothing ->
+            text ""
+
+        Just compiled ->
+            let
+                shape =
+                    case compiled.cardinality of
+                        One ->
+                            "Maybe Row"
+
+                        Many ->
+                            "List Row"
+            in
+            span [ class "signature", title (describeRow compiled.rowType) ]
+                [ text (": " ++ shape) ]
+
+
+describeRow : List ( String, Type ) -> String
+describeRow row =
+    row
+        |> List.map (\( name, t ) -> name ++ " : " ++ Schema.typeName t)
+        |> String.join "\n"
 
 
 viewEdges : Graph -> Cell -> Html Msg
@@ -625,13 +752,11 @@ viewStatus cell status =
 
                       else
                         "pill-fresh"
-                    , Cell.statusLabel status
-                        ++ (if cached then
-                                ""
+                    , if cached then
+                        "cached"
 
-                            else
-                                " · " ++ String.fromInt (round millis) ++ "ms"
-                           )
+                      else
+                        "fresh · " ++ String.fromInt (round millis) ++ "ms"
                     )
 
                 Running ->
@@ -641,7 +766,10 @@ viewStatus cell status =
                     ( "pill-stale", "stale" )
 
                 Failed _ ->
-                    ( "pill-failed", "failed" )
+                    ( "pill-failed", "query failed" )
+
+                Invalid _ ->
+                    ( "pill-failed", "does not compile" )
 
                 Blocked _ ->
                     ( "pill-blocked", Cell.statusLabel status )
@@ -666,6 +794,9 @@ viewOutput cell state =
 
     else
         case state.status of
+            Invalid message ->
+                div [ class "out out-error" ] [ text message ]
+
             Failed err ->
                 div [ class "out out-error" ] [ text err ]
 
@@ -678,30 +809,34 @@ viewOutput cell state =
                     [ text ("Cyclic dependency: " ++ String.join " ↔ " cyclic) ]
 
             Stale ->
-                case state.table of
-                    Just t ->
+                case ( state.table, state.compiled ) of
+                    ( Just t, Just compiled ) ->
                         div [ class "stale-wrap" ]
-                            [ div [ class "out out-stale" ] [ text "Stale — showing the previous result, dimmed, until this re-runs." ]
-                            , viewTable cell t
+                            [ div [ class "out out-stale" ] [ text "Stale — showing the previous result until this re-runs." ]
+                            , viewTable compiled t
                             ]
 
-                    Nothing ->
+                    _ ->
                         div [ class "out out-stale" ] [ text "Stale — not yet run." ]
 
             NeverRun ->
                 div [ class "out out-idle" ] [ text "Not run yet." ]
 
             _ ->
-                case state.table of
-                    Just t ->
-                        viewTable cell t
+                case ( state.table, state.compiled ) of
+                    ( Just t, Just compiled ) ->
+                        viewTable compiled t
 
-                    Nothing ->
+                    _ ->
                         div [ class "out out-idle" ] [ text "Running…" ]
 
 
-viewTable : Cell -> Table -> Html Msg
-viewTable cell t =
+{-| Rendered against the compiler's row type rather than against whatever JSON
+happens to arrive, so a timestamp shows as a date and a custom type shows as
+its constructor.
+-}
+viewTable : Compiled -> Table -> Html Msg
+viewTable compiled t =
     div []
         [ div [ class "result-meta" ]
             [ text
@@ -713,18 +848,24 @@ viewTable cell t =
                         else
                             ""
                        )
+                    ++ (if compiled.orderSignificant then
+                            " · ordered"
+
+                        else
+                            ""
+                       )
                 )
             ]
         , div [ class "table-scroll" ]
             [ table []
                 [ thead []
                     [ tr []
-                        (t.columns
+                        (compiled.rowType
                             |> List.map
-                                (\c ->
-                                    th [ title c.sqlType ]
-                                        [ text c.name
-                                        , span [ class "coltype" ] [ text c.sqlType ]
+                                (\( name, columnType ) ->
+                                    th []
+                                        [ text name
+                                        , span [ class "coltype" ] [ text (Schema.typeName columnType) ]
                                         ]
                                 )
                         )
@@ -734,67 +875,158 @@ viewTable cell t =
                         |> List.map
                             (\row ->
                                 tr []
-                                    (t.columns
+                                    (compiled.rowType
                                         |> List.map
-                                            (\c -> td [] [ text (Query.cellText c.name row) ])
+                                            (\( name, columnType ) ->
+                                                td [] [ text (renderValue compiled.declarations columnType name row) ]
+                                            )
                                     )
                             )
                     )
                 ]
             ]
-        , viewTypedPanel cell t
         ]
 
 
-{-| The Phase 2 payoff, and the only place `Spike.Orders` is used.
+renderValue : List TypeDecl -> Type -> String -> D.Value -> String
+renderValue decls columnType column row =
+    case columnType of
+        TMaybe inner ->
+            if isNull column row then
+                "—"
 
-For one designated cell the same rows are also run through a hand-written
-decoder into real Elm values — opaque id, custom `Status` type, `Time.Posix`
-timestamp — to prove that the JS/Arrow boundary can be crossed into types
-rather than into stringly-typed maps. The `orders` special case is a stand-in
-for Phase 3, where the compiler emits one of these per query cell.
+            else
+                renderValue decls inner column row
 
+        TTimestamp ->
+            decodeField column D.float row
+                |> Maybe.map (formatDate << Time.millisToPosix << round)
+                |> Maybe.withDefault "?"
+
+        TCustom name ->
+            decodeField column D.string row
+                |> Maybe.map (renderConstructor decls name row)
+                |> Maybe.withDefault "?"
+
+        _ ->
+            Query.cellText column row
+
+
+{-| Show the constructor the tag stands for, and its payload where it has one.
+This is the same reconstruction the generated decoder performs; doing it here
+means the table proves the mapping without the generated module having to be
+compiled and loaded first.
 -}
-viewTypedPanel : Cell -> Table -> Html Msg
-viewTypedPanel cell t =
-    if cell.id /= "orders" then
-        text ""
-
-    else
-        let
-            decoded =
-                t.rows
-                    |> List.take 5
-                    |> List.map (D.decodeValue Orders.decoder)
-        in
-        div [ class "typed" ]
-            [ h2 [] [ text "typed handoff · Spike.Orders.Order" ]
-            , ol []
-                (decoded
-                    |> List.map
-                        (\r ->
-                            case r of
-                                Ok order ->
-                                    li [ class "typed-ok" ] [ text (describe order) ]
-
-                                Err err ->
-                                    li [ class "typed-err" ] [ text (D.errorToString err) ]
-                        )
-                )
-            ]
-
-
-describe : Orders.Order -> String
-describe order =
+renderConstructor : List TypeDecl -> String -> D.Value -> String -> String
+renderConstructor decls typeName row tag =
     let
-        (Orders.OrderId n) =
-            order.id
+        found =
+            decls
+                |> List.filter (\d -> d.name == typeName)
+                |> List.concatMap .constructors
+                |> List.filter (\c -> c.tag == tag)
+                |> List.head
     in
-    "OrderId "
-        ++ String.fromInt n
-        ++ " · "
-        ++ order.owner
-        ++ " · "
-        ++ Orders.statusLabel order.status
-        ++ " · "
-        ++ String.fromFloat order.total
+    case found of
+        Nothing ->
+            "?" ++ tag
+
+        Just ctor ->
+            case ctor.payloadColumn of
+                Nothing ->
+                    ctor.name
+
+                Just payload ->
+                    decodeField payload D.float row
+                        |> Maybe.map (\ms -> ctor.name ++ " " ++ formatDate (Time.millisToPosix (round ms)))
+                        |> Maybe.withDefault ctor.name
+
+
+decodeField : String -> D.Decoder a -> D.Value -> Maybe a
+decodeField column decoder row =
+    D.decodeValue (D.field column decoder) row |> Result.toMaybe
+
+
+isNull : String -> D.Value -> Bool
+isNull column row =
+    D.decodeValue (D.field column (D.null True)) row |> Result.withDefault False
+
+
+formatDate : Time.Posix -> String
+formatDate posix =
+    let
+        pad n =
+            String.padLeft 2 '0' (String.fromInt n)
+    in
+    String.fromInt (Time.toYear Time.utc posix)
+        ++ "-"
+        ++ pad (monthNumber (Time.toMonth Time.utc posix))
+        ++ "-"
+        ++ pad (Time.toDay Time.utc posix)
+
+
+monthNumber : Time.Month -> Int
+monthNumber month =
+    case month of
+        Time.Jan ->
+            1
+
+        Time.Feb ->
+            2
+
+        Time.Mar ->
+            3
+
+        Time.Apr ->
+            4
+
+        Time.May ->
+            5
+
+        Time.Jun ->
+            6
+
+        Time.Jul ->
+            7
+
+        Time.Aug ->
+            8
+
+        Time.Sep ->
+            9
+
+        Time.Oct ->
+            10
+
+        Time.Nov ->
+            11
+
+        Time.Dec ->
+            12
+
+
+{-| Both artefacts, side by side. They are two renderings of one checked
+description, and showing them together is the clearest way to make that
+visible — and the Elm module is what a hand-written Elm cell will import once
+there is a daemon to compile one.
+-}
+viewArtefacts : CellState -> Html Msg
+viewArtefacts state =
+    case state.compiled of
+        Nothing ->
+            text ""
+
+        Just compiled ->
+            details [ class "artefacts" ]
+                [ summary [] [ text "generated" ]
+                , div [ class "artefact-pair" ]
+                    [ div [ class "artefact" ]
+                        [ div [ class "artefact-label" ] [ text "SQL" ]
+                        , pre [] [ text compiled.sql ]
+                        ]
+                    , div [ class "artefact" ]
+                        [ div [ class "artefact-label" ] [ text (moduleNameFor "…" ++ " — Elm") ]
+                        , pre [] [ text compiled.elmModule ]
+                        ]
+                    ]
+                ]

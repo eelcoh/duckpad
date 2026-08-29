@@ -38,6 +38,9 @@ type Status
     | Running
     | Fresh { cached : Bool, millis : Float }
     | Failed String
+      -- The cell did not compile. Distinct from `Failed`, which is DuckDB
+      -- rejecting a query the compiler was happy with.
+    | Invalid String
     | Blocked String
     | InCycle (List String)
 
@@ -86,6 +89,9 @@ statusLabel status =
 
         Failed _ ->
             "failed"
+
+        Invalid _ ->
+            "does not compile"
 
         Blocked upstream ->
             "blocked by " ++ upstream

@@ -94,6 +94,21 @@
   .typed li { padding: 1px 0; }
   .typed-err { color: var(--bad); }
 
+  .signature { font-family: var(--mono); font-size: 11px; color: var(--muted); cursor: help; }
+
+  .artefacts { border-top: 1px solid var(--line); background: #fcfcfb; }
+  .artefacts summary { padding: 7px 12px; font-size: 10px; text-transform: uppercase;
+                       letter-spacing: 0.08em; color: var(--muted); cursor: pointer; user-select: none; }
+  .artefacts summary:hover { color: var(--accent); }
+  .artefact-pair { display: grid; grid-template-columns: 1fr 1fr; gap: 1px; background: var(--line);
+                   border-top: 1px solid var(--line); }
+  .artefact { background: var(--card); padding: 10px 12px; overflow-x: auto; }
+  .artefact-label { font-family: var(--mono); font-size: 9px; text-transform: uppercase;
+                    letter-spacing: 0.08em; color: var(--accent); margin-bottom: 6px; }
+  .artefact pre { margin: 0; font-family: var(--mono); font-size: 11px; line-height: 1.5;
+                  white-space: pre; color: var(--ink); }
+  @media (max-width: 820px) { .artefact-pair { grid-template-columns: 1fr; } }
+
   .add-row { display: flex; gap: 8px; margin-top: 8px; }
 </style>
 </head>

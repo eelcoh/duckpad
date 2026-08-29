@@ -1,14 +1,16 @@
 module EngineTests exposing (checks)
 
-{-| Tests for the pure half of the reactive engine: dependency extraction,
-the graph, cache keys and staleness.
+{-| Tests for the pure half of the reactive engine: the graph, the two caches,
+schema assembly and staleness.
 -}
 
 import Cell exposing (Cell, Kind(..), Status(..))
 import Check exposing (Check, assert, equal)
 import Dag
-import Deps
 import Dict exposing (Dict)
+import Dsl.Check exposing (Cardinality(..))
+import Dsl.Compile exposing (Compiled)
+import Dsl.Schema exposing (Type(..))
 import Engine exposing (CellState)
 import Hash
 import Query exposing (Table)
@@ -17,33 +19,7 @@ import Set
 
 checks : List Check
 checks =
-    depsChecks ++ dagChecks ++ hashChecks ++ engineChecks
-
-
--- DEPS
-
-
-depsChecks : List Check
-depsChecks =
-    [ assert "deps: finds a table reference"
-        (Set.member "orders" (Deps.identifiers "SELECT * FROM orders WHERE x > 1"))
-    , assert "deps: ignores names inside string literals"
-        (not (Set.member "orders" (Deps.identifiers "SELECT 'orders' AS label")))
-    , assert "deps: ignores names in line comments"
-        (not (Set.member "orders" (Deps.identifiers "-- reads orders\nSELECT 1")))
-    , assert "deps: ignores names in block comments"
-        (not (Set.member "orders" (Deps.identifiers "/* orders */ SELECT 1")))
-    , assert "deps: collects double-quoted identifiers"
-        (Set.member "my_cell" (Deps.identifiers "SELECT * FROM \"my_cell\""))
-    , assert "deps: splits qualified names on the dot"
-        (Deps.identifiers "SELECT orders.total FROM orders"
-            |> (\s -> Set.member "orders" s && Set.member "total" s)
-        )
-    , assert "deps: an escaped quote does not end the literal early"
-        (not (Set.member "orders" (Deps.identifiers "SELECT 'it''s orders' AS x")))
-    , assert "deps: resumes collecting after a comment ends"
-        (Set.member "later" (Deps.identifiers "-- skip\nSELECT * FROM later"))
-    ]
+    dagChecks ++ hashChecks ++ engineChecks
 
 
 
@@ -160,7 +136,19 @@ hashChecks =
 
 cellB : Cell
 cellB =
-    { id = "b", kind = Query, source = "SELECT * FROM a" }
+    { id = "b", kind = Query, source = "access a () |> selectAll" }
+
+
+compiledWith : List ( String, Type ) -> Compiled
+compiledWith rowType =
+    { sql = "SELECT * FROM \"a\""
+    , elmModule = ""
+    , rowType = rowType
+    , declarations = []
+    , reads = [ "a" ]
+    , cardinality = Many
+    , orderSignificant = False
+    }
 
 
 tableWith : String -> Table
@@ -168,19 +156,29 @@ tableWith hash =
     { columns = [], rows = [], rowCount = 0, truncated = False, hash = hash, millis = 0 }
 
 
-freshState : String -> CellState
-freshState hash =
+{-| An upstream cell that has run: it has both a shape and a value, and the
+tests vary them independently.
+-}
+upstreamState : List ( String, Type ) -> String -> CellState
+upstreamState rowType valueHash =
     { status = Fresh { cached = False, millis = 1 }
-    , table = Just (tableWith hash)
-    , valueHash = Just hash
+    , compiled = Just (compiledWith rowType)
+    , compileKey = Just "k"
+    , table = Just (tableWith valueHash)
+    , valueHash = Just valueHash
     , keyForValue = Nothing
     }
 
 
-statesWith : String -> Dict String CellState
-statesWith upstreamHash =
+defaultRow : List ( String, Type )
+defaultRow =
+    [ ( "id", TInt ), ( "total", TFloat ) ]
+
+
+statesWith : List ( String, Type ) -> String -> Dict String CellState
+statesWith rowType valueHash =
     Dict.fromList
-        [ ( "a", freshState upstreamHash )
+        [ ( "a", upstreamState rowType valueHash )
         , ( "b", Engine.initialState )
         ]
 
@@ -193,30 +191,70 @@ withStatus status state =
 engineChecks : List Check
 engineChecks =
     let
-        baseline =
-            Engine.cacheKeyFor chain (statesWith "H1") cellB
+        states =
+            statesWith defaultRow "H1"
+
+        compileBaseline =
+            Engine.compileKeyFor chain states cellB
+
+        valueBaseline =
+            Engine.valueKeyFor chain states "b" "SELECT 1"
     in
-    [ assert "engine: cache key changes when the cell's own source changes"
-        (baseline /= Engine.cacheKeyFor chain (statesWith "H1") { cellB | source = "SELECT 1" })
-    , assert "engine: cache key changes when an upstream value changes"
-        (baseline /= Engine.cacheKeyFor chain (statesWith "H2") cellB)
-    , assert "engine: cache key is stable when nothing relevant changed"
-        (baseline == Engine.cacheKeyFor chain (statesWith "H1") cellB)
-    , assert "engine: cache key changes when the cell is renamed"
-        (baseline /= Engine.cacheKeyFor chain (statesWith "H1") { cellB | id = "b2" })
+    [ -- The compile cache tracks shape.
+      assert "engine: compile key changes when the source changes"
+        (compileBaseline /= Engine.compileKeyFor chain states { cellB | source = "access a () |> select" })
+    , assert "engine: compile key changes when an upstream's row type changes"
+        (compileBaseline
+            /= Engine.compileKeyFor chain (statesWith [ ( "id", TInt ) ] "H1") cellB
+        )
+    , assert "engine: compile key ignores an upstream value change"
+        -- The distinction the two caches exist for: new rows of the same shape
+        -- cannot change the SQL, so nothing needs recompiling.
+        (compileBaseline == Engine.compileKeyFor chain (statesWith defaultRow "H2") cellB)
+    , assert "engine: compile key changes when the cell is renamed"
+        (compileBaseline /= Engine.compileKeyFor chain states { cellB | id = "b2" })
+
+    -- The value cache tracks rows.
+    , assert "engine: value key changes when the generated SQL changes"
+        (valueBaseline /= Engine.valueKeyFor chain states "b" "SELECT 2")
+    , assert "engine: value key changes when an upstream value changes"
+        (valueBaseline /= Engine.valueKeyFor chain (statesWith defaultRow "H2") "b" "SELECT 1")
+    , assert "engine: value key is stable when nothing relevant changed"
+        (valueBaseline == Engine.valueKeyFor chain states "b" "SELECT 1")
+
+    -- Schema assembly.
+    , equal "engine: a cell compiles against its upstream's row type"
+        (Just defaultRow)
+        (Engine.schemaFor Dict.empty chain states "b" |> Dict.get "a")
+    , equal "engine: base tables stay visible"
+        (Just [ ( "x", TString ) ])
+        (Engine.schemaFor (Dict.fromList [ ( "orders", [ ( "x", TString ) ] ) ]) chain states "b"
+            |> Dict.get "orders"
+        )
+    , equal "engine: a cell cannot see past its direct dependencies"
+        Nothing
+        (Engine.schemaFor Dict.empty chain states "b" |> Dict.get "c")
+
+    -- Blocking and staleness.
     , equal "engine: a fresh upstream does not block"
         Nothing
-        (Engine.blockingUpstream chain (statesWith "H1") "b")
+        (Engine.blockingUpstream chain states "b")
     , equal "engine: a failed upstream blocks"
         (Just "a")
         (Engine.blockingUpstream chain
-            (Dict.insert "a" (withStatus (Failed "boom") (freshState "H1")) (statesWith "H1"))
+            (Dict.insert "a" (withStatus (Failed "boom") (upstreamState defaultRow "H1")) states)
+            "b"
+        )
+    , equal "engine: a cell that does not compile blocks its dependents"
+        (Just "a")
+        (Engine.blockingUpstream chain
+            (Dict.insert "a" (withStatus (Invalid "no such column") (upstreamState defaultRow "H1")) states)
             "b"
         )
     , equal "engine: a stale upstream blocks rather than being read"
         (Just "a")
         (Engine.blockingUpstream chain
-            (Dict.insert "a" (withStatus Stale (freshState "H1")) (statesWith "H1"))
+            (Dict.insert "a" (withStatus Stale (upstreamState defaultRow "H1")) states)
             "b"
         )
     , equal "engine: marking stale reaches transitive dependents"
@@ -224,9 +262,9 @@ engineChecks =
         (let
             all =
                 Dict.fromList
-                    [ ( "a", freshState "H1" )
-                    , ( "b", freshState "H2" )
-                    , ( "c", freshState "H3" )
+                    [ ( "a", upstreamState defaultRow "H1" )
+                    , ( "b", upstreamState defaultRow "H2" )
+                    , ( "c", upstreamState defaultRow "H3" )
                     ]
 
             marked =
@@ -236,7 +274,7 @@ engineChecks =
         )
     , equal "engine: marking stale keeps the old value for the cache to reuse"
         (Just True)
-        (Engine.markStale (Set.singleton "a") chain (statesWith "H1")
+        (Engine.markStale (Set.singleton "a") chain states
             |> Dict.get "a"
             |> Maybe.map Engine.hasValue
         )

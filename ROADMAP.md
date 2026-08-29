@@ -158,12 +158,65 @@ makes it fail.
 - Validate: editing one cell in a multi-cell notebook only triggers
   recompilation of it plus downstream importers.
 
-## Phase 5 — Wire it all together
+## Phase 5 — Wire it all together  [DONE]
 
 - Connect Phase 1's DAG engine to Phase 4's real compiled output and
   Phase 2's real query execution. First point where "edit a query
   cell, downstream chart updates" works end to end.
 - Stale/blocked-cell UX, per-cell compiler-error surfacing.
+
+### Phase 5 as built
+
+Query cells are now DSL cells, compiled in the browser. No daemon exists
+and none is needed.
+
+The ordering problem and how it is solved: compiling a cell needs the row
+types of the cells upstream of it, but knowing which cells those are
+needs the graph, which needs the compilation. Parsing breaks the cycle —
+a cell's source and its `intersect` targets are syntax, so
+`Dsl.Compile.readsOf` builds the graph from the parse alone, and the
+checker then runs in topological order against a schema that accumulates
+as it goes. A cell that does not parse reads nothing, so it becomes an
+isolated node reporting its own error instead of corrupting the order.
+
+Both caches are now real and they answer different questions:
+
+- The **compile cache** asks whether the SQL could have changed, keyed on
+  the source and on the *row types* of the inputs.
+- The **value cache** asks whether the rows could have changed, keyed on
+  the generated SQL and on the *values* of the inputs.
+
+An upstream edit that produces new rows of the same shape invalidates the
+second and not the first. There is a test pinning exactly that.
+
+Retired, because the compiler now knows better:
+
+- `src/Deps.elm`. The syntactic identifier scan is replaced by
+  `Compiled.reads`, which is exact. A string literal that happens to name
+  a cell is no longer a dependency, and that now falls out of parsing
+  rather than needing a special case in a tokeniser.
+- `src/Spike/Orders.elm`. The hand-written decoder it existed to
+  discover is what `Dsl.ElmGen` emits.
+
+Bridge changes:
+
+- It builds the base tables at boot and reports their schema, so the
+  checker knows what `access` may name before any cell has run.
+- Nullability is observed from the data, not read off the declaration.
+  A table built by CREATE TABLE AS carries no NOT NULL constraints, so
+  `information_schema` calls every column nullable and the row type would
+  drown in `Maybe`. Counting nulls answers the question the notebook
+  actually has.
+- The content hash is now order-aware. `orderSignificant` from the
+  compiler picks between folding rows in sorted order (cheap,
+  deterministic, blind to a reordering) and folding them as they lie.
+  This closes the Phase 2 finding.
+
+The notebook renders results against the compiler's row type rather than
+against whatever JSON arrived, so a timestamp shows as a date and a
+custom-typed column shows as its constructor with its payload. Each cell
+also has a `generated` panel showing its SQL and its Elm module side by
+side.
 
 ## Phase 6 — Display verbs + input widgets
 
@@ -196,37 +249,26 @@ makes it fail.
 
 ## Current state (2026-08-29)
 
-The Phase 1+2 spike is built and runs. `mise run build` compiles the
-shell, `mise run serve` hosts it on :8080, `mise run test` runs 32
-engine checks under node (all passing).
+`mise run build` compiles the shell, `mise run serve` hosts it on :8080,
+`mise run test` runs 128 checks under node, and `mise run roundtrip`
+executes every fixture's generated SQL against a real DuckDB and compiles
+every generated module with `elm make`.
 
-What exists:
+Layout:
 
-- `src/Deps.elm` — syntactic identifier extraction (skips comments and
-  string literals, collects quoted identifiers).
-- `src/Dag.elm` — graph build, topological sort with file order as the
-  tie-break, cycle detection, downstream closure.
-- `src/Engine.elm` — value-cache keys, stale marking, upstream blocking.
-- `src/Main.elm` — notebook shell; edits mark downstream stale on every
-  keystroke, execution is committed on blur.
-- `src/Spike/Orders.elm` — the hand-written typed decoder standing in
-  for Phase 3 codegen (opaque id, ADT rebuilt from two columns,
-  `Time.Posix`).
-- `public/duckdb-bridge.js` — materialises each cell as a temp table,
-  returns a preview plus an in-database content hash.
+- `src/Dsl/` — the compiler: `Schema`, `Ast`, `Parser`, `Check`, `Sql`,
+  `ElmGen`, `Compile`.
+- `src/Dag.elm`, `src/Engine.elm`, `src/Hash.elm` — the reactive engine.
+- `src/Main.elm` — the notebook shell.
+- `public/duckdb-bridge.js` — base tables, schema reporting, query
+  execution, content hashing.
 
-Findings worth carrying into Phase 3:
+Standing findings:
 
 - DuckDB's default integer is BIGINT, so almost every id column crosses
-  the bridge as a JS BigInt. Generated decoders cannot assume `Int`
-  survives the trip untouched; the bridge widens to Number only when
-  the value is a safe integer and falls back to a string otherwise, so
-  a decoder fails loudly rather than silently truncating.
-- The content hash is computed in SQL (`md5(string_agg(...))`) to avoid
-  pulling whole results into JS, but aggregating in row-text order makes
-  it order-insensitive: a pure reordering does not invalidate
-  dependents. Verified directly against the CLI. The DSL will need to
-  say whether a cell's row order is significant.
+  the bridge as a JS BigInt. The bridge widens to Number only when the
+  value is a safe integer and falls back to a string otherwise, so a
+  generated decoder fails loudly rather than silently truncating.
 - Cells are materialised as temp tables, not views. With views every
   downstream query silently re-executes its whole upstream chain, which
   makes the value cache meaningless.
@@ -235,13 +277,9 @@ Findings worth carrying into Phase 3:
 
 ## Next up
 
-Phase 5, wiring, is now the natural next step rather than Phase 4: the
-DSL compiler runs in the browser, so query cells can be switched from
-raw SQL to the DSL without a daemon existing. That means replacing the
-notebook's SQL cells with DSL cells, feeding real DuckDB schemas into
-the checker, retiring `Deps.identifiers` in favour of `Compiled.reads`,
-and using `orderSignificant` to decide how strictly the value cache
-compares a cell.
+Phase 6 (display verbs and input widgets) or Phase 7 (the file format).
+Phase 7 is the more valuable of the two: nothing is persisted yet, so
+every reload starts from the seeded notebook.
 
-Phase 4 shrinks to "a daemon for hand-written Elm cells" and can wait
-until those are wanted.
+Phase 4 has shrunk to "a daemon for hand-written Elm cells" and is only
+needed once those are wanted.
