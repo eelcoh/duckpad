@@ -22,6 +22,9 @@ const SETUP = `
 CREATE TABLE orders AS SELECT * FROM read_csv_auto('${CSV}');
 CREATE TABLE vips AS SELECT DISTINCT owner FROM orders ORDER BY owner LIMIT 3;
 CREATE TABLE regions AS SELECT DISTINCT region FROM orders;
+CREATE TABLE customers AS
+  SELECT DISTINCT owner, CASE WHEN owner < 'e' THEN 'gold' ELSE 'silver' END AS tier FROM orders;
+CREATE TABLE people AS SELECT DISTINCT owner AS person, length(owner) AS rank FROM orders;
 `;
 
 const ELM_JSON = {

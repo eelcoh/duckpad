@@ -69,7 +69,7 @@ reserved =
     Set.fromList
         [ "access", "filter", "map", "groupBy", "reduce", "sortBy", "limit"
         , "intersect", "select", "selectAll", "type", "from", "as", "asc"
-        , "desc", "not", "true", "false"
+        , "desc", "not", "true", "false", "join", "leftJoin"
         ]
 
 
@@ -173,6 +173,8 @@ stage =
         |. sym "|>"
         |= Parser.oneOf
             [ Parser.map Filter (lambdaStage "filter")
+            , joinStage "leftJoin" LeftOuter
+            , joinStage "join" Inner
             , Parser.map Map (lambdaStage "map")
             , Parser.map Reduce (lambdaStage "reduce")
             , Parser.succeed GroupBy |. kw "groupBy" |= accessor
@@ -184,6 +186,26 @@ stage =
             , Parser.succeed SelectAll |. kw "selectAll"
             , Parser.succeed Select |. kw "select"
             ]
+
+
+joinStage : String -> JoinKind -> Parser Stage
+joinStage name kind =
+    Parser.succeed (Join kind)
+        |. kw name
+        |= lname
+        |. sym "("
+        |= lambda2
+        |. sym ")"
+
+
+lambda2 : Parser Lambda2
+lambda2 =
+    Parser.succeed Lambda2
+        |. sym "\\"
+        |= lname
+        |= lname
+        |. sym "->"
+        |= expr
 
 
 lambdaStage : String -> Parser Lambda

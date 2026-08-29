@@ -43,6 +43,8 @@ schema =
           )
         , ( "vips", [ ( "owner", TString ) ] )
         , ( "regions", [ ( "region", TString ) ] )
+        , ( "customers", [ ( "owner", TString ), ( "tier", TString ) ] )
+        , ( "people", [ ( "person", TString ), ( "rank", TInt ) ] )
         ]
 
 
@@ -96,6 +98,26 @@ access orders ()
   |> map (\\o -> { owner = o.owner })
   |> intersect vips
   |> sortBy .owner
+  |> selectAll
+"""
+      )
+    , ( "join_using"
+      , """
+access orders ()
+  |> join customers (\\o c -> o.owner == c.owner)
+  |> filter (\\r -> r.tier == "gold")
+  |> groupBy .owner
+  |> reduce (\\g -> { owner = g.owner, spend = sum g.total })
+  |> sortBy (desc .spend)
+  |> selectAll
+"""
+      )
+    , ( "left_join"
+      , """
+access orders ()
+  |> leftJoin people (\\o p -> o.owner == p.person)
+  |> map (\\r -> { who = r.owner, standing = r.rank, amount = r.total })
+  |> limit 25
   |> selectAll
 """
       )

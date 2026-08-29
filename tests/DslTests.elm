@@ -15,7 +15,7 @@ import Dsl.Schema exposing (Schema, Type(..))
 
 checks : List Check
 checks =
-    parserChecks ++ checkerChecks ++ sqlChecks ++ elmChecks ++ readsChecks
+    parserChecks ++ checkerChecks ++ sqlChecks ++ elmChecks ++ readsChecks ++ joinChecks
 
 
 {-| The fixture schema every checker test runs against. `delivered_at` is
@@ -36,6 +36,15 @@ schema =
           )
         , ( "vips", [ ( "owner", TString ) ] )
         , ( "regions", [ ( "region", TString ) ] )
+
+        -- Shares `owner` with orders, so an equi-join on it becomes USING.
+        , ( "customers", [ ( "owner", TString ), ( "tier", TString ) ] )
+
+        -- Shares nothing, so a join has to be written as ON.
+        , ( "people", [ ( "person", TString ), ( "rank", TInt ) ] )
+
+        -- Shares `region` as well as `owner`, which no join can merge.
+        , ( "owners", [ ( "owner", TString ), ( "region", TString ) ] )
         ]
 
 
@@ -530,4 +539,89 @@ readsChecks =
     , equal "reads: a string literal is not a dependency"
         [ "orders" ]
         (Dsl.Compile.readsOf "access orders () |> filter (\\o -> o.owner == \"vips\") |> selectAll")
+    ]
+
+
+
+-- JOINS
+
+
+joinChecks : List Check
+joinChecks =
+    [ equal "join: parses with two parameters"
+        (Ok
+            [ Join Inner
+                "customers"
+                { left = "o", right = "c", body = Binary Eq (Access "o" "owner") (Access "c" "owner") }
+            , SelectAll
+            ]
+        )
+        (stagesOf "access orders () |> join customers (\\o c -> o.owner == c.owner) |> selectAll")
+    , equal "join: leftJoin is its own stage"
+        (Ok [ Join LeftOuter "people" { left = "o", right = "p", body = Binary Eq (Access "o" "owner") (Access "p" "person") } ])
+        (stagesOf "access orders () |> leftJoin people (\\o p -> o.owner == p.person)")
+
+    -- An equality between two columns of the same name is what makes the
+    -- merged row unambiguous, so it gets its own treatment.
+    , contains "join: a shared key becomes USING, not ON"
+        "JOIN \"customers\" USING (\"owner\")"
+        (sqlOf "access orders () |> join customers (\\o c -> o.owner == c.owner) |> selectAll")
+    , equal "join: a USING key appears once in the row type"
+        (Ok 7)
+        (rowTypeOf "access orders () |> join customers (\\o c -> o.owner == c.owner) |> selectAll"
+            |> Result.map List.length
+        )
+    , contains "join: differently named columns become ON"
+        "JOIN \"people\" ON (\"owner\" = \"person\")"
+        (sqlOf "access orders () |> join people (\\o p -> o.owner == p.person) |> selectAll")
+    , contains "join: leftJoin says so in the SQL"
+        "LEFT JOIN \"people\""
+        (sqlOf "access orders () |> leftJoin people (\\o p -> o.owner == p.person) |> selectAll")
+    , equal "join: an inner join keeps the right side's types"
+        (Ok [ ( "who", "String" ), ( "tier", "String" ) ])
+        (rowTypeOf "access orders () |> join customers (\\o c -> o.owner == c.owner) |> map (\\r -> { who = r.owner, tier = r.tier }) |> selectAll")
+    , equal "join: a left join makes the right side optional"
+        -- The type-level consequence of an outer join, which SQL leaves to be
+        -- discovered at runtime.
+        (Ok [ ( "who", "String" ), ( "rank", "Maybe Int" ) ])
+        (rowTypeOf "access orders () |> leftJoin people (\\o p -> o.owner == p.person) |> map (\\r -> { who = r.owner, rank = r.rank }) |> selectAll")
+    , equal "join: the joined table is a dependency"
+        (Ok [ "orders", "customers" ])
+        (compile "access orders () |> join customers (\\o c -> o.owner == c.owner) |> selectAll"
+            |> Result.map .reads
+        )
+    , equal "join: reads reports join targets before parsing a schema"
+        [ "orders", "customers" ]
+        (Dsl.Compile.readsOf "access orders () |> join customers (\\o c -> o.owner == c.owner) |> selectAll")
+
+    -- Scope, and the cases that must not compile.
+    , isErr "join: a column has to come from one of the two bound rows"
+        (compile "access orders () |> join customers (\\o c -> o.owner == x.owner) |> selectAll")
+    , isErr "join: the right row cannot supply a column it does not have"
+        (compile "access orders () |> join customers (\\o c -> o.owner == c.nope) |> selectAll")
+    , isErr "join: an unknown table is rejected"
+        (compile "access orders () |> join nowhere (\\o c -> o.owner == c.owner) |> selectAll")
+    , isErr "join: the condition has to be a condition"
+        (compile "access orders () |> join customers (\\o c -> o.total) |> selectAll")
+    , isErr "join: two sides sharing an unmerged column name is rejected"
+        (compile "access orders () |> join owners (\\o w -> o.owner == w.owner) |> selectAll")
+    , isErr "join: a join cannot follow a projection"
+        (compile "access orders () |> map (\\o -> { a = o.owner }) |> join customers (\\o c -> o.a == c.owner) |> selectAll")
+    , isErr "join: a join cannot follow groupBy"
+        (compile "access orders () |> groupBy .region |> join customers (\\o c -> o.owner == c.owner) |> selectAll")
+
+    -- Joined columns behave like any other downstream.
+    , equal "join: a later filter sees both sides"
+        (Ok True)
+        (sqlOf "access orders () |> join customers (\\o c -> o.owner == c.owner) |> filter (\\r -> r.tier == \"gold\") |> selectAll"
+            |> Result.map (String.contains "WHERE (\"tier\" = 'gold')")
+        )
+    , equal "join: a later reduce can aggregate across the join"
+        (Ok [ ( "tier", "String" ), ( "revenue", "Float" ) ])
+        (rowTypeOf "access orders () |> join customers (\\o c -> o.owner == c.owner) |> groupBy .tier |> reduce (\\g -> { tier = g.tier, revenue = sum g.total }) |> selectAll")
+    , equal "join: joins chain"
+        (Ok [ "orders", "customers", "people" ])
+        (compile "access orders () |> join customers (\\o c -> o.owner == c.owner) |> leftJoin people (\\r p -> r.owner == p.person) |> selectAll"
+            |> Result.map .reads
+        )
     ]

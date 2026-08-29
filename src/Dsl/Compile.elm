@@ -70,16 +70,19 @@ readsOf : String -> List String
 readsOf source =
     case Dsl.Parser.parse source of
         Ok ast ->
-            ast.source :: List.filterMap intersectTarget ast.stages
+            ast.source :: List.filterMap tableTarget ast.stages
 
         Err _ ->
             []
 
 
-intersectTarget : Stage -> Maybe String
-intersectTarget stage =
+tableTarget : Stage -> Maybe String
+tableTarget stage =
     case stage of
         Intersect other ->
+            Just other
+
+        Join _ other _ ->
             Just other
 
         _ ->

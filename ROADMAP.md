@@ -354,6 +354,35 @@ Checked and rejected:
   needs a null-string option the source language does not have — a fair
   argument for adding reader options later.
 
+## Joins  [DONE]
+
+    access orders ()
+      |> join customers (\o c -> o.owner == c.owner)
+      |> leftJoin people (\r p -> r.owner == p.person)
+
+Two parameters, because the whole question a join asks is which side a
+column came from.
+
+The design problem was what a row looks like afterwards. Collisions on
+`id` or `date` are the norm, and the expression language has only
+single-level field access, so there is nowhere to put a qualifier.
+
+The resolution: an equality between two columns of the *same name*
+compiles to `USING`, so the key appears once. Any other shared name is a
+compile error that says to project one side in its own cell first. Those
+two rules together make every name in the merged row unique — which is
+what lets join predicates, and every stage after them, refer to columns
+without qualifying them by table at all. The SQL renderer never emits a
+table prefix.
+
+`leftJoin` wraps the right side's columns in `Maybe`. An outer join that
+matched nothing is a runtime surprise in SQL and a type here.
+
+Restriction worth knowing: a same-name equality has to be the *whole*
+condition. `o.k == c.k && o.a > c.b` cannot become `USING`, and as `ON`
+it would leave `k` ambiguous, so it is rejected. Rename in an upstream
+cell.
+
 ## Phase 8 — Sharing story
 
 - "Export as static artifact": bake compiled JS + snapshotted/OPFS
@@ -364,7 +393,7 @@ Checked and rejected:
 ## Current state (2026-08-29)
 
 `mise run build` compiles the shell, `mise run serve` hosts it on :8080,
-`mise run test` runs 164 checks under node, and `mise run roundtrip`
+`mise run test` runs 184 checks under node, and `mise run roundtrip`
 executes every fixture's generated SQL against a real DuckDB and compiles
 every generated module with `elm make`.
 
@@ -393,13 +422,13 @@ Standing findings:
 
 ## Next up
 
-In dependency order: joins (now that a notebook can hold more than one
-table), then Phase 6 (display verbs and input widgets), then Phase 8
-(static export, which needs to know both how data gets in and what cell
-kinds exist).
+Phase 6 (display verbs and input widgets) is the last unbuilt piece of
+the original design, and Phase 8 (static export) follows it, since export
+has to serialize whatever cell kinds exist.
 
-Reader options for sources — a null string, an explicit delimiter — are
-worth adding the next time a dataset needs them.
+Smaller known gaps: HAVING (`filter` after `groupBy`), opaque newtype
+wrappers, and reader options for sources such as a null string or an
+explicit delimiter.
 
 Phase 4 has shrunk to "a daemon for hand-written Elm cells" and is only
 needed once those are wanted.

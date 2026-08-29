@@ -1,6 +1,8 @@
 module Dsl.Ast exposing
     ( Constructor
     , Expr(..)
+    , JoinKind(..)
+    , Lambda2
     , Field
     , Lambda
     , Literal(..)
@@ -54,8 +56,16 @@ type alias Constructor =
     }
 
 
+type JoinKind
+    = Inner
+    | LeftOuter
+
+
 type Stage
     = Filter Lambda
+      -- `join customers (\o c -> o.customer_id == c.id)`. Two parameters,
+      -- because the whole point is to say which side a column came from.
+    | Join JoinKind String Lambda2
     | Map Lambda
     | GroupBy String
     | Reduce Lambda
@@ -79,6 +89,13 @@ type SortDir
 
 type alias Lambda =
     { param : String
+    , body : Expr
+    }
+
+
+type alias Lambda2 =
+    { left : String
+    , right : String
     , body : Expr
     }
 

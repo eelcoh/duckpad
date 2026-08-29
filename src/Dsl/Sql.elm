@@ -8,8 +8,8 @@ what keeps it in step with the generated Elm.
 
 -}
 
-import Dsl.Ast as Ast exposing (Literal(..), Op(..), SortDir(..))
-import Dsl.Check exposing (Checked, Projection(..), TExpr(..))
+import Dsl.Ast as Ast exposing (JoinKind(..), Literal(..), Op(..), SortDir(..))
+import Dsl.Check exposing (Checked, CheckedJoin, Projection(..), TExpr(..))
 import Dsl.Schema exposing (Type(..))
 
 
@@ -17,9 +17,11 @@ render : Checked -> String
 render checked =
     let
         core =
-            [ "SELECT " ++ projection checked
-            , "FROM " ++ ident checked.source
-            ]
+            ([ "SELECT " ++ projection checked
+             , "FROM " ++ ident checked.source
+             ]
+                ++ List.map joinClause checked.joins
+            )
                 ++ maybeLine "WHERE " (Maybe.map expr checked.filter)
                 ++ maybeLine "GROUP BY " (Maybe.map (ident << Tuple.first) checked.groupBy)
                 |> String.join "\n"
@@ -38,6 +40,35 @@ render checked =
     in
     (withIntersects :: tail checked)
         |> String.join "\n"
+
+
+{-| Columns are never qualified by table here, and do not need to be: the
+checker rejects a join whose sides share a column name, except the equi-join
+key it turns into `USING`. Every name in the merged row is therefore unique.
+-}
+joinClause : CheckedJoin -> String
+joinClause join =
+    let
+        keyword =
+            case join.kind of
+                Inner ->
+                    "JOIN "
+
+                LeftOuter ->
+                    "LEFT JOIN "
+
+        condition =
+            case ( join.using, join.on ) of
+                ( Just key, _ ) ->
+                    " USING (" ++ ident key ++ ")"
+
+                ( Nothing, Just predicate ) ->
+                    " ON " ++ expr predicate
+
+                ( Nothing, Nothing ) ->
+                    ""
+    in
+    keyword ++ ident join.table ++ condition
 
 
 tail : Checked -> List String
