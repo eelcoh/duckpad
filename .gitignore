@@ -1,0 +1,6 @@
+elm-stuff/
+node_modules/
+
+# Compiled Elm output — rebuilt by `mise run build` / `mise run test`.
+public/elm.js
+tests/tests.js

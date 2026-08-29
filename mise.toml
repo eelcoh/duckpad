@@ -1,0 +1,19 @@
+[tools]
+duckdb = "latest"
+elm = { version = "0.19.2", bin = "elm" }
+node = "26"
+
+[tasks.build]
+description = "Compile the Elm notebook shell"
+run = "elm make src/Main.elm --output=public/elm.js"
+
+[tasks.serve]
+description = "Serve the notebook at http://localhost:8080 (build first)"
+run = "python3 -m http.server 8080 --directory public"
+
+[tasks.test]
+description = "Compile and run the engine test suite under node"
+run = """
+elm make tests/TestRunner.elm --output=tests/tests.js > /dev/null
+node tests/run.js
+"""

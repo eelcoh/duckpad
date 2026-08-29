@@ -1,0 +1,241 @@
+id,owner,region,status,delivered_at,total
+1,carol,west,in_transit,,614.85
+2,brian,east,submitted,,551.37
+3,brian,west,delivered,2026-02-24 01:00:00,398.03
+4,gwen,north,in_transit,,778.71
+5,dmitri,north,submitted,,546.07
+6,dmitri,north,in_transit,,527.03
+7,gwen,south,submitted,,512.15
+8,carol,north,delivered,2026-05-24 21:00:00,550.26
+9,brian,north,delivered,2026-04-06 03:00:00,585.11
+10,gwen,east,in_transit,,442.21
+11,dmitri,south,delivered,2026-04-03 09:00:00,659.61
+12,erin,west,in_transit,,823.69
+13,brian,north,delivered,2026-03-15 19:00:00,485.37
+14,farid,south,submitted,,877.84
+15,brian,east,in_transit,,325.32
+16,hugo,west,in_transit,,72.55
+17,erin,west,submitted,,657.79
+18,erin,west,submitted,,273.6
+19,farid,north,in_transit,,884.71
+20,brian,west,in_transit,,63.42
+21,dmitri,west,delivered,2026-02-03 23:00:00,372.67
+22,hugo,west,delivered,2026-01-21 05:00:00,520.3
+23,erin,west,delivered,2026-07-29 13:00:00,927.39
+24,carol,north,delivered,2026-04-08 07:00:00,172.65
+25,dmitri,north,in_transit,,460.24
+26,ada,south,delivered,2026-03-09 09:00:00,398.75
+27,farid,south,in_transit,,651.69
+28,ada,west,delivered,2026-06-08 20:00:00,846.41
+29,gwen,west,delivered,2026-06-24 17:00:00,380.15
+30,gwen,north,submitted,,186.05
+31,brian,east,delivered,2026-04-23 05:00:00,568.08
+32,carol,north,submitted,,892.45
+33,gwen,south,delivered,2026-01-19 06:00:00,599.45
+34,hugo,north,delivered,2026-06-04 11:00:00,115.95
+35,hugo,west,in_transit,,459.19
+36,brian,east,submitted,,698.14
+37,carol,north,in_transit,,199.66
+38,ada,east,delivered,2026-04-03 04:00:00,919.97
+39,farid,south,delivered,2026-06-28 08:00:00,339.83
+40,farid,south,in_transit,,579.72
+41,dmitri,west,delivered,2026-07-14 06:00:00,697.69
+42,hugo,east,in_transit,,689.43
+43,hugo,east,delivered,2026-07-22 08:00:00,188.88
+44,farid,east,delivered,2026-03-30 14:00:00,83.52
+45,hugo,south,submitted,,323.1
+46,ada,west,in_transit,,855.42
+47,brian,north,in_transit,,855.96
+48,hugo,south,delivered,2026-07-12 06:00:00,412.7
+49,gwen,west,delivered,2026-01-23 23:00:00,382.39
+50,carol,south,delivered,2026-07-05 05:00:00,34.16
+51,carol,west,delivered,2026-04-30 20:00:00,620.75
+52,carol,north,in_transit,,21.77
+53,carol,west,delivered,2026-06-16 03:00:00,927.47
+54,dmitri,north,submitted,,243.08
+55,dmitri,east,in_transit,,250.1
+56,carol,north,in_transit,,856.18
+57,hugo,west,in_transit,,778.98
+58,carol,north,delivered,2026-02-03 17:00:00,821.52
+59,carol,south,delivered,2026-06-05 00:00:00,140.36
+60,ada,east,delivered,2026-01-31 17:00:00,644.09
+61,ada,south,delivered,2026-05-04 03:00:00,186.7
+62,brian,west,submitted,,531.75
+63,farid,south,delivered,2026-01-17 14:00:00,653.78
+64,hugo,south,in_transit,,659.82
+65,dmitri,west,delivered,2026-03-08 17:00:00,136.24
+66,hugo,east,submitted,,76.08
+67,brian,south,in_transit,,632.11
+68,farid,south,delivered,2026-07-18 04:00:00,244.27
+69,hugo,south,submitted,,704.03
+70,hugo,south,submitted,,930.57
+71,gwen,west,delivered,2026-02-11 22:00:00,324.39
+72,farid,north,submitted,,681.18
+73,hugo,west,submitted,,663.49
+74,erin,north,in_transit,,113.62
+75,brian,east,delivered,2026-02-28 03:00:00,261.79
+76,carol,west,delivered,2026-02-16 08:00:00,799.89
+77,carol,west,delivered,2026-03-08 12:00:00,660.94
+78,ada,south,submitted,,404.68
+79,ada,north,submitted,,755.22
+80,dmitri,north,submitted,,254.84
+81,ada,east,submitted,,934.7
+82,erin,south,in_transit,,48.75
+83,erin,north,delivered,2026-01-29 05:00:00,177.24
+84,dmitri,east,delivered,2026-06-10 09:00:00,423.66
+85,ada,east,delivered,2026-03-11 11:00:00,42.92
+86,dmitri,west,submitted,,237.35
+87,gwen,west,in_transit,,517.01
+88,dmitri,south,delivered,2026-05-10 09:00:00,327.73
+89,carol,west,delivered,2026-06-30 23:00:00,930.16
+90,ada,north,delivered,2026-08-03 04:00:00,591.11
+91,ada,north,delivered,2026-04-21 05:00:00,628.16
+92,erin,south,in_transit,,653.74
+93,carol,south,submitted,,259.11
+94,farid,east,submitted,,914.5
+95,erin,south,delivered,2026-03-04 01:00:00,340.66
+96,gwen,north,submitted,,450.63
+97,ada,north,delivered,2026-02-21 07:00:00,254.57
+98,gwen,north,submitted,,375.49
+99,dmitri,north,in_transit,,553.97
+100,gwen,east,delivered,2026-07-12 04:00:00,679.81
+101,erin,south,in_transit,,49.29
+102,gwen,south,delivered,2026-05-12 20:00:00,856.06
+103,dmitri,north,delivered,2026-05-26 00:00:00,37.53
+104,farid,north,submitted,,359.32
+105,ada,north,in_transit,,591.83
+106,ada,west,delivered,2026-05-06 08:00:00,751.56
+107,brian,north,delivered,2026-05-09 17:00:00,703.15
+108,brian,east,in_transit,,227.2
+109,hugo,west,delivered,2026-03-01 23:00:00,796.11
+110,erin,north,submitted,,583.21
+111,carol,east,delivered,2026-01-20 19:00:00,245.05
+112,carol,north,delivered,2026-03-19 19:00:00,457.87
+113,brian,south,in_transit,,637.92
+114,erin,west,in_transit,,442.48
+115,erin,north,delivered,2026-05-21 06:00:00,880.62
+116,hugo,north,submitted,,772.23
+117,gwen,south,delivered,2026-04-26 08:00:00,862.27
+118,brian,south,delivered,2026-01-20 18:00:00,704.78
+119,farid,south,in_transit,,570.54
+120,farid,south,delivered,2026-03-13 03:00:00,472.28
+121,carol,north,delivered,2026-04-11 00:00:00,893.39
+122,carol,west,delivered,2026-04-14 09:00:00,328.9
+123,farid,north,in_transit,,310.82
+124,gwen,north,in_transit,,884.0
+125,ada,east,submitted,,244.37
+126,gwen,north,submitted,,344.5
+127,erin,north,in_transit,,269.91
+128,erin,south,submitted,,240.75
+129,farid,south,in_transit,,728.72
+130,gwen,south,delivered,2026-04-20 00:00:00,678.78
+131,gwen,west,submitted,,581.29
+132,erin,west,submitted,,54.12
+133,hugo,west,delivered,2026-02-02 05:00:00,328.62
+134,erin,west,in_transit,,619.56
+135,gwen,north,in_transit,,164.37
+136,dmitri,west,submitted,,521.19
+137,farid,west,in_transit,,406.64
+138,carol,east,delivered,2026-03-04 02:00:00,526.3
+139,farid,east,in_transit,,762.42
+140,ada,west,in_transit,,365.11
+141,erin,east,delivered,2026-02-23 12:00:00,709.09
+142,farid,south,in_transit,,648.21
+143,brian,east,delivered,2026-07-22 06:00:00,843.86
+144,hugo,west,in_transit,,897.1
+145,ada,west,delivered,2026-01-06 04:00:00,669.41
+146,hugo,north,delivered,2026-05-02 18:00:00,76.63
+147,hugo,west,delivered,2026-07-31 16:00:00,239.95
+148,carol,south,submitted,,495.08
+149,hugo,north,delivered,2026-07-31 23:00:00,522.22
+150,carol,south,submitted,,538.88
+151,erin,south,submitted,,592.06
+152,brian,north,delivered,2026-04-22 22:00:00,74.03
+153,gwen,east,delivered,2026-05-30 06:00:00,216.77
+154,erin,west,delivered,2026-01-03 17:00:00,268.02
+155,dmitri,west,in_transit,,498.73
+156,erin,north,delivered,2026-01-08 13:00:00,28.79
+157,gwen,north,in_transit,,248.13
+158,hugo,north,delivered,2026-04-05 07:00:00,656.66
+159,gwen,south,delivered,2026-04-03 21:00:00,14.79
+160,brian,south,in_transit,,470.24
+161,dmitri,south,in_transit,,441.75
+162,erin,north,in_transit,,895.22
+163,carol,south,in_transit,,460.33
+164,carol,west,delivered,2026-01-15 19:00:00,59.13
+165,carol,west,submitted,,56.79
+166,gwen,west,submitted,,845.14
+167,brian,south,delivered,2026-07-07 03:00:00,315.19
+168,hugo,north,submitted,,298.97
+169,farid,west,delivered,2026-08-03 11:00:00,166.17
+170,erin,north,submitted,,335.89
+171,dmitri,west,delivered,2026-02-01 17:00:00,340.7
+172,brian,north,delivered,2026-07-30 13:00:00,665.45
+173,hugo,south,submitted,,309.66
+174,gwen,south,delivered,2026-05-02 00:00:00,764.71
+175,ada,west,delivered,2026-01-11 12:00:00,66.79
+176,brian,east,delivered,2026-03-07 06:00:00,346.61
+177,ada,east,in_transit,,703.81
+178,ada,north,delivered,2026-03-12 09:00:00,31.1
+179,hugo,west,in_transit,,897.07
+180,erin,west,in_transit,,767.49
+181,hugo,south,submitted,,16.61
+182,carol,south,delivered,2026-03-19 22:00:00,313.85
+183,farid,north,in_transit,,485.32
+184,carol,south,in_transit,,388.33
+185,farid,south,delivered,2026-05-04 17:00:00,921.61
+186,brian,south,delivered,2026-01-19 08:00:00,98.32
+187,hugo,south,in_transit,,226.65
+188,dmitri,north,in_transit,,734.84
+189,erin,east,in_transit,,355.92
+190,dmitri,south,delivered,2026-02-20 14:00:00,237.03
+191,dmitri,east,submitted,,68.87
+192,dmitri,south,in_transit,,613.64
+193,hugo,north,submitted,,103.82
+194,dmitri,west,in_transit,,860.24
+195,erin,south,submitted,,119.55
+196,dmitri,north,submitted,,355.24
+197,erin,north,delivered,2026-04-25 19:00:00,107.03
+198,dmitri,north,delivered,2026-06-08 11:00:00,351.95
+199,dmitri,east,submitted,,44.12
+200,farid,west,delivered,2026-02-22 00:00:00,640.35
+201,erin,north,submitted,,197.97
+202,brian,west,delivered,2026-05-21 15:00:00,102.94
+203,carol,north,in_transit,,616.82
+204,erin,west,in_transit,,929.04
+205,erin,east,delivered,2026-04-17 01:00:00,394.22
+206,farid,south,submitted,,372.47
+207,ada,west,in_transit,,848.37
+208,brian,west,in_transit,,546.72
+209,carol,south,in_transit,,22.32
+210,brian,east,delivered,2026-06-14 12:00:00,695.25
+211,farid,east,submitted,,159.23
+212,brian,north,submitted,,365.95
+213,erin,south,delivered,2026-07-22 06:00:00,788.44
+214,hugo,east,submitted,,58.22
+215,carol,south,delivered,2026-04-10 02:00:00,587.01
+216,carol,south,delivered,2026-02-20 15:00:00,47.36
+217,farid,north,delivered,2026-02-10 12:00:00,147.73
+218,ada,north,delivered,2026-07-28 06:00:00,630.65
+219,gwen,west,in_transit,,520.87
+220,gwen,east,delivered,2026-03-20 20:00:00,551.21
+221,farid,west,in_transit,,477.58
+222,ada,west,submitted,,441.9
+223,hugo,south,in_transit,,763.51
+224,brian,south,in_transit,,342.51
+225,hugo,north,in_transit,,46.37
+226,farid,north,submitted,,59.05
+227,carol,north,delivered,2026-04-07 20:00:00,806.86
+228,brian,south,delivered,2026-07-07 22:00:00,131.1
+229,dmitri,north,delivered,2026-03-15 05:00:00,784.47
+230,farid,east,delivered,2026-03-06 05:00:00,851.57
+231,erin,west,in_transit,,202.55
+232,dmitri,east,in_transit,,355.27
+233,gwen,south,submitted,,601.47
+234,farid,west,in_transit,,165.68
+235,ada,east,delivered,2026-01-30 16:00:00,908.47
+236,brian,east,in_transit,,933.44
+237,farid,east,delivered,2026-04-11 23:00:00,358.5
+238,carol,east,in_transit,,316.67
+239,dmitri,south,submitted,,581.72
+240,erin,east,delivered,2026-03-17 16:00:00,603.95

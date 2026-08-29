@@ -1,0 +1,105 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Acadia notebook — spike</title>
+<style>
+  :root {
+    --ink: #1b1f23;
+    --muted: #6b7280;
+    --line: #e3e6ea;
+    --bg: #fbfbfa;
+    --card: #ffffff;
+    --accent: #2f5d8a;
+    --stale: #b8860b;
+    --bad: #b4433a;
+    --good: #2f7a4f;
+    --mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+    --sans: "IBM Plex Sans", system-ui, -apple-system, sans-serif;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink); font-family: var(--sans); font-size: 14px; }
+  .app { max-width: 1040px; margin: 0 auto; padding: 24px 20px 80px; }
+
+  .topbar { display: flex; align-items: flex-start; justify-content: space-between; gap: 24px;
+            border-bottom: 1px solid var(--line); padding-bottom: 16px; margin-bottom: 24px; flex-wrap: wrap; }
+  h1 { font-size: 18px; margin: 0; letter-spacing: -0.01em; }
+  .sub { margin: 4px 0 0; color: var(--muted); font-size: 12px; }
+  .topbar-right { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+  .order { font-family: var(--mono); font-size: 11px; color: var(--muted); }
+  .order-label { display: block; text-transform: uppercase; letter-spacing: 0.08em; font-size: 9px; opacity: 0.7; }
+  .order-bad { color: var(--bad); }
+
+  button { font-family: var(--sans); font-size: 12px; padding: 6px 12px; border: 1px solid var(--line);
+           background: var(--card); border-radius: 5px; cursor: pointer; color: var(--ink); }
+  button:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
+  button:disabled { opacity: 0.45; cursor: default; }
+  button.danger { border: none; background: none; color: var(--muted); font-size: 16px; padding: 2px 6px; }
+  button.danger:hover { color: var(--bad); }
+
+  .cell { background: var(--card); border: 1px solid var(--line); border-radius: 8px;
+          margin-bottom: 16px; overflow: hidden; }
+  .cell-prose { background: transparent; border-style: dashed; }
+  .cell-head { display: flex; align-items: center; gap: 10px; padding: 8px 12px;
+               border-bottom: 1px solid var(--line); flex-wrap: wrap; }
+  .cell-prose .cell-head { border-bottom: none; }
+  .cell-name { font-family: var(--mono); font-size: 13px; font-weight: 600; border: 1px solid transparent;
+               background: transparent; padding: 3px 6px; border-radius: 4px; width: 13ch; color: var(--accent); }
+  .cell-name:hover, .cell-name:focus { border-color: var(--line); background: var(--bg); outline: none; }
+  .kind { font-size: 10px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); }
+  .spacer { flex: 1; }
+
+  .pill { font-size: 10px; text-transform: uppercase; letter-spacing: 0.06em; padding: 3px 8px;
+          border-radius: 999px; border: 1px solid currentColor; white-space: nowrap; }
+  .pill-idle { color: var(--muted); }
+  .pill-fresh { color: var(--good); }
+  .pill-cached { color: var(--accent); }
+  .pill-stale { color: var(--stale); }
+  .pill-running { color: var(--accent); }
+  .pill-failed { color: var(--bad); }
+  .pill-blocked { color: var(--bad); opacity: 0.75; }
+
+  .edges { display: flex; gap: 12px; font-family: var(--mono); font-size: 11px; color: var(--muted); }
+  .edge-label { text-transform: uppercase; font-size: 9px; letter-spacing: 0.08em; opacity: 0.7; margin-right: 4px; }
+
+  .cell-source { width: 100%; border: none; padding: 12px; font-family: var(--mono); font-size: 12.5px;
+                 line-height: 1.55; resize: vertical; background: transparent; color: var(--ink); }
+  .cell-source:focus { outline: none; background: #fcfdff; }
+  .cell-prose .cell-source { font-family: var(--sans); font-size: 13.5px; color: var(--muted); }
+
+  .out { padding: 10px 12px; font-size: 12px; border-top: 1px solid var(--line); font-family: var(--mono); }
+  .out-idle { color: var(--muted); }
+  .out-stale { color: var(--stale); background: #fffbf0; }
+  .out-error { color: var(--bad); background: #fff6f5; white-space: pre-wrap; }
+  .out-blocked { color: var(--bad); background: #fff6f5; }
+  .stale-wrap + * , .stale-wrap table { opacity: 0.5; }
+  .stale-wrap { opacity: 1; }
+  .stale-wrap .table-scroll, .stale-wrap .result-meta { opacity: 0.45; }
+
+  .result-meta { padding: 8px 12px; font-size: 11px; color: var(--muted); font-family: var(--mono);
+                 border-top: 1px solid var(--line); }
+  .table-scroll { overflow-x: auto; max-height: 320px; overflow-y: auto; border-top: 1px solid var(--line); }
+  table { border-collapse: collapse; width: 100%; font-family: var(--mono); font-size: 11.5px; }
+  th { text-align: left; padding: 6px 12px; border-bottom: 1px solid var(--line); position: sticky; top: 0;
+       background: var(--card); font-weight: 600; white-space: nowrap; }
+  .coltype { display: block; font-size: 9px; color: var(--muted); font-weight: 400; text-transform: lowercase; }
+  td { padding: 4px 12px; border-bottom: 1px solid #f3f4f6; white-space: nowrap; }
+  tbody tr:hover { background: #fafbfc; }
+
+  .typed { border-top: 1px solid var(--line); padding: 12px; background: #f7faf8; }
+  .typed h2 { font-size: 10px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--good);
+              margin: 0 0 8px; font-family: var(--mono); }
+  .typed ol { margin: 0; padding-left: 20px; font-family: var(--mono); font-size: 11.5px; }
+  .typed li { padding: 1px 0; }
+  .typed-err { color: var(--bad); }
+
+  .add-row { display: flex; gap: 8px; margin-top: 8px; }
+</style>
+</head>
+<body>
+  <div id="notebook"></div>
+  <script src="elm.js"></script>
+  <script type="module" src="duckdb-bridge.js"></script>
+</body>
+</html>
