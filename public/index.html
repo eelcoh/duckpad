@@ -88,6 +88,14 @@
   .prose-body:hover { background: #fcfdff; }
   .prose-empty { color: var(--muted); font-size: 13.5px; font-family: var(--sans); }
 
+  /* elm-ui sets `white-space: pre` on its own elements, and anything embedded
+     through Element.html inherits it — so Markdown paragraphs did not wrap,
+     and a flex item will not shrink below content it cannot break. Both the
+     wrapping and the shrinking have to be given back explicitly. */
+  .prose-body, .editor, .prose-rendered { min-width: 0; max-width: 100%; }
+  .prose-rendered, .prose-rendered * { white-space: normal; overflow-wrap: break-word; }
+  .prose-rendered pre, .prose-rendered pre code { white-space: pre; }
+
   .prose-rendered { font-family: var(--sans); font-size: 14px; line-height: 1.65; color: #33393f; }
   .prose-rendered > *:first-child { margin-top: 0; }
   .prose-rendered > *:last-child { margin-bottom: 0; }
