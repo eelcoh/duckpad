@@ -25,6 +25,27 @@ CREATE TABLE vips AS SELECT DISTINCT owner FROM orders ORDER BY owner LIMIT 3;
 CREATE TABLE regions AS SELECT DISTINCT region FROM orders;
 CREATE TABLE customers AS SELECT * FROM read_csv_auto('${CUSTOMERS}');
 CREATE TABLE people AS SELECT DISTINCT owner AS person, length(owner) AS rank FROM orders;
+
+-- Stand-ins for the two remote sources the seeded notebook ships with. The
+-- schemas match what DuckDB infers from the real files, so the seeded cells
+-- are checked for real without the tests needing a network.
+CREATE TABLE airports (
+  iata VARCHAR, name VARCHAR, city VARCHAR, state VARCHAR,
+  country VARCHAR, latitude DOUBLE, longitude DOUBLE
+);
+INSERT INTO airports VALUES
+  ('SFO','San Francisco Intl','San Francisco','CA','USA',37.6,-122.4),
+  ('LAX','Los Angeles Intl','Los Angeles','CA','USA',33.9,-118.4),
+  ('ORD','Chicago OHare Intl','Chicago','IL','USA',42.0,-87.9),
+  ('ROR','Babelthuap','Babelthuap','ROR','Palau',7.4,134.5);
+
+CREATE TABLE flights (
+  date TIMESTAMP, delay BIGINT, distance BIGINT, origin VARCHAR, destination VARCHAR
+);
+INSERT INTO flights VALUES
+  (TIMESTAMP '2001-01-01 10:00:00', 12, 337, 'SFO', 'LAX'),
+  (TIMESTAMP '2001-01-01 11:00:00', -4, 337, 'LAX', 'SFO'),
+  (TIMESTAMP '2001-01-02 09:00:00', 33, 1745, 'ORD', 'LAX');
 `;
 
 const ELM_JSON = {

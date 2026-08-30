@@ -343,11 +343,20 @@ Decisions:
   the reverse, so swapping `intersect` for `diff` or `exclude` visibly
   changes the result.
 
-### Testing the combining stages with open data
+### The seeded notebook
 
-`vega-datasets` is the one open-data pairing found so far that is both
-genuinely relational and CORS-clean. `flights.origin` joins to
-`airports.iata`:
+The notebook ships pointed at `vega-datasets`, the one open-data pairing
+found so far that is both genuinely relational and CORS-clean.
+`flights.origin` joins to `airports.iata`. Requiring the network for the
+seeded data is not a new dependency: duckdb-wasm itself is fetched from
+a CDN, so the page has never worked offline.
+
+Its cells are `by_state` (a big-by-small star join, grouped and ranked),
+`routes` (the same table joined twice) and `quiet` (an anti-join, with
+`country` cast to a declared type — the column has exactly five values
+in the data, so the cast is exhaustive). Every one of them is also a
+roundtrip fixture, checked against local stand-in tables whose schemas
+match what DuckDB infers from the real files, so the tests stay offline.
 
 | File | Size | Role |
 |---|---|---|
@@ -370,11 +379,20 @@ It exercises every case at once:
   airport, but 3,147 airports have no departures. Putting airports on
   the left gives `diff` and `exclude` something to show.
 
-Known limitation this data surfaces: the obvious "busiest city pairs"
-query needs two cells. After joining `airports` twice, `groupBy .city`
-is ambiguous, and `map` moves the pipeline past the phase where
-`groupBy` is allowed — so one cell projects the join and the next
-groups it.
+Two limitations this data surfaced, both real:
+
+- The obvious "busiest city pairs" query needs two cells. After joining
+  `airports` twice, `groupBy .city` is ambiguous, and `map` moves the
+  pipeline past the phase where `groupBy` is allowed — so one cell
+  projects the join and the next groups it. `groupBy` also takes a
+  single accessor, so grouping by a pair of columns is not expressible
+  at all.
+- Keywords could not be used as column names, which meant the language
+  could not read a column called `from`, `to`, `type` or `select` —
+  and real data has all of those. Fixed: after a dot, and naming a
+  record field, any identifier is allowed. Lambda parameters and table
+  names stay restricted, because those do sit where a keyword could
+  appear.
 
 In `flights-5k.json` the `date` column is VARCHAR and `delay` is
 HUGEINT, where the Parquet has TIMESTAMP and BIGINT. A useful accidental

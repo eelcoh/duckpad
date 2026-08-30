@@ -73,6 +73,25 @@ reserved =
         ]
 
 
+{-| A field name, which may be a keyword.
+
+After a dot, or on the left of `=` in a record, there is nothing a keyword
+could be confused with. Excluding them there would mean the language simply
+could not read a column called `from`, `to`, `type` or `select`, and real data
+has all of those. Binding occurrences — lambda parameters, table names — stay
+restricted, because those do sit where a keyword could appear.
+
+-}
+fieldName : Parser String
+fieldName =
+    Parser.variable
+        { start = \c -> Char.isLower c || c == '_'
+        , inner = \c -> Char.isAlphaNum c || c == '_'
+        , reserved = Set.empty
+        }
+        |. ws
+
+
 lname : Parser String
 lname =
     Parser.variable
@@ -243,7 +262,7 @@ accessor : Parser String
 accessor =
     Parser.succeed identity
         |. Parser.symbol "."
-        |= lname
+        |= fieldName
 
 
 sortSpec : Parser SortSpec
@@ -521,7 +540,7 @@ argument =
 fieldOrVar : String -> Parser Expr
 fieldOrVar name =
     Parser.oneOf
-        [ Parser.succeed (Access name) |. Parser.symbol "." |= lname
+        [ Parser.succeed (Access name) |. Parser.symbol "." |= fieldName
         , Parser.succeed (Var name)
         ]
 
@@ -552,7 +571,7 @@ fields =
 field : Parser Field
 field =
     Parser.succeed Field
-        |= lname
+        |= fieldName
         |. sym "="
         |= Parser.lazy (\_ -> expr)
 

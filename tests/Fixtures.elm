@@ -45,6 +45,26 @@ schema =
         , ( "regions", [ ( "region", TString ) ] )
         , ( "customers", [ ( "owner", TString ), ( "tier", TString ), ( "joined", TTimestamp ) ] )
         , ( "people", [ ( "person", TString ), ( "rank", TInt ) ] )
+
+        -- The two sources the seeded notebook ships with.
+        , ( "airports"
+          , [ ( "iata", TString )
+            , ( "name", TString )
+            , ( "city", TString )
+            , ( "state", TString )
+            , ( "country", TString )
+            , ( "latitude", TFloat )
+            , ( "longitude", TFloat )
+            ]
+          )
+        , ( "flights"
+          , [ ( "date", TTimestamp )
+            , ( "delay", TInt )
+            , ( "distance", TInt )
+            , ( "origin", TString )
+            , ( "destination", TString )
+            ]
+          )
         ]
 
 
@@ -121,19 +141,55 @@ access orders ()
   |> selectAll
 """
       )
-      -- The `by_tier` cell exactly as the seeded notebook ships it, so that
-      -- what a reader first sees is known to compile and run.
-    , ( "seeded_by_tier"
+      -- Every query cell the seeded notebook ships with, so that what a
+      -- reader first sees is known to compile and to run.
+    , ( "seeded_by_state"
       , """
-access orders ()
-  |> intersect .owner customers .owner
-  |> groupBy .tier
+access flights ()
+  |> intersect .origin airports .iata
+  |> groupBy .state
   |> reduce (\\g ->
-       { tier = g.tier
-       , n = count g
-       , revenue = sum g.total
+       { state = g.state
+       , departures = count g
+       , avg_delay = avg g.delay
        })
-  |> sortBy (desc .revenue)
+  |> sortBy (desc .departures)
+  |> limit 12
+  |> selectAll
+"""
+      )
+    , ( "seeded_routes"
+      , """
+access flights ()
+  |> intersect .origin airports .iata
+  |> intersect .destination airports .iata
+  |> map (\\(f, orig, dest) ->
+       { from = orig.city
+       , to = dest.city
+       , miles = f.distance
+       , delay = f.delay
+       })
+  |> limit 200
+  |> selectAll
+"""
+      )
+    , ( "seeded_quiet"
+      , """
+type Country
+  = Usa "USA"
+  | Marianas "N Mariana Islands"
+  | Palau "Palau"
+  | Thailand "Thailand"
+  | Micronesia "Federated States of Micronesia"
+
+access airports ()
+  |> exclude .iata flights .origin
+  |> map (\\a ->
+       { code = a.iata
+       , city = a.city
+       , country = a.country as Country
+       })
+  |> sortBy .code
   |> selectAll
 """
       )

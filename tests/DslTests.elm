@@ -15,7 +15,7 @@ import Dsl.Schema exposing (Schema, Type(..))
 
 checks : List Check
 checks =
-    parserChecks ++ checkerChecks ++ sqlChecks ++ elmChecks ++ readsChecks ++ joinChecks
+    parserChecks ++ checkerChecks ++ sqlChecks ++ elmChecks ++ readsChecks ++ joinChecks ++ keywordFieldChecks
 
 
 {-| The fixture schema every checker test runs against. `delivered_at` is
@@ -609,4 +609,27 @@ joinChecks =
         (compile "access orders () |> intersect .owner customers .owner |> diff .tier people .person |> map (\\(o, c, p) -> { t = c.tier, r = p.rank }) |> selectAll"
             |> Result.map .reads
         )
+    ]
+
+
+-- KEYWORDS AS FIELD NAMES
+
+
+{-| Real tables have columns called `from`, `to`, `type` and `select`. Those
+are keywords of this language, but only where a keyword could appear — after
+a dot, or naming a record field, there is nothing to confuse them with.
+-}
+keywordFieldChecks : List Check
+keywordFieldChecks =
+    [ equal "keywords: a column may be called `from`"
+        (Ok (Access "o" "from"))
+        (bodyOf "access t () |> map (\\o -> o.from)")
+    , equal "keywords: a projection may name a field `select`"
+        (Ok [ ( "select", "String" ) ])
+        (rowTypeOf "access orders () |> map (\\o -> { select = o.owner }) |> selectAll")
+    , equal "keywords: an accessor stage takes one too"
+        (Ok [ SortBy { column = "type", direction = Asc } ])
+        (stagesOf "access t () |> sortBy .type")
+    , isErr "keywords: but a lambda still cannot bind one"
+        (Dsl.Parser.parse "access t () |> map (\\from -> { a = from.x }) |> selectAll")
     ]

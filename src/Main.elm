@@ -151,41 +151,36 @@ toNotebook model =
 
 seeded : Notebook
 seeded =
-    { title = "Orders", cells = seedCells }
+    { title = "Flights", cells = seedCells }
 
 
 seedCells : List Cell
 seedCells =
     [ { id = "intro"
       , kind = Prose
-      , source = "A source names external data; a query cell compiles to SQL and to an Elm module from one checked description. Sources can point at any https URL that allows cross-origin reads — try `parquet \"https://cdn.jsdelivr.net/npm/vega-datasets@3.2.0/data/flights-3m.parquet\"` for three million rows read a page at a time.\n\n`intersect` pairs two tables rather than merging them, so each side keeps its own names and a later lambda destructures: `\\(o, c) -> …`. Note that `hugo` has orders but no customer record, and `iris` is the other way round — swap `intersect` for `diff` or `exclude` to see them."
+      , source = "Two sources, both read straight from the web. `airports` is a small CSV; `flights` is three million rows of Parquet that DuckDB reads a page at a time, so the whole file never has to come down.\n\n`intersect` pairs two tables rather than merging them, so each side keeps its own column names and a later lambda destructures: `\\(f, orig, dest) -> …`. That is what lets `routes` below join `airports` twice — once for the origin and once for the destination — without the two sides colliding."
       }
-    , { id = "orders"
+    , { id = "airports"
       , kind = Source
-      , source = "csv \"data/orders.csv\""
+      , source = "csv \"https://cdn.jsdelivr.net/npm/vega-datasets@2/data/airports.csv\""
       }
-    , { id = "customers"
+    , { id = "flights"
       , kind = Source
-      , source = "csv \"data/customers.csv\""
+      , source = "parquet \"https://cdn.jsdelivr.net/npm/vega-datasets@3.2.0/data/flights-3m.parquet\""
       }
-    , { id = "by_tier"
+    , { id = "by_state"
       , kind = Query
-      , source = "access orders ()\n  |> intersect .owner customers .owner\n  |> groupBy .tier\n  |> reduce (\\g ->\n       { tier = g.tier\n       , n = count g\n       , revenue = sum g.total\n       })\n  |> sortBy (desc .revenue)\n  |> selectAll"
+      , source = "access flights ()\n  |> intersect .origin airports .iata\n  |> groupBy .state\n  |> reduce (\\g ->\n       { state = g.state\n       , departures = count g\n       , avg_delay = avg g.delay\n       })\n  |> sortBy (desc .departures)\n  |> limit 12\n  |> selectAll"
       }
-    , { id = "delivered"
+    , { id = "routes"
       , kind = Query
-      , source = "access orders ()\n  |> filter (\\o -> o.status == \"delivered\")\n  |> selectAll"
+      , source = "access flights ()\n  |> intersect .origin airports .iata\n  |> intersect .destination airports .iata\n  |> map (\\(f, orig, dest) ->\n       { from = orig.city\n       , to = dest.city\n       , miles = f.distance\n       , delay = f.delay\n       })\n  |> limit 200\n  |> selectAll"
       }
-    , { id = "by_region"
+    , { id = "quiet"
       , kind = Query
-      , source = "access delivered ()\n  |> groupBy .region\n  |> reduce (\\g ->\n       { region = g.region\n       , n = count g\n       , revenue = sum g.total\n       , biggest = max g.total\n       })\n  |> sortBy (desc .revenue)\n  |> selectAll"
-      }
-    , { id = "typed"
-      , kind = Query
-      , source = "type Status\n  = Submitted \"submitted\"\n  | InTransit \"in_transit\"\n  | Delivered \"delivered\" from .delivered_at\n\naccess orders ()\n  |> filter (\\o -> o.total > 600.0)\n  |> map (\\o ->\n       { id = o.id\n       , owner = o.owner\n       , status = o.status as Status\n       })\n  |> selectAll"
+      , source = "type Country\n  = Usa \"USA\"\n  | Marianas \"N Mariana Islands\"\n  | Palau \"Palau\"\n  | Thailand \"Thailand\"\n  | Micronesia \"Federated States of Micronesia\"\n\naccess airports ()\n  |> exclude .iata flights .origin\n  |> map (\\a ->\n       { code = a.iata\n       , city = a.city\n       , country = a.country as Country\n       })\n  |> sortBy .code\n  |> selectAll"
       }
     ]
-
 
 
 -- GRAPH
