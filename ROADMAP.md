@@ -582,19 +582,35 @@ notebook. Four changes, in the order they should be done:
    Still available from this: the lexer could underline the exact span
    of a type error instead of the compiler printing a line and column.
 
-5. **Rebuild the view on elm-ui** (`mdgriffith/elm-ui`, pin 1.1.8 for
-   Elm 0.19; version 2 is not released). Layout becomes Elm values
-   rather than a stylesheet, which suits a UI whose structure is already
-   computed — cell states, staleness, the execution-order strip.
+5. ~~**Rebuild the view on elm-ui**~~ Done, on 1.1.8 (version 2 is not
+   released). Layout is Elm values now, and the design tokens live in
+   `src/Ui.elm`, so a colour or a font stack is something the compiler
+   knows about rather than a rule that silently stops applying.
 
-   One tension to plan around: items 4 and 5 pull against each other.
-   The highlight overlay needs exact text metrics and absolute
-   positioning, which is precisely what elm-ui abstracts away. The
-   workable split is elm-ui for the shell — chrome, cell frames, status
-   pills, tables, the generated-artefact panels — and a raw
-   `Element.html` escape hatch for the editor surface itself, which
-   keeps its own CSS. Doing 4 before 5 means the editor's CSS is already
-   isolated when the rest is converted.
+   The split the plan called for held. elm-ui took the chrome: the top
+   bar, the title and cell-name fields, buttons, the notice, cell
+   frames and headers, status pills, the dependency edges, and the
+   generated-artefact disclosure. Three things stayed raw HTML, each
+   for the same underlying reason — they need control elm-ui exists to
+   take away:
+
+   - The editor overlay. Two layers have to agree on exact text
+     metrics, which is precisely what a layout abstraction removes.
+   - Rendered Markdown, which is a tree of HTML by nature.
+   - The result table, because a sticky header over a scrolling body
+     is not something elm-ui expresses.
+
+   Doing colour coding first paid off as expected: the editor's CSS was
+   already isolated, so converting the rest did not touch it. The
+   stylesheet went from roughly two hundred lines to those three
+   concerns.
+
+   One thing changed shape rather than moving across. The artefact
+   panel was a native `details`/`summary`; elm-ui has no equivalent, so
+   the open state is in the model. That is arguably better — the
+   disclosure now survives a re-render instead of being the browser's
+   private business — but it is a state the app did not previously have
+   to hold.
 
 ## Phase 8 — Sharing story
 

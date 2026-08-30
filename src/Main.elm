@@ -22,9 +22,16 @@ import Dsl.Lexer
 import Dsl.Schema as Schema exposing (Schema, Type(..))
 import Dsl.Source
 import Engine exposing (CellState, Shape)
-import Html exposing (Html, button, details, div, input, p, pre, section, span, summary, table, tbody, td, text, textarea, th, thead, tr)
-import Html.Attributes exposing (attribute, class, classList, disabled, id, placeholder, rows, spellcheck, title, value)
-import Html.Events exposing (onBlur, onClick, onInput)
+import Element exposing (Element, alignRight, centerX, column, el, fill, height, maximum, padding, paddingXY, px, row, spacing, text, width)
+import Element.Background as Background
+import Element.Border as Border
+import Element.Events
+import Element.Font as Font
+import Element.Input as Input
+import Html exposing (Html, div, pre, span, table, tbody, td, textarea, th, thead, tr)
+import Html.Attributes exposing (attribute, class, id, placeholder, rows, spellcheck, value)
+import Html.Events exposing (onBlur, onInput)
+import Ui
 import Indent
 import Json.Decode as D
 import Notebook exposing (Notebook)
@@ -63,6 +70,11 @@ type alias Model =
     -- Markdown until it is clicked, which is the only way for a heading to
     -- look like a heading and still be editable in place.
     , editing : Maybe String
+
+    -- Which cells have their generated SQL and Elm on show. elm-ui has no
+    -- `details`, and holding it here means the disclosure survives a re-render
+    -- rather than being the browser's private business.
+    , expanded : Set.Set String
     }
 
 
@@ -89,6 +101,7 @@ type Msg
     | ResetNotebook
     | EditProse String
     | KeyEdit String Indent.Edit
+    | ToggleArtefacts String
     | Focused (Result Browser.Dom.Error ())
 
 
@@ -108,7 +121,7 @@ init flags =
         ( notebook, notice ) =
             restore flags
     in
-    ( load notebook { title = notebook.title, cells = [], states = Dict.empty, baseSchema = Dict.empty, queue = [], current = Nothing, db = Booting, nextId = 1, notice = notice, resetArmed = False, editing = Nothing }
+    ( load notebook { title = notebook.title, cells = [], states = Dict.empty, baseSchema = Dict.empty, queue = [], current = Nothing, db = Booting, nextId = 1, notice = notice, resetArmed = False, editing = Nothing, expanded = Set.empty }
     , Cmd.none
     )
 
@@ -397,6 +410,18 @@ step msg model =
             in
             ( updated
             , Cmd.batch [ cmd, Ports.setCaret { id = domIdFor id, pos = edit.caret } ]
+            )
+
+        ToggleArtefacts id ->
+            ( { model
+                | expanded =
+                    if Set.member id model.expanded then
+                        Set.remove id model.expanded
+
+                    else
+                        Set.insert id model.expanded
+              }
+            , Cmd.none
             )
 
         EditProse id ->
@@ -912,159 +937,399 @@ view model =
         graph =
             graphOf model
     in
-    div [ class "app" ]
-        [ viewHeader model graph
-        , viewNotice model.notice
-        , div [ class "cells" ] (List.map (viewCell model graph) model.cells)
-        , div [ class "add-row" ]
-            [ button [ onClick (AddCell Source) ] [ text "+ source" ]
-            , button [ onClick (AddCell Query) ] [ text "+ query cell" ]
-            , button [ onClick (AddCell Prose) ] [ text "+ prose cell" ]
-            ]
+    Element.layout
+        [ Background.color Ui.bg
+        , Font.family Ui.sans
+        , Font.size 14
+        , Font.color Ui.ink
         ]
-
-
-viewHeader : Model -> Graph -> Html Msg
-viewHeader model graph =
-    div [ class "topbar" ]
-        [ div []
-            [ input
-                [ class "notebook-title"
-                , value model.title
-                , onInput TitleEdited
-                , placeholder "Untitled notebook"
-                ]
-                []
-            , p [ class "sub" ] [ text "reactive graph · DSL compiled in-browser · DuckDB-wasm" ]
+        (column
+            [ width (fill |> maximum 1040)
+            , centerX
+            , paddingXY 20 24
+            , spacing 16
             ]
-        , div [ class "topbar-right" ]
-            [ viewExecutionOrder graph
-            , viewDbStatus model.db
-            , button
-                [ onClick ResetNotebook
-                , classList [ ( "armed", model.resetArmed ) ]
-                , title "Replace this notebook with the one it starts from"
+            (viewHeader model graph
+                :: viewNotice model.notice
+                ++ List.map (viewCell model graph) model.cells
+                ++ [ viewAddRow ]
+            )
+        )
+
+
+
+-- CHROME
+
+
+viewHeader : Model -> Graph -> Element Msg
+viewHeader model graph =
+    column [ width fill, spacing 14 ]
+        [ Element.wrappedRow [ width fill, spacing 20 ]
+            [ column [ spacing 4, width fill ]
+                [ titleField model.title
+                , el [ Font.size 12, Font.color Ui.muted ]
+                    (text "reactive graph · DSL compiled in-browser · DuckDB-wasm")
                 ]
-                [ text
-                    (if model.resetArmed then
-                        "Discard and reset?"
+            , Element.wrappedRow [ alignRight, spacing 10 ]
+                [ viewExecutionOrder graph
+                , viewDbStatus model.db
+                , plainButton "Reset" model.resetArmed (Just ResetNotebook)
+                , plainButton "Open" False (Just OpenFile)
+                , plainButton "Save" False (Just SaveFile)
+                , plainButton "Run all"
+                    False
+                    (if model.db == Ready then
+                        Just RunAll
 
                      else
-                        "Reset"
+                        Nothing
                     )
                 ]
-            , button [ onClick OpenFile, title "Open a notebook file" ] [ text "Open" ]
-            , button [ onClick SaveFile, title "Save this notebook as Markdown" ] [ text "Save" ]
-            , button
-                [ onClick RunAll
-                , disabled (model.db /= Ready)
-                , title "Discard every cached value and re-run the whole graph"
-                ]
-                [ text "Run all" ]
             ]
+        , el [ width fill, height (px 1), Background.color Ui.line ] Element.none
         ]
 
 
-viewNotice : Maybe String -> Html Msg
+titleField : String -> Element Msg
+titleField current =
+    Input.text
+        [ Font.size 18
+        , Font.semiBold
+        , Border.width 1
+        , Border.color Ui.bg
+        , Border.rounded 4
+        , Background.color Ui.bg
+        , paddingXY 6 2
+        , width (px 260)
+        , Element.focused [ Border.color Ui.line, Background.color Ui.card ]
+        , Element.mouseOver [ Border.color Ui.line ]
+        ]
+        { onChange = TitleEdited
+        , text = current
+        , placeholder = Just (Input.placeholder [] (text "Untitled notebook"))
+        , label = Input.labelHidden "Notebook title"
+        }
+
+
+{-| Reset is the only button with two states, so armedness is a parameter
+rather than a separate constructor.
+-}
+plainButton : String -> Bool -> Maybe Msg -> Element Msg
+plainButton label armed onPress =
+    let
+        colour =
+            if armed then
+                Ui.bad
+
+            else if onPress == Nothing then
+                Ui.muted
+
+            else
+                Ui.ink
+    in
+    Input.button
+        [ Font.size 12
+        , Font.color colour
+        , Border.width 1
+        , Border.color
+            (if armed then
+                Ui.bad
+
+             else
+                Ui.line
+            )
+        , Border.rounded 5
+        , Background.color
+            (if armed then
+                Element.rgb255 0xFF 0xF6 0xF5
+
+             else
+                Ui.card
+            )
+        , paddingXY 12 6
+        , Element.alpha
+            (if onPress == Nothing then
+                0.45
+
+             else
+                1
+            )
+        , Element.mouseOver
+            (if onPress == Nothing then
+                []
+
+             else
+                [ Border.color Ui.accent, Font.color Ui.accent ]
+            )
+        ]
+        { onPress = onPress
+        , label =
+            text
+                (if armed then
+                    "Discard and reset?"
+
+                 else
+                    label
+                )
+        }
+
+
+viewNotice : Maybe String -> List (Element Msg)
 viewNotice notice =
     case notice of
         Nothing ->
-            text ""
+            []
 
         Just message ->
-            div [ class "notice" ]
-                [ span [] [ text message ]
-                , button [ class "danger", onClick DismissNotice ] [ text "×" ]
+            [ row
+                [ width fill
+                , spacing 12
+                , padding 10
+                , Font.size 12
+                , Font.color Ui.stale
+                , Background.color (Element.rgb255 0xFF 0xFB 0xF0)
+                , Border.width 1
+                , Border.color (Element.rgb255 0xF0 0xE0 0xB8)
+                , Border.rounded 6
                 ]
+                [ Element.paragraph [ width fill ] [ text message ]
+                , Input.button [ alignRight, Font.color Ui.muted, Font.size 16 ]
+                    { onPress = Just DismissNotice, label = text "×" }
+                ]
+            ]
 
 
-viewDbStatus : DbStatus -> Html Msg
+viewDbStatus : DbStatus -> Element Msg
 viewDbStatus db =
     case db of
         Booting ->
-            span [ class "pill pill-running" ] [ text "duckdb booting…" ]
+            Ui.pill Ui.accent "duckdb booting…"
 
         Ready ->
-            span [ class "pill pill-fresh" ] [ text "duckdb ready" ]
+            Ui.pill Ui.good "duckdb ready"
 
-        DbFailed err ->
-            span [ class "pill pill-failed", title err ] [ text "duckdb failed" ]
+        DbFailed _ ->
+            Ui.pill Ui.bad "duckdb failed"
 
 
-viewExecutionOrder : Graph -> Html Msg
+viewExecutionOrder : Graph -> Element Msg
 viewExecutionOrder graph =
     case Dag.topoSort graph of
         Ok order ->
-            span [ class "order" ]
-                [ span [ class "order-label" ] [ text "execution order" ]
-                , text (String.join " → " order)
+            column [ spacing 2 ]
+                [ Ui.tinyCaps Ui.muted "execution order"
+                , el [ Font.family Ui.mono, Font.size 11, Font.color Ui.muted ]
+                    (text (String.join " → " order))
                 ]
 
         Err cyclic ->
-            span [ class "order order-bad" ]
-                [ text ("cycle: " ++ String.join " ↔ " cyclic) ]
+            el [ Font.family Ui.mono, Font.size 11, Font.color Ui.bad ]
+                (text ("cycle: " ++ String.join " ↔ " cyclic))
 
 
-viewCell : Model -> Graph -> Cell -> Html Msg
+viewAddRow : Element Msg
+viewAddRow =
+    row [ spacing 8 ]
+        [ plainButton "+ source" False (Just (AddCell Source))
+        , plainButton "+ query cell" False (Just (AddCell Query))
+        , plainButton "+ prose cell" False (Just (AddCell Prose))
+        ]
+
+
+
+-- CELLS
+
+
+viewCell : Model -> Graph -> Cell -> Element Msg
 viewCell model graph cell =
     let
         state =
             stateOf cell.id model
-    in
-    section [ class "cell", classList [ ( "cell-prose", cell.kind == Prose ) ] ]
-        [ div [ class "cell-head" ]
-            [ -- Prose has no name in the file, so it is not offered one here.
-              if cell.kind == Prose then
-                text ""
 
-              else
-                input
-                    [ class "cell-name"
-                    , value cell.id
-                    , onInput (NameEdited cell.id)
-                    , onBlur CommitEdit
-                    ]
-                    []
-            , span [ class "kind" ] [ text (Cell.kindLabel cell.kind) ]
-            , viewStatus cell state.status
-            , viewSignature state
-            , span [ class "spacer" ] []
-            , viewEdges graph cell
-            , button [ class "danger", onClick (DeleteCell cell.id) ] [ text "×" ]
-            ]
-        , viewBody model cell
+        prose =
+            cell.kind == Prose
+    in
+    column
+        [ width fill
+        , Background.color
+            (if prose then
+                Ui.bg
+
+             else
+                Ui.card
+            )
+        , Border.width 1
+        , Border.color Ui.line
+        , Border.rounded 8
+        , if prose then
+            Border.dashed
+
+          else
+            Border.solid
+        ]
+        [ viewCellHead model graph cell state
+        , el [ width fill ] (Element.html (viewBody model cell))
         , viewOutput cell state
-        , viewArtefacts state
+        , viewArtefacts model cell state
         ]
 
 
-{-| The compiler's view of the cell: what it evaluates to, and in what shape.
--}
-viewSignature : CellState -> Html Msg
+viewCellHead : Model -> Graph -> Cell -> CellState -> Element Msg
+viewCellHead model graph cell state =
+    Element.wrappedRow
+        [ width fill
+        , spacing 10
+        , paddingXY 12 8
+        , Border.widthEach { top = 0, left = 0, right = 0, bottom = 1 }
+        , Border.color
+            (if cell.kind == Prose then
+                Ui.bg
+
+             else
+                Ui.line
+            )
+        ]
+        ([ if cell.kind == Prose then
+            Element.none
+
+           else
+            nameField cell
+         , Ui.tinyCaps Ui.muted (Cell.kindLabel cell.kind)
+         ]
+            ++ viewStatus cell state.status
+            ++ viewSignature state
+            ++ [ el [ width fill ] Element.none
+               , viewEdges graph cell
+               , Input.button [ Font.color Ui.muted, Font.size 16, alignRight ]
+                    { onPress = Just (DeleteCell cell.id), label = text "×" }
+               ]
+        )
+
+
+nameField : Cell -> Element Msg
+nameField cell =
+    Input.text
+        [ Font.family Ui.mono
+        , Font.size 13
+        , Font.semiBold
+        , Font.color Ui.accent
+        , Border.width 1
+        , Border.color Ui.card
+        , Border.rounded 4
+        , Background.color Ui.card
+        , paddingXY 6 3
+        , width (px 130)
+        , Element.focused [ Border.color Ui.line, Background.color Ui.bg ]
+        , Element.mouseOver [ Border.color Ui.line ]
+        , Element.htmlAttribute (Html.Events.onBlur CommitEdit)
+        ]
+        { onChange = NameEdited cell.id
+        , text = cell.id
+        , placeholder = Nothing
+        , label = Input.labelHidden "Cell name"
+        }
+
+
+viewStatus : Cell -> Status -> List (Element Msg)
+viewStatus cell status =
+    if cell.kind == Prose then
+        []
+
+    else
+        case status of
+            Fresh { cached, millis } ->
+                if cached then
+                    [ Ui.pill Ui.accent "cached" ]
+
+                else
+                    [ Ui.pill Ui.good ("fresh · " ++ String.fromInt (round millis) ++ "ms") ]
+
+            Running ->
+                [ Ui.pill Ui.accent "running" ]
+
+            Stale ->
+                [ Ui.pill Ui.stale "stale" ]
+
+            Failed _ ->
+                [ Ui.pill Ui.bad "query failed" ]
+
+            Invalid _ ->
+                [ Ui.pill Ui.bad "does not compile" ]
+
+            Blocked upstream ->
+                [ Ui.pill Ui.bad ("blocked by " ++ upstream) ]
+
+            InCycle _ ->
+                [ Ui.pill Ui.bad "cycle" ]
+
+            NeverRun ->
+                [ Ui.pill Ui.muted "never run" ]
+
+            Queued ->
+                [ Ui.pill Ui.muted "queued" ]
+
+
+viewSignature : CellState -> List (Element Msg)
 viewSignature state =
     case state.compiled of
         Nothing ->
-            text ""
+            []
 
         Just compiled ->
-            let
-                shape =
-                    case compiled.cardinality of
-                        One ->
-                            "Maybe Row"
+            [ el
+                [ Font.family Ui.mono
+                , Font.size 11
+                , Font.color Ui.muted
+                , Element.htmlAttribute (Html.Attributes.title (describeRow compiled.rowType))
+                ]
+                (text
+                    (": "
+                        ++ (case compiled.cardinality of
+                                One ->
+                                    "Maybe Row"
 
-                        Many ->
-                            "List Row"
-            in
-            span [ class "signature", title (describeRow compiled.rowType) ]
-                [ text (": " ++ shape) ]
+                                Many ->
+                                    "List Row"
+                           )
+                    )
+                )
+            ]
 
 
 describeRow : List ( String, Type ) -> String
-describeRow row =
-    row
+describeRow rowType =
+    rowType
         |> List.map (\( name, t ) -> name ++ " : " ++ Schema.typeName t)
         |> String.join "\n"
+
+
+viewEdges : Graph -> Cell -> Element Msg
+viewEdges graph cell =
+    let
+        part label items =
+            if List.isEmpty items then
+                []
+
+            else
+                [ row [ spacing 4 ]
+                    [ Ui.tinyCaps Ui.muted label
+                    , el [ Font.family Ui.mono, Font.size 11, Font.color Ui.muted ]
+                        (text (String.join ", " items))
+                    ]
+                ]
+    in
+    row [ spacing 12 ]
+        (part "reads" (Set.toList (Dag.dependenciesOf cell.id graph))
+            ++ part "feeds" (Set.toList (Dag.dependentsOf cell.id graph))
+        )
+
+
+
+-- THE EDITING SURFACE
+--
+-- Raw HTML from here down, and deliberately. The coloured layer and the
+-- textarea over it have to agree on exact text metrics, which is the one thing
+-- elm-ui is built to take away from you.
 
 
 viewBody : Model -> Cell -> Html Msg
@@ -1072,11 +1337,11 @@ viewBody model cell =
     if cell.kind == Prose && model.editing /= Just cell.id then
         div
             [ class "prose-body"
-            , onClick (EditProse cell.id)
-            , title "Click to edit"
+            , Html.Events.onClick (EditProse cell.id)
+            , Html.Attributes.title "Click to edit"
             ]
             [ if String.trim cell.source == "" then
-                span [ class "prose-empty" ] [ text "Notes…" ]
+                span [ class "prose-empty" ] [ Html.text "Notes…" ]
 
               else
                 Prose.view cell.source
@@ -1086,8 +1351,6 @@ viewBody model cell =
         editor cell
 
     else
-        -- Code cells get the coloured layer underneath; prose does not, since
-        -- prose is Markdown and has its own rendering.
         div [ class "editor" ]
             [ pre
                 [ class "highlight", attribute "aria-hidden" "true" ]
@@ -1095,7 +1358,7 @@ viewBody model cell =
                     -- A zero-width space guarantees a final line box, so the
                     -- two layers agree on their height whether or not the
                     -- source ends in a newline.
-                    ++ [ text "\u{200B}" ]
+                    ++ [ Html.text "\u{200B}" ]
                 )
             , editor cell
             ]
@@ -1103,7 +1366,7 @@ viewBody model cell =
 
 viewToken : Dsl.Lexer.Token -> Html Msg
 viewToken token =
-    span [ class (Dsl.Lexer.className token.kind) ] [ text token.text ]
+    span [ class (Dsl.Lexer.className token.kind) ] [ Html.text token.text ]
 
 
 editor : Cell -> Html Msg
@@ -1112,9 +1375,10 @@ editor cell =
         [ class "cell-source"
         , id (domIdFor cell.id)
 
-        -- Browsers spell-check a textarea by default, which underlines
-        -- source in red as though it were an error. The mobile
-        -- attributes go with it: autocorrect happily rewrites code.
+        -- Browsers spell-check a textarea by default, which underlines source
+        -- in red as though it were an error. On prose that is wanted; on code
+        -- it is not. The mobile attributes go with it: autocorrect happily
+        -- rewrites code.
         , spellcheck (cell.kind == Prose)
         , attribute "autocorrect" "off"
         , attribute "autocapitalize" "off"
@@ -1195,124 +1459,84 @@ keyEdit cellId ctx =
             D.fail "not an editing key"
 
 
-viewEdges : Graph -> Cell -> Html Msg
-viewEdges graph cell =
-    let
-        deps =
-            Dag.dependenciesOf cell.id graph |> Set.toList
 
-        users =
-            Dag.dependentsOf cell.id graph |> Set.toList
-
-        part name items =
-            if List.isEmpty items then
-                []
-
-            else
-                [ span [ class "edge" ]
-                    [ span [ class "edge-label" ] [ text name ]
-                    , text (String.join ", " items)
-                    ]
-                ]
-    in
-    span [ class "edges" ] (part "reads" deps ++ part "feeds" users)
+-- OUTPUT
 
 
-viewStatus : Cell -> Status -> Html Msg
-viewStatus cell status =
-    let
-        ( cls, label ) =
-            case status of
-                Fresh { cached, millis } ->
-                    ( if cached then
-                        "pill-cached"
-
-                      else
-                        "pill-fresh"
-                    , if cached then
-                        "cached"
-
-                      else
-                        "fresh · " ++ String.fromInt (round millis) ++ "ms"
-                    )
-
-                Running ->
-                    ( "pill-running", "running" )
-
-                Stale ->
-                    ( "pill-stale", "stale" )
-
-                Failed _ ->
-                    ( "pill-failed", "query failed" )
-
-                Invalid _ ->
-                    ( "pill-failed", "does not compile" )
-
-                Blocked _ ->
-                    ( "pill-blocked", Cell.statusLabel status )
-
-                InCycle _ ->
-                    ( "pill-failed", "cycle" )
-
-                _ ->
-                    ( "pill-idle", Cell.statusLabel status )
-    in
-    if cell.kind == Prose then
-        text ""
-
-    else
-        span [ class ("pill " ++ cls) ] [ text label ]
-
-
-viewOutput : Cell -> CellState -> Html Msg
+viewOutput : Cell -> CellState -> Element Msg
 viewOutput cell state =
     if cell.kind == Prose then
-        text ""
+        Element.none
 
     else
         case state.status of
             Invalid message ->
-                div [ class "out out-error" ] [ text message ]
+                message_ Ui.bad message
 
             Failed err ->
-                div [ class "out out-error" ] [ text err ]
+                message_ Ui.bad err
 
             Blocked upstream ->
-                div [ class "out out-blocked" ]
-                    [ text ("Not run: upstream cell `" ++ upstream ++ "` has no usable value.") ]
+                message_ Ui.bad ("Not run: upstream cell `" ++ upstream ++ "` has no usable value.")
 
             InCycle cyclic ->
-                div [ class "out out-error" ]
-                    [ text ("Cyclic dependency: " ++ String.join " ↔ " cyclic) ]
+                message_ Ui.bad ("Cyclic dependency: " ++ String.join " ↔ " cyclic)
 
             Stale ->
                 case ( state.table, Engine.display state ) of
                     ( Just t, Just shape ) ->
-                        div [ class "stale-wrap" ]
-                            [ div [ class "out out-stale" ] [ text "Stale — showing the previous result until this re-runs." ]
-                            , viewTable shape t
+                        column [ width fill ]
+                            [ message_ Ui.stale "Stale — showing the previous result until this re-runs."
+                            , el [ width fill, Element.alpha 0.45 ] (Element.html (viewTable shape t))
                             ]
 
                     _ ->
-                        div [ class "out out-stale" ] [ text "Stale — not yet run." ]
+                        message_ Ui.stale "Stale — not yet run."
 
             NeverRun ->
-                div [ class "out out-idle" ] [ text "Not run yet." ]
+                message_ Ui.muted "Not run yet."
 
             _ ->
                 case ( state.table, Engine.display state ) of
                     ( Just t, Just shape ) ->
-                        viewTable shape t
+                        el [ width fill ] (Element.html (viewTable shape t))
 
                     _ ->
-                        div [ class "out out-idle" ] [ text "Running…" ]
+                        message_ Ui.muted "Running…"
 
 
-viewTable : Shape -> Table -> Html Msg
+message_ : Element.Color -> String -> Element Msg
+message_ colour body =
+    Element.paragraph
+        [ width fill
+        , padding 12
+        , Font.family Ui.mono
+        , Font.size Ui.monoSize
+        , Font.color colour
+        , Border.widthEach { top = 1, left = 0, right = 0, bottom = 0 }
+        , Border.color Ui.line
+        , Background.color
+            (if colour == Ui.bad then
+                Element.rgb255 0xFF 0xF6 0xF5
+
+             else if colour == Ui.stale then
+                Element.rgb255 0xFF 0xFB 0xF0
+
+             else
+                Ui.card
+            )
+        ]
+        [ text body ]
+
+
+{-| The result table stays raw HTML: a sticky header over a scrolling body is
+exactly the sort of thing elm-ui does not express.
+-}
+viewTable : Engine.Shape -> Table -> Html Msg
 viewTable shape t =
     div []
         [ div [ class "result-meta" ]
-            [ text
+            [ Html.text
                 (String.fromInt t.rowCount
                     ++ " rows"
                     ++ (if t.truncated then
@@ -1337,8 +1561,8 @@ viewTable shape t =
                             |> List.map
                                 (\( name, columnType ) ->
                                     th []
-                                        [ text name
-                                        , span [ class "coltype" ] [ text (Schema.typeName columnType) ]
+                                        [ Html.text name
+                                        , span [ class "coltype" ] [ Html.text (Schema.typeName columnType) ]
                                         ]
                                 )
                         )
@@ -1346,12 +1570,12 @@ viewTable shape t =
                 , tbody []
                     (t.rows
                         |> List.map
-                            (\row ->
+                            (\rowValue ->
                                 tr []
                                     (shape.rowType
                                         |> List.map
                                             (\( name, columnType ) ->
-                                                td [] [ text (renderValue shape.declarations columnType name row) ]
+                                                td [] [ Html.text (renderValue shape.declarations columnType name rowValue) ]
                                             )
                                     )
                             )
@@ -1361,28 +1585,104 @@ viewTable shape t =
         ]
 
 
+{-| Both artefacts, side by side. They are two renderings of one checked
+description, and showing them together is the clearest way to make that
+visible — and the Elm module is what a hand-written Elm cell will import once
+there is a daemon to compile one.
+-}
+viewArtefacts : Model -> Cell -> CellState -> Element Msg
+viewArtefacts model cell state =
+    case state.compiled of
+        Nothing ->
+            Element.none
+
+        Just compiled ->
+            let
+                open =
+                    Set.member cell.id model.expanded
+            in
+            column
+                [ width fill
+                , Border.widthEach { top = 1, left = 0, right = 0, bottom = 0 }
+                , Border.color Ui.line
+                , Background.color (Element.rgb255 0xFC 0xFC 0xFB)
+                ]
+                (el
+                    [ paddingXY 12 7
+                    , Element.pointer
+                    , Element.Events.onClick (ToggleArtefacts cell.id)
+                    , width fill
+                    ]
+                    (Ui.tinyCaps Ui.muted
+                        ((if open then
+                            "▾ "
+
+                          else
+                            "▸ "
+                         )
+                            ++ "generated"
+                        )
+                    )
+                    :: (if open then
+                            [ Element.wrappedRow
+                                [ width fill
+                                , spacing 1
+                                , Background.color Ui.line
+                                , Border.widthEach { top = 1, left = 0, right = 0, bottom = 0 }
+                                , Border.color Ui.line
+                                ]
+                                [ artefact "SQL" compiled.sql
+                                , artefact (moduleNameFor cell.id ++ " — Elm") compiled.elmModule
+                                ]
+                            ]
+
+                        else
+                            []
+                       )
+                )
+
+
+artefact : String -> String -> Element Msg
+artefact label body =
+    column
+        [ Element.alignTop
+        , width (fill |> Element.minimum 300)
+        , padding 12
+        , spacing 6
+        , Background.color Ui.card
+        ]
+        [ Ui.tinyCaps Ui.accent label
+        , el [ width fill, Element.clipX ]
+            (Element.html (pre [ class "artefact-pre" ] [ Html.text body ]))
+        ]
+
+
+{-| Rendered against the compiler's row type rather than against whatever JSON
+happens to arrive, so a timestamp shows as a date and a custom type shows as
+its constructor.
+-}
 renderValue : List TypeDecl -> Type -> String -> D.Value -> String
-renderValue decls columnType column row =
+renderValue decls columnType column rowValue =
     case columnType of
         TMaybe inner ->
-            if isNull column row then
+            if isNull column rowValue then
                 "—"
 
             else
-                renderValue decls inner column row
+                renderValue decls inner column rowValue
 
         TTimestamp ->
-            decodeField column D.float row
+            decodeField column D.float rowValue
                 |> Maybe.map (formatDate << Time.millisToPosix << round)
                 |> Maybe.withDefault "?"
 
         TCustom name ->
-            decodeField column D.string row
-                |> Maybe.map (renderConstructor decls name row)
+            decodeField column D.string rowValue
+                |> Maybe.map (renderConstructor decls name rowValue)
                 |> Maybe.withDefault "?"
 
         _ ->
-            Query.cellText column row
+            Query.cellText column rowValue
 
 
 {-| Show the constructor the tag stands for, and its payload where it has one.
@@ -1391,7 +1691,7 @@ means the table proves the mapping without the generated module having to be
 compiled and loaded first.
 -}
 renderConstructor : List TypeDecl -> String -> D.Value -> String -> String
-renderConstructor decls typeName row tag =
+renderConstructor decls typeName rowValue tag =
     let
         found =
             decls
@@ -1410,19 +1710,19 @@ renderConstructor decls typeName row tag =
                     ctor.name
 
                 Just payload ->
-                    decodeField payload D.float row
+                    decodeField payload D.float rowValue
                         |> Maybe.map (\ms -> ctor.name ++ " " ++ formatDate (Time.millisToPosix (round ms)))
                         |> Maybe.withDefault ctor.name
 
 
 decodeField : String -> D.Decoder a -> D.Value -> Maybe a
-decodeField column decoder row =
-    D.decodeValue (D.field column decoder) row |> Result.toMaybe
+decodeField column decoder rowValue =
+    D.decodeValue (D.field column decoder) rowValue |> Result.toMaybe
 
 
 isNull : String -> D.Value -> Bool
-isNull column row =
-    D.decodeValue (D.field column (D.null True)) row |> Result.withDefault False
+isNull column rowValue =
+    D.decodeValue (D.field column (D.null True)) rowValue |> Result.withDefault False
 
 
 formatDate : Time.Posix -> String
@@ -1476,30 +1776,3 @@ monthNumber month =
 
         Time.Dec ->
             12
-
-
-{-| Both artefacts, side by side. They are two renderings of one checked
-description, and showing them together is the clearest way to make that
-visible — and the Elm module is what a hand-written Elm cell will import once
-there is a daemon to compile one.
--}
-viewArtefacts : CellState -> Html Msg
-viewArtefacts state =
-    case state.compiled of
-        Nothing ->
-            text ""
-
-        Just compiled ->
-            details [ class "artefacts" ]
-                [ summary [] [ text "generated" ]
-                , div [ class "artefact-pair" ]
-                    [ div [ class "artefact" ]
-                        [ div [ class "artefact-label" ] [ text "SQL" ]
-                        , pre [] [ text compiled.sql ]
-                        ]
-                    , div [ class "artefact" ]
-                        [ div [ class "artefact-label" ] [ text (moduleNameFor "…" ++ " — Elm") ]
-                        , pre [] [ text compiled.elmModule ]
-                        ]
-                    ]
-                ]
