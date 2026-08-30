@@ -1050,6 +1050,54 @@ notebook different from a Jupyter one, and every unit of effort goes
 into exposing an engine that is already very good at this rather than
 into bolting a second one beside it.
 
+## The name has to change
+
+This project is called Acadia after the language that prompted it, and
+that is not sustainable. Acadia is someone's commercial product —
+Evan Czaplicki's — and this borrows its shape without being anything
+like it. Continuing to wear the name would imply a lineage that is not
+there and take credit that belongs elsewhere.
+
+**What is honestly borrowed**, and should stay credited in prose
+wherever the design is explained:
+
+- The pipeline shape, and `access`, `filter`, `map`, `reduce`.
+- Naming the joins after set operations — `intersect`, `diff`,
+  `exclude`, `union`, `xunion` — and returning pairs rather than merged
+  rows. That was read out of Acadia's published `docs.json` after the
+  first attempt here got it wrong, and it is a better design than what
+  it replaced.
+- The Datalog reasoning: no recursion, so 1+N cannot be written and
+  every query terminates in time polynomial to the data. That principle
+  is the single most valuable thing taken from it.
+
+**What makes the two not comparable**, which is the reason not to
+present this as an equivalent. Acadia is a database programming
+language: row-level security as a property every table must declare,
+transactions, signed migrations, resources and sequences, modules,
+user-defined functions, inserts and deletes, generated clients in more
+than one language, its own compiler and server. This is a read-only
+query surface for a notebook, with none of that, and it has been built
+in a few days against a language someone has been thinking about for
+much longer.
+
+**The rename is small in code and larger in prose.** The name is
+load-bearing in exactly three places:
+
+- the ```` ```acadia ```` fence tag in the notebook format,
+- the `.acadia.md` file extension,
+- the page title and the `Ui` chrome.
+
+Everything else is commentary. The fence tag and the extension are in
+saved notebooks, so a rename either accepts a break — the format has no
+users yet — or has the parser take both for a while. Whatever the new
+name is, it has to work as a lowercase fence tag that will not be
+mistaken for a real language in a Markdown viewer.
+
+Acadia should keep being named in the roadmap and the README as the
+trigger and the source of the ideas above. What should stop is the
+project answering to it.
+
 ## A tutorial
 
 Nothing here teaches the language. The seeded notebook demonstrates it,
