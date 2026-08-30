@@ -335,6 +335,43 @@ Decisions:
   the reverse, so swapping `intersect` for `diff` or `exclude` visibly
   changes the result.
 
+### Testing the combining stages with open data
+
+`vega-datasets` is the one open-data pairing found so far that is both
+genuinely relational and CORS-clean. `flights.origin` joins to
+`airports.iata`:
+
+| File | Size | Role |
+|---|---|---|
+| `vega-datasets@2/data/airports.csv` | 3,376 rows | dimension: iata, name, city, state, country, latitude, longitude |
+| `vega-datasets@3.2.0/data/flights-3m.parquet` | 3M rows, 13 MB | fact: date, delay, distance, origin, destination |
+| `vega-datasets@2/data/flights-5k.json` | 445 KB | same columns, small, for fast iteration |
+
+It exercises every case at once:
+
+- A big-by-small star join, which is the shape real analytics has.
+  Measured against the CLI: 3M rows joined and grouped in 0.78s
+  including the HTTP fetch, because DuckDB pruned to the two columns it
+  needed.
+- **The same table joined twice.** `origin` and `destination` both point
+  at `airports`, so `intersect .origin airports .iata |> intersect
+  .destination airports .iata` puts `airports` and `airports_2` in scope
+  together. This is the case the earlier flat-merge design could not
+  express at all, and the clearest demonstration of why rows are paired.
+- Real asymmetry, in one direction only: every flight origin matches an
+  airport, but 3,147 airports have no departures. Putting airports on
+  the left gives `diff` and `exclude` something to show.
+
+Known limitation this data surfaces: the obvious "busiest city pairs"
+query needs two cells. After joining `airports` twice, `groupBy .city`
+is ambiguous, and `map` moves the pipeline past the phase where
+`groupBy` is allowed — so one cell projects the join and the next
+groups it.
+
+In `flights-5k.json` the `date` column is VARCHAR and `delay` is
+HUGEINT, where the Parquet has TIMESTAMP and BIGINT. A useful accidental
+test of the type mapping.
+
 ### Data sources that work from a browser
 
 CORS is the binding constraint, and it is not guessable — these were
@@ -444,6 +481,55 @@ same guarantees for the same reason — it has no recursion and no
 user-defined functions — which is worth stating explicitly before anyone
 adds either.
 
+## Editor and presentation
+
+The cell surface is a plain `<textarea>` over hand-written CSS, which was
+enough to get the engine working and is now the weakest part of the
+notebook. Four changes, in the order they should be done:
+
+1. **Suppress the spell checker.** The browser currently underlines DSL
+   source in red, which is noise that looks like an error. One attribute
+   on the textarea (`spellcheck False`, plus `autocorrect` and
+   `autocapitalize` off so mobile keyboards do not rewrite code). Do
+   this first; it is a one-line change and an active annoyance.
+
+2. **A monospace font with programming ligatures.** Fira Code is the
+   obvious pick and is on Google Fonts; JetBrains Mono, Iosevka or
+   Cascadia Code would do as well. This is worth more here than in most
+   languages because the DSL leans on exactly the sequences ligatures
+   improve: `|>`, `->`, `==`, `/=`, `>=`, `<=`. Give every face a real
+   fallback stack so a blocked font request degrades to the system
+   monospace rather than to a serif.
+
+3. **Colour coding.** The interesting part is that the notebook already
+   has a real lexer, so highlighting can be driven by `Dsl.Parser`'s own
+   tokens rather than by a regex approximation. Highlighting would then
+   agree with the compiler by construction — the same property the SQL
+   and Elm outputs already have — and the same pass could underline the
+   exact span of a type error instead of printing a line and column.
+
+   The mechanism is the awkward part. A `<textarea>` cannot style its
+   own contents, so the usual approach is a transparent textarea over a
+   highlighted `<pre>`, with scroll position and metrics kept in sync.
+   That is fiddly but has no dependency. The alternative is CodeMirror 6
+   through a custom element, which is a large dependency and puts the
+   editing model outside Elm. Prefer the overlay; reconsider only if
+   selection or IME handling turns out badly.
+
+4. **Rebuild the view on elm-ui** (`mdgriffith/elm-ui`, pin 1.1.8 for
+   Elm 0.19; version 2 is not released). Layout becomes Elm values
+   rather than a stylesheet, which suits a UI whose structure is already
+   computed — cell states, staleness, the execution-order strip.
+
+   One tension to plan around: items 3 and 4 pull against each other.
+   The highlight overlay needs exact text metrics and absolute
+   positioning, which is precisely what elm-ui abstracts away. The
+   workable split is elm-ui for the shell — chrome, cell frames, status
+   pills, tables, the generated-artefact panels — and a raw
+   `Element.html` escape hatch for the editor surface itself, which
+   keeps its own CSS. Doing 3 before 4 means the editor's CSS is already
+   isolated when the rest is converted.
+
 ## Phase 8 — Sharing story
 
 - "Export as static artifact": bake compiled JS + snapshotted/OPFS
@@ -483,13 +569,16 @@ Standing findings:
 
 ## Next up
 
-Phase 6 (display verbs and input widgets) is the last unbuilt piece of
-the original design, and Phase 8 (static export) follows it, since export
-has to serialize whatever cell kinds exist.
+The editor and presentation work above is the most visible improvement
+available, and its first item is a one-line fix.
+
+Otherwise, in dependency order: Phase 6 (display verbs and input
+widgets), then Phase 8 (static export, which has to serialize whatever
+cell kinds exist by then).
 
 Smaller known gaps: HAVING (`filter` after `groupBy`), opaque newtype
-wrappers, and reader options for sources such as a null string or an
-explicit delimiter.
+wrappers, reader options for sources such as a null string or an
+explicit delimiter, and `union`/`xunion` (full outer joins).
 
 Phase 4 has shrunk to "a daemon for hand-written Elm cells" and is only
 needed once those are wanted.
