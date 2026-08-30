@@ -1195,12 +1195,42 @@ to run a server, a PWA needs a manifest and a service worker and nothing
 else: installable, offline, in an engine already known to work. It does
 not help with local files.
 
-**Suggested sequence.** Spike a Tauri shell that loads the existing page
-unchanged, still on duckdb-wasm. That answers the WebKitGTK question for
-a few hours' work and before any commitment to a Rust backend. Only then
-decide whether to move DuckDB native. Run the spike on macOS too if a
-Mac is available: WebKitGTK is the likelier to break and WKWebView the
-likelier to ship.
+### The spike ran, and it works
+
+A Tauri shell loading the existing page unchanged, still on duckdb-wasm,
+on WebKitGTK — the least forgiving of the three webviews this could
+meet. It renders, both sources load, the charts draw and the controls
+re-run their cells. The frontend needed no changes whatsoever:
+`frontendDist` points at the same `public/` directory the browser build
+produces.
+
+What that settles, and it is more than it sounds. The riskiest thing the
+page does is dynamically import a remote ES module — that is how both
+duckdb-wasm and Vega are loaded — from a custom-protocol origin, which
+is the least standardised corner of any of this. It works. So do the web
+workers DuckDB spawns from a blob URL, the WebAssembly, the canvas Vega
+draws on, and the custom element wrapping it.
+
+**The desktop path is therefore real**, and macOS and Windows are now
+the *easier* targets rather than the harder ones: WKWebView tracks
+Safari and WebView2 is Chromium.
+
+Caveats worth keeping:
+
+- CSP was off for the spike. A real build should enumerate what the page
+  needs, or better, vendor duckdb-wasm and Vega into `public/` — which
+  an offline desktop app wants regardless, and which would remove the
+  custom-protocol import question entirely.
+- The binary measured here is 189 MB, but that is a debug build with
+  symbols. The number worth comparing against Electron's ~150 MB is a
+  `--release` build, which has not been made yet.
+- Nothing has been run on macOS. It should be, before any claim that it
+  works there.
+
+**What it unblocks.** Moving DuckDB native through the Rust side is now
+worth considering rather than speculative: the shell around it is
+proven, and `Ports.materialize`, `Ports.loadSource` and `Ports.dbReady`
+remain the narrow seam a second implementation would plug into.
 
 **Setup on this machine — done.** The host is image-based Fedora
 (bootc/rpm-ostree) with a read-only `/usr`, so Tauri's system
