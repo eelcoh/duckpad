@@ -1359,7 +1359,7 @@ view model =
 
 viewHeader : Model -> Graph -> Element Msg
 viewHeader model graph =
-    column [ width fill, spacing 14 ]
+    column [ width fill, spacing 12 ]
         [ Element.wrappedRow [ width fill, spacing 20 ]
             [ column [ spacing 4, width fill ]
                 [ titleField model.title
@@ -1367,8 +1367,7 @@ viewHeader model graph =
                     (text "reactive graph · DSL compiled in-browser · DuckDB-wasm")
                 ]
             , Element.wrappedRow [ alignRight, spacing 10, Ui.dropOnExport ]
-                [ viewExecutionOrder graph
-                , viewDbStatus model.db
+                [ viewDbStatus model.db
                 , plainButton "Reset" model.resetArmed (Just ResetNotebook)
                 , plainButton "Open" False (Just OpenFile)
                 , plainButton "Save" False (Just SaveFile)
@@ -1383,6 +1382,7 @@ viewHeader model graph =
                     )
                 ]
             ]
+        , viewExecutionOrder graph
         , el [ width fill, height (px 1), Background.color Ui.line ] Element.none
         ]
 
@@ -1511,17 +1511,26 @@ viewDbStatus db =
 
 viewExecutionOrder : Graph -> Element Msg
 viewExecutionOrder graph =
-    case Dag.topoSort graph of
-        Ok order ->
-            column [ spacing 2 ]
-                [ Ui.tinyCaps Ui.muted "execution order"
-                , el [ Font.family Ui.mono, Font.size 11, Font.color Ui.muted ]
-                    (text (String.join " → " order))
+    let
+        line colour body =
+            Element.paragraph
+                [ width fill
+                , Font.family Ui.mono
+                , Font.size 11
+                , Font.color colour
+                , spacing 4
                 ]
+                [ text body ]
+    in
+    column [ width fill, spacing 3 ]
+        [ Ui.tinyCaps Ui.muted "execution order"
+        , case Dag.topoSort graph of
+            Ok order ->
+                line Ui.muted (String.join " → " order)
 
-        Err cyclic ->
-            el [ Font.family Ui.mono, Font.size 11, Font.color Ui.bad ]
-                (text ("cycle: " ++ String.join " ↔ " cyclic))
+            Err cyclic ->
+                line Ui.bad ("cycle: " ++ String.join " ↔ " cyclic)
+        ]
 
 
 viewAddRow : Element Msg
