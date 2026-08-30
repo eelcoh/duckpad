@@ -830,6 +830,78 @@ recorded as they were hit, in the order they are worth closing:
    depend on a cell, which the graph can express but nothing else
    currently does.
 
+## What a pandas user would miss
+
+Worth separating, because "add pandas" is three different asks:
+
+1. **Tabular transformation** — grouping, joining, reshaping, ranking,
+   describing.
+2. **The ecosystem** — scikit-learn, scipy, statsmodels, geopandas.
+3. **An escape hatch** — arbitrary code over rows, and glue.
+
+### The first is mostly DuckDB's, and we under-expose it
+
+This language has thirteen scalar functions and five aggregates. DuckDB
+has window functions with `PARTITION BY` and `QUALIFY`, `stddev`,
+`median`, `corr`, `quantile_cont`, regression aggregates, `PIVOT` and
+`UNPIVOT`, and list aggregates. Ranking routes within each origin, and
+the standard deviation, median, correlation and 95th percentile of three
+million delays, all return instantly today — they are simply not
+reachable from a cell.
+
+Most of what a notebook user reaches for pandas to do is this, and
+exposing it costs nothing architecturally: each addition is a name, a
+type rule and a SQL spelling, exactly like the scalar functions. **This
+is where the pandas-shaped value actually is**, and it should be done
+before any escape hatch is contemplated.
+
+Window functions are the largest single item, and they need a real
+design: a `partitionBy`/`over` stage, and a result type that is still a
+row rather than a group.
+
+### The other two need an escape hatch, and it costs the guarantee
+
+This language is deliberately total — no recursion, no user-defined
+functions — which is what makes the 1+N problem inexpressible and every
+query terminate in time polynomial to the data. That is inherited from
+Acadia, and from Datalog before it. Pandas is the exact opposite, and no
+amount of care makes those compatible: an escape hatch gives up
+totality, and pretending otherwise would be worse than not having one.
+
+The move is to **contain it structurally rather than linguistically**.
+What the guarantee protects is not really the language, it is the
+*graph* — its predictability, its termination, the absence of a hidden
+query per row. A cell of arbitrary code can leave all of that intact if:
+
+- it is **typed going in**, which costs nothing because a query cell's
+  row type is already known;
+- it is a **leaf** — nothing downstream compiles against its output, so
+  an untyped result cannot spread into the type story;
+- it runs in a **worker with a timeout**, so a loop that never finishes
+  takes one cell down rather than the notebook.
+
+The guarantee then reads: the graph is total, and one cell kind sits
+outside it and says so.
+
+### Which language, if one is wanted
+
+- **JavaScript in the browser.** No daemon, npm through a CDN — already
+  how Vega is loaded — and a worker is its natural home. The pragmatic
+  choice, and closest to what Observable does.
+- **Python through Pyodide.** The literal answer: Pyodide ships pandas,
+  numpy and much of scikit-learn, and Arrow crosses from duckdb-wasm
+  cleanly. It costs perhaps ten megabytes and some speed, lazily loaded
+  the way Vega already is, and it needs no server — so it keeps the
+  property everything else here has.
+- **Elm through a daemon.** Pure and total, so it does not answer the
+  ecosystem ask at all, and it needs infrastructure nothing else wants.
+  The original plan, and the weakest of the three for this purpose.
+
+**Recommendation:** exhaust the first section before any of this. If an
+escape hatch is then wanted, let the ask decide — Pyodide when what is
+actually wanted is the Python data stack, JavaScript when what is wanted
+is arbitrary glue.
+
 ## Packaging
 
 Serving on localhost is a poor way to hand this to anyone, and the
