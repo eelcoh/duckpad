@@ -153,6 +153,14 @@ access orders ()
       )
       -- Every query cell the seeded notebook ships with, so that what a
       -- reader first sees is known to compile and to run.
+    , ( "seeded_total_flights"
+      , """
+access flights ()
+  |> filter (\\f -> f.distance >= min_distance)
+  |> reduce (\\g -> { flights = count g })
+  |> scalar
+"""
+      )
     , ( "seeded_by_state"
       , """
 access flights ()

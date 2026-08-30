@@ -214,6 +214,7 @@ type alias Shape =
     , declarations : List TypeDecl
     , ordered : Bool
     , chart : Maybe ChartSpec
+    , scalar : Bool
     }
 
 
@@ -230,13 +231,19 @@ display state =
                         AsChart spec ->
                             Just spec
 
-                        AsRows ->
+                        _ ->
                             Nothing
+                , scalar = compiled.display == AsScalar
                 }
 
         Nothing ->
             state.rowType
                 |> Maybe.map
                     (\rowType ->
-                        { rowType = rowType, declarations = [], ordered = False, chart = Nothing }
+                        { rowType = rowType
+                        , declarations = []
+                        , ordered = False
+                        , chart = Nothing
+                        , scalar = False
+                        }
                     )

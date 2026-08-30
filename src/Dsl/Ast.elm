@@ -96,6 +96,8 @@ type Stage
       -- A chart is a terminator like `selectAll`: the cell's value is still
       -- its rows, and this says how to show them.
     | Chart ChartKind (List ( String, String ))
+      -- A single number, shown as itself rather than as a table of one cell.
+    | Scalar
 
 
 {-| How a `groupBy` names its keys.

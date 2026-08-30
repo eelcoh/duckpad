@@ -936,7 +936,7 @@ runOrReuse cell rest model graph state compileKey artefacts =
                     AsChart _ ->
                         Chart.rowLimit
 
-                    AsRows ->
+                    _ ->
                         previewRows
             }
         )
@@ -1794,17 +1794,38 @@ way — and for a chart it is the only place a truncation would show.
 -}
 viewTable : Engine.Shape -> Table -> Html Msg
 viewTable shape t =
-    case shape.chart of
-        Just spec ->
-            div []
-                [ resultMeta shape t
-                , Html.node "vega-chart"
-                    [ Html.Attributes.property "spec" (Chart.spec spec t.rows) ]
-                    []
+    if shape.scalar then
+        viewScalar shape t
+
+    else
+        case shape.chart of
+            Just spec ->
+                div []
+                    [ resultMeta shape t
+                    , Html.node "vega-chart"
+                        [ Html.Attributes.property "spec" (Chart.spec spec t.rows) ]
+                        []
+                    ]
+
+            Nothing ->
+                viewRows shape t
+
+
+{-| One number, shown as itself. The column's name is the label, because a
+number with no word attached is not worth much.
+-}
+viewScalar : Engine.Shape -> Table -> Html Msg
+viewScalar shape t =
+    case ( shape.rowType, t.rows ) of
+        ( [ ( name, columnType ) ], firstRow :: _ ) ->
+            div [ class "scalar" ]
+                [ div [ class "scalar-value" ]
+                    [ Html.text (renderValue shape.declarations columnType name firstRow) ]
+                , div [ class "scalar-label" ] [ Html.text name ]
                 ]
 
-        Nothing ->
-            viewRows shape t
+        _ ->
+            div [ class "result-meta" ] [ Html.text "no rows" ]
 
 
 viewRows : Engine.Shape -> Table -> Html Msg

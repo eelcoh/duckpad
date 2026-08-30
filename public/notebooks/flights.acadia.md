@@ -10,7 +10,7 @@ A terminator says how a cell is shown: `selectAll` gives a table, and `barChart`
 
 A `filter` after a `reduce` becomes a HAVING, which is how `delay_by_distance` drops the distances too rare to average meaningfully.
 
-An input cell binds a control to its name. Drag `min_distance` and only the cells that read it re-run — the value is compiled into their SQL, so the cache does the rest. That is what lets `routes` below join `airports` twice — once for the origin and once for the destination — without the two sides colliding.
+An input cell binds a control to its name. Drag `min_distance` and only the cells that read it re-run — `total_flights` and `by_state` both do — the value is compiled into their SQL, so the cache does the rest. That is what lets `routes` below join `airports` twice — once for the origin and once for the destination — without the two sides colliding.
 
 ```source airports
 csv "https://cdn.jsdelivr.net/npm/vega-datasets@2/data/airports.csv"
@@ -22,6 +22,13 @@ parquet "https://cdn.jsdelivr.net/npm/vega-datasets@3.2.0/data/flights-3m.parque
 
 ```input min_distance
 range 0 2500 step 250 default 0
+```
+
+```acadia total_flights
+access flights ()
+  |> filter (\f -> f.distance >= min_distance)
+  |> reduce (\g -> { flights = count g })
+  |> scalar
 ```
 
 ```acadia by_state

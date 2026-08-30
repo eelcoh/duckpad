@@ -806,10 +806,17 @@ recorded as they were hit, in the order they are worth closing:
    tightens from [-14.4, 37.6] to [-13.0, 21.6], so what it removes is
    genuinely thin buckets rather than signal.
 
-2. **Global aggregates, and `scalar` with them.** `reduce` requires a
-   `groupBy`, so "the average delay across everything" cannot be
-   written, and a `scalar` display verb has nothing to show. One job,
-   not two.
+2. ~~**Global aggregates, and `scalar` with them.**~~ Done, and they
+   were one job as expected. `reduce` with no `groupBy` before it
+   reduces the whole table; every column still has to be aggregated,
+   which is the same rule as before stated at its limit — with no
+   grouping there is no key to be the exception. `scalar` is a
+   terminator that shows a single number with its column name as the
+   label, and refuses a row with more than one column.
+
+   The seeded notebook has a `total_flights` scalar that reads the same
+   slider `by_state` does, which is the clearest demonstration that an
+   input feeds whatever depends on it rather than one designated cell.
 
 3. **Reader options for sources** — a null string, an explicit
    delimiter. Small, and it is what stands between the notebook and
@@ -897,10 +904,16 @@ outside it and says so.
   ecosystem ask at all, and it needs infrastructure nothing else wants.
   The original plan, and the weakest of the three for this purpose.
 
-**Recommendation:** exhaust the first section before any of this. If an
-escape hatch is then wanted, let the ask decide — Pyodide when what is
-actually wanted is the Python data stack, JavaScript when what is wanted
-is arbitrary glue.
+**Decided: no escape hatch.** Stay close to what DuckDB provides. The
+first section is the work; the rest of this is recorded so the reasoning
+is not lost, and so that if the question is reopened it starts from the
+containment argument rather than from scratch.
+
+That decision is worth stating positively rather than as a refusal: the
+totality guarantee survives intact, which is the thing that makes this
+notebook different from a Jupyter one, and every unit of effort goes
+into exposing an engine that is already very good at this rather than
+into bolting a second one beside it.
 
 ## Packaging
 

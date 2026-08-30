@@ -60,6 +60,7 @@ the Elm module are the same either way.
 -}
 type Display
     = AsRows
+    | AsScalar
     | AsChart ChartSpec
 
 
@@ -277,20 +278,17 @@ applyStage schema params ast stage builder =
         ( GroupBy _, _ ) ->
             Err "`groupBy` has to come before any projection"
 
+        ( Reduce lambda, Rows ) ->
+            -- No `groupBy` before it: one row for the whole table. Every
+            -- column must still be aggregated, which is exactly what SQL
+            -- requires of a select with no GROUP BY.
+            reduceInto params ast lambda builder
+
         ( Reduce lambda, Grouped ) ->
-            groupEnv params ast builder lambda
-                |> Result.andThen (\env -> checkProjection env lambda.body)
-                |> Result.map
-                    (\( fields, hidden ) ->
-                        { builder
-                            | projection = Fields fields
-                            , hidden = hidden
-                            , phase = Projected
-                        }
-                    )
+            reduceInto params ast lambda builder
 
         ( Reduce _, _ ) ->
-            Err "`reduce` needs a `groupBy` immediately before it"
+            Err "`reduce` cannot follow a projection"
 
         ( SortBy spec, _ ) ->
             if lookupColumn spec.column (outputColumns builder |> Result.withDefault []) == Nothing then
@@ -311,6 +309,27 @@ applyStage schema params ast stage builder =
 
         ( SelectAll, _ ) ->
             Ok { builder | cardinality = Just Many, phase = Done }
+
+        ( Scalar, _ ) ->
+            outputColumns builder
+                |> Result.andThen
+                    (\rowType ->
+                        case rowType of
+                            [ _ ] ->
+                                Ok
+                                    { builder
+                                        | display = AsScalar
+                                        , cardinality = Just One
+                                        , phase = Done
+                                    }
+
+                            _ ->
+                                Err
+                                    ("`scalar` shows one number, but this row has "
+                                        ++ String.fromInt (List.length rowType)
+                                        ++ " columns"
+                                    )
+                    )
 
         ( Chart kind config, _ ) ->
             chart kind config builder
@@ -561,6 +580,20 @@ projectionEnv params ast builder lambda fields =
 
         Destructure _ ->
             Err "a projection is one row, so this lambda takes a single name"
+
+
+reduceInto : Params -> Pipeline -> Lambda -> Builder -> Result String Builder
+reduceInto params ast lambda builder =
+    groupEnv params ast builder lambda
+        |> Result.andThen (\env -> checkProjection env lambda.body)
+        |> Result.map
+            (\( fields, hidden ) ->
+                { builder
+                    | projection = Fields fields
+                    , hidden = hidden
+                    , phase = Projected
+                }
+            )
 
 
 conjoin : Maybe TExpr -> TExpr -> TExpr
@@ -933,6 +966,9 @@ lookupKey name keys =
 describeKeys : List String -> String
 describeKeys keys =
     case keys of
+        [] ->
+            "available here — there is no `groupBy`, so this reduces the whole table and every column has to be aggregated"
+
         [ only ] ->
             "the grouping key `" ++ only ++ "`"
 

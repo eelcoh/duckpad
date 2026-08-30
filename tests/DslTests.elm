@@ -338,8 +338,18 @@ checkerChecks =
     -- Grouping. The rule the checker exists to enforce.
     , isErr "check: an aggregate outside reduce is rejected"
         (compile "access orders () |> map (\\o -> { n = count o }) |> selectAll")
-    , isErr "check: reduce without groupBy is rejected"
-        (compile "access orders () |> reduce (\\g -> { n = count g }) |> selectAll")
+    , equal "check: reduce with no groupBy reduces the whole table"
+        (Ok [ ( "n", "Int" ), ( "spend", "Float" ) ])
+        (rowTypeOf "access orders () |> reduce (\\g -> { n = count g, spend = sum g.total }) |> selectAll")
+    , equal "sql: a global reduce has no GROUP BY at all"
+        (Ok "SELECT count(*) AS \"n\"\nFROM \"orders\" AS \"orders\"")
+        (sqlOf "access orders () |> reduce (\\g -> { n = count g }) |> selectAll")
+    , isErr "check: a global reduce still has to aggregate every column"
+        -- With no GROUP BY there is no key to be an exception, so this is the
+        -- same rule stated at its limit.
+        (compile "access orders () |> reduce (\\g -> { o = g.owner }) |> selectAll")
+    , isErr "check: reduce cannot follow a projection"
+        (compile "access orders () |> map (\\o -> { a = o.total }) |> reduce (\\g -> { n = count g }) |> selectAll")
     , isErr "check: a non-key column in reduce must be aggregated"
         (compile "access orders () |> groupBy .region |> reduce (\\g -> { o = g.owner }) |> selectAll")
     , equal "check: the grouping key may be used bare in reduce"
@@ -720,6 +730,15 @@ chartChecks =
         -- normally hand-written and quietly wrong.
         (Ok (Dsl.Check.AsChart { kind = Bar, channels = [ ( "x", "region", TString ), ( "y", "n", TInt ) ] }))
         (displayOf "access orders () |> groupBy .region |> reduce (\\g -> { region = g.region, n = count g }) |> barChart { x = .region, y = .n }")
+    , equal "scalar: one number, and exactly one row"
+        (Ok ( Dsl.Check.AsScalar, One ))
+        (compile "access orders () |> reduce (\\g -> { spend = sum g.total }) |> scalar"
+            |> Result.map (\c -> ( c.display, c.cardinality ))
+        )
+    , isErr "scalar: more than one column is not a scalar"
+        (compile "access orders () |> reduce (\\g -> { a = count g, b = sum g.total }) |> scalar")
+    , isErr "scalar: nothing may follow it"
+        (compile "access orders () |> reduce (\\g -> { a = count g }) |> scalar |> limit 2")
     , equal "chart: selectAll leaves the cell as rows"
         (Ok Dsl.Check.AsRows)
         (displayOf "access orders () |> selectAll")

@@ -207,6 +207,7 @@ stage =
             , Parser.succeed SortBy |. kw "sortBy" |= sortSpec
             , Parser.succeed Limit |. kw "limit" |= (Parser.int |. ws)
 
+            , Parser.succeed Scalar |. kw "scalar"
             , chartStage "barChart" Bar
             , chartStage "lineChart" Line
             , chartStage "scatter" Scatter
