@@ -135,6 +135,33 @@ async function boot() {
   URL.revokeObjectURL(workerUrl);
 
   conn = await db.connect();
+
+  // Warm the engine before reporting ready. A fresh DuckDB does a lot of lazy
+  // setup on its first real query, and without this that cost lands on
+  // whichever cell happens to run first, which reads as "this cell is slow"
+  // rather than "the database was still starting".
+  await conn.query('SELECT 1');
+}
+
+
+// Timing breakdown for one cell, logged rather than shown: it is for working
+// out where a slow load went, not something a reader needs.
+function stopwatch(label) {
+  const started = performance.now();
+  let last = started;
+  const phases = {};
+  return {
+    lap(name) {
+      const now = performance.now();
+      phases[name] = Math.round(now - last);
+      last = now;
+    },
+    done() {
+      const total = performance.now() - started;
+      console.debug(`[acadia] ${label} ${Math.round(total)}ms`, phases);
+      return total;
+    },
+  };
 }
 
 // A source becomes a view, not a materialised table.
@@ -145,7 +172,7 @@ async function boot() {
 // byte ranges it needs instead of the whole thing. Materialising it here would
 // pull every row into wasm memory and make the range requests pointless.
 app.ports.loadSource.subscribe(async ({ cellId, format, uri }) => {
-  const started = performance.now();
+  const clock = stopwatch(`source ${cellId}`);
   const name = quoteIdent(cellId);
   const reader = READERS[format];
   try {
@@ -155,16 +182,23 @@ app.ports.loadSource.subscribe(async ({ cellId, format, uri }) => {
     const vfsName = `source_${cellId}.${format}`;
     const absolute = new URL(uri, window.location.href).href;
     await db.registerFileURL(vfsName, absolute, duckdb.DuckDBDataProtocol.HTTP, false);
+    clock.lap('register');
 
     await conn.query(
       `CREATE OR REPLACE VIEW ${name} AS SELECT * FROM ${reader}('${vfsName}')`
     );
+    clock.lap('view');
 
     const described = await describe(name, format, vfsName);
+    clock.lap('describe');
+
     const counted = plainRows(await conn.query(`SELECT count(*) AS n FROM ${name}`))[0];
     const rowCount = Number(counted.n);
+    clock.lap('count');
+
     const preview = await conn.query(`SELECT * FROM ${name} LIMIT ${PREVIEW_ROWS}`);
     const rows = plainRows(preview);
+    clock.lap('preview');
 
     app.ports.queryOutcome.send({
       ok: true,
@@ -181,7 +215,7 @@ app.ports.loadSource.subscribe(async ({ cellId, format, uri }) => {
       // invalidate everything downstream, which is cheap to know for Parquet
       // and free for anything already read.
       hash: `${format}|${absolute}|${rowCount}`,
-      millis: performance.now() - started,
+      millis: clock.done(),
     });
   } catch (err) {
     app.ports.queryOutcome.send({ ok: false, cellId, error: cleanError(err) });
@@ -244,7 +278,7 @@ async function nullsBySampling(name, described) {
 }
 
 app.ports.materialize.subscribe(async ({ cellId, sql, orderSignificant }) => {
-  const started = performance.now();
+  const clock = stopwatch(`query ${cellId}`);
   const name = quoteIdent(cellId);
   try {
     // Cells are materialised rather than left as views: a cell in this model
@@ -253,25 +287,31 @@ app.ports.materialize.subscribe(async ({ cellId, sql, orderSignificant }) => {
     // the value cache meaningless. The cost is memory for intermediates,
     // which is acceptable at the file-sized scale this targets.
     await conn.query(`CREATE OR REPLACE TEMP TABLE ${name} AS (${sql})`);
+    clock.lap('materialise');
 
     const stats = await conn.query(hashQuery(name, orderSignificant));
     const { n, h } = plainRows(stats)[0];
+    clock.lap('hash');
 
     const preview = await conn.query(`SELECT * FROM ${name} LIMIT ${PREVIEW_ROWS}`);
     const rows = plainRows(preview);
+    clock.lap('preview');
+
+    // A materialised query result is local and has no file metadata, so
+    // nullability is sampled — cheaply, since nothing has to be fetched.
+    const described = await describe(name, null, null);
+    clock.lap('describe');
 
     app.ports.queryOutcome.send({
       ok: true,
       cellId,
       columns: schemaOf(preview),
-      // A materialised query result is local and has no file metadata, so
-      // nullability is sampled — cheaply, since nothing has to be fetched.
-      described: await describe(name, null, null),
+      described,
       rows,
       rowCount: Number(n),
       truncated: Number(n) > rows.length,
       hash: String(h),
-      millis: performance.now() - started,
+      millis: clock.done(),
     });
   } catch (err) {
     app.ports.queryOutcome.send({ ok: false, cellId, error: cleanError(err) });
