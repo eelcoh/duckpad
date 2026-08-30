@@ -126,6 +126,7 @@ type Msg
     | EditProse String
     | KeyEdit String Indent.Edit
     | ToggleArtefacts String
+    | RunCell String
     | InputMoved String Literal
     | PickerEvent String DatePicker.ChangeEvent
     | GotToday Date
@@ -305,10 +306,10 @@ step msg model =
                     schedule { model | db = Ready, baseSchema = schema }
 
                 Ok (Err err) ->
-                    ( { model | db = DbFailed err }, Cmd.none )
+                    ( { model | db = DbFailed err, notice = Just (databaseFailed err) }, Cmd.none )
 
                 Err err ->
-                    ( { model | db = DbFailed (D.errorToString err) }, Cmd.none )
+                    ( { model | db = DbFailed (D.errorToString err), notice = Just (databaseFailed (D.errorToString err)) }, Cmd.none )
 
         GotOutcome payload ->
             case D.decodeValue Query.outcomeDecoder payload of
@@ -512,6 +513,23 @@ step msg model =
                     , Cmd.none
                     )
 
+        RunCell id ->
+            -- Forget this cell's value so it really re-runs, and mark
+            -- everything downstream stale. Those dependents re-run only if
+            -- this cell's result actually changed, which is the value cache
+            -- doing its job rather than an omission — they show as `cached`
+            -- when it did not.
+            let
+                forgotten =
+                    Dict.update id
+                        (Maybe.map (\state -> { state | keyForValue = Nothing }))
+                        model.states
+            in
+            schedule
+                { model
+                    | states = Engine.markStale (Set.singleton id) (graphOf model) forgotten
+                }
+
         ToggleArtefacts id ->
             ( { model
                 | expanded =
@@ -607,6 +625,15 @@ openedDecoder =
                 else
                     D.map Err (D.field "error" D.string)
             )
+
+
+{-| Nothing works if the database does not start, so saying so quietly in a
+tooltip was the wrong place for it: every cell simply sat there never having
+run, which looks like a notebook nobody has pressed anything in.
+-}
+databaseFailed : String -> String
+databaseFailed err =
+    "DuckDB did not start, so no cell can run. " ++ err
 
 
 bootDecoder : D.Decoder (Result String Schema)
@@ -1607,10 +1634,56 @@ viewCellHead model graph cell state =
             ++ viewSignature state
             ++ [ el [ width fill ] Element.none
                , viewEdges graph cell
+               , if cell.kind == Prose then
+                    Element.none
+
+                 else
+                    runButton model cell
                , Input.button [ Font.color Ui.muted, Font.size 16, alignRight, Ui.dropOnExport ]
                     { onPress = Just (DeleteCell cell.id), label = text "×" }
                ]
         )
+
+
+{-| Re-run one cell. Useful while reading a notebook rather than writing one:
+the whole graph runs on load, but working through a tutorial means wanting to
+watch a single cell go again after changing it back.
+-}
+runButton : Model -> Cell -> Element Msg
+runButton model cell =
+    Input.button
+        [ Font.size 10
+        , Font.family Ui.sans
+        , Font.letterSpacing 0.6
+        , Font.color Ui.muted
+        , Border.width 1
+        , Border.color Ui.line
+        , Border.rounded 4
+        , paddingXY 7 3
+        , Ui.dropOnExport
+        , Element.alpha
+            (if model.db == Ready then
+                1
+
+             else
+                0.4
+            )
+        , Element.mouseOver
+            (if model.db == Ready then
+                [ Font.color Ui.accent, Border.color Ui.accent ]
+
+             else
+                []
+            )
+        ]
+        { onPress =
+            if model.db == Ready then
+                Just (RunCell cell.id)
+
+            else
+                Nothing
+        , label = text "RUN"
+        }
 
 
 nameField : Cell -> Element Msg
