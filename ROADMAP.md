@@ -784,18 +784,101 @@ Standing findings:
 - Cycle detection has to survive partial graphs: an acyclic cell sitting
   beside a cycle must still be reported separately from the cycle.
 
+## Remaining language work
+
+Everything in the original plan is built. What is left are gaps that were
+recorded as they were hit, in the order they are worth closing:
+
+1. **HAVING** — `filter` after `groupBy`. Currently rejected with a
+   message saying to move the filter earlier, which is not always
+   possible: the seeded notebook's slider had to filter flights before
+   the grouping because it could not filter the grouped result. This is
+   the gap that has been felt most.
+
+2. **Global aggregates, and `scalar` with them.** `reduce` requires a
+   `groupBy`, so "the average delay across everything" cannot be
+   written, and a `scalar` display verb has nothing to show. One job,
+   not two.
+
+3. **Reader options for sources** — a null string, an explicit
+   delimiter. Small, and it is what stands between the notebook and
+   messy real-world CSVs: palmerpenguins writes missing values as the
+   string `NA`, so DuckDB types every numeric column as text and the
+   file is effectively unreadable.
+
+4. **`union` and `xunion`** — the full outer joins, completing the set
+   Acadia's `Rows` module has. `intersect`, `diff` and `exclude` are
+   built.
+
+5. **Opaque newtype wrappers** — `type OrderId = OrderId Int`. The
+   mechanism for attaching a declared type to a column is proven by the
+   enum casts; this is the other shape.
+
+6. **`dateRange` inputs, and options drawn from a query.** The second is
+   a design question rather than a missing case: it would make a widget
+   depend on a cell, which the graph can express but nothing else
+   currently does.
+
+## Packaging
+
+Serving on localhost is a poor way to hand this to anyone, and the
+question of a desktop shell is worth taking seriously — but for a reason
+larger than convenience.
+
+**What a shell would actually buy.** The app needs no backend, which is
+unusual: most of what a desktop wrapper exists to provide, we do not
+want. Three things are genuinely missing, in increasing order of
+importance:
+
+- No terminal and no server to start.
+- **Real local files.** A source must be an https URL or a path served
+  beside the page; you cannot point at `~/data/sales.parquet` at all.
+  Saving is worse than it looks, too — the File System Access API is
+  Chromium-only, so outside Chromium `Save` already falls back to a
+  download.
+- **Native DuckDB instead of duckdb-wasm.** This is the one that changes
+  the architecture rather than the packaging. A Rust backend has the
+  `duckdb` crate right there, which removes the wasm ceiling entirely:
+  larger-than-RAM spilling, extensions, real file paths, and no 13 MB
+  download to read a Parquet. It is exactly the "a daemon owns DuckDB
+  natively" mode this document flagged in its opening summary as a
+  possible later addition, arriving by a different route.
+
+**The recommendation is Tauri v2** (2.11 as of writing). It uses the
+operating system's webview rather than bundling a browser, so a build is
+single-digit megabytes against Electron's ~150, and its Rust side is
+what makes native DuckDB available. Electron remains the right answer
+only if rendering has to be identical everywhere, or if nobody wants to
+touch Rust. Wails is the same bargain with Go, and Deno has an
+experimental `deno desktop` that is too new to build on.
+
+**The honest risk** is that same system webview. Everything here has been
+developed against Chromium, and Tauri would put it on WebKitGTK on
+Linux, WKWebView on macOS and WebView2 on Windows. This application is
+demanding — WebAssembly, workers, canvas, custom elements, dynamic
+import — and WebKitGTK is the least exercised of the three. Note though
+that going native for DuckDB removes the WebAssembly and worker demands
+outright, which is most of the risk; what would remain is ordinary.
+
+**The seam already exists**, which is the good news. `Ports.materialize`,
+`Ports.loadSource` and `Ports.dbReady` are a small, stable contract
+between the notebook and whatever runs the queries. A Tauri build swaps
+the JavaScript bridge for one that calls Rust commands and changes
+nothing above it. Keeping both a browser build and a desktop build is
+therefore possible rather than a fork — one interface, two
+implementations.
+
+**A cheaper step worth knowing about.** If the only pain is not wanting
+to run a server, a PWA needs a manifest and a service worker and nothing
+else: installable, offline, in an engine already known to work. It does
+not help with local files.
+
+**Suggested sequence.** Spike a Tauri shell that loads the existing page
+unchanged, still on duckdb-wasm. That answers the WebKitGTK question for
+a few hours' work and before any commitment to a Rust backend. Only then
+decide whether to move DuckDB native.
+
 ## Next up
 
-The editor and presentation work above is the most visible improvement
-available, and its first item is a one-line fix.
-
-Otherwise, in dependency order: Phase 6 (display verbs and input
-widgets), then Phase 8 (static export, which has to serialize whatever
-cell kinds exist by then).
-
-Smaller known gaps: HAVING (`filter` after `groupBy`), opaque newtype
-wrappers, reader options for sources such as a null string or an
-explicit delimiter, and `union`/`xunion` (full outer joins).
-
-Phase 4 has shrunk to "a daemon for hand-written Elm cells" and is only
-needed once those are wanted.
+The language gaps above, or the Tauri spike. They do not depend on each
+other.
