@@ -10,7 +10,8 @@ guess can be retired for those cells.
 
 -}
 
-import Dsl.Ast exposing (Stage(..), TypeDecl)
+import Dsl.Ast exposing (Expr(..), Field, GroupKeys(..), Lambda, Pattern(..), Pipeline, Stage(..), TypeDecl)
+import Set exposing (Set)
 import Dsl.Check as Check exposing (Cardinality, Checked, Display)
 import Dsl.ElmGen
 import Dsl.Parser
@@ -37,20 +38,23 @@ type alias Compiled =
     }
 
 
-compile : Schema -> String -> String -> Result String Compiled
-compile schema moduleName source =
+compile : Schema -> Check.Params -> String -> String -> Result String Compiled
+compile schema params moduleName source =
     Dsl.Parser.parse source
-        |> Result.andThen (Check.check schema)
-        |> Result.map (assemble moduleName)
+        |> Result.andThen
+            (\ast ->
+                Check.check schema params ast
+                    |> Result.map (assemble moduleName ast)
+            )
 
 
-assemble : String -> Checked -> Compiled
-assemble moduleName checked =
+assemble : String -> Pipeline -> Checked -> Compiled
+assemble moduleName ast checked =
     { sql = Dsl.Sql.render checked
     , elmModule = Dsl.ElmGen.render moduleName checked
     , rowType = checked.rowType
     , declarations = checked.declarations
-    , reads = checked.reads
+    , reads = checked.reads ++ Set.toList (freeVars ast)
     , cardinality = checked.cardinality
     , display = checked.display
     , orderSignificant = checked.orderSignificant
@@ -72,10 +76,91 @@ readsOf : String -> List String
 readsOf source =
     case Dsl.Parser.parse source of
         Ok ast ->
-            ast.source :: List.filterMap tableTarget ast.stages
+            (ast.source :: List.filterMap tableTarget ast.stages)
+                ++ Set.toList (freeVars ast)
 
         Err _ ->
             []
+
+
+{-| Names the cell mentions that no lambda bound.
+
+An input cell's value is bound to its name, so a bare name that is not a
+parameter is a reference to one — which is what puts the input in the graph
+ahead of the cell that reads it. Anything else unbound is an error the checker
+will report; collecting it here only means the graph knows about the edge that
+was intended.
+
+-}
+freeVars : Pipeline -> Set String
+freeVars ast =
+    ast.stages |> List.map stageVars |> List.foldl Set.union Set.empty
+
+
+stageVars : Stage -> Set String
+stageVars stage =
+    case stage of
+        Filter lambda ->
+            lambdaVars lambda
+
+        Map lambda ->
+            lambdaVars lambda
+
+        Reduce lambda ->
+            lambdaVars lambda
+
+        GroupBy (ByExpressions lambda) ->
+            lambdaVars lambda
+
+        _ ->
+            Set.empty
+
+
+lambdaVars : Lambda -> Set String
+lambdaVars lambda =
+    exprVars (bound lambda.pattern) lambda.body
+
+
+bound : Pattern -> Set String
+bound pattern =
+    case pattern of
+        Single name ->
+            Set.singleton name
+
+        Destructure names ->
+            Set.fromList names
+
+
+exprVars : Set String -> Expr -> Set String
+exprVars scope expr =
+    case expr of
+        Var name ->
+            if Set.member name scope then
+                Set.empty
+
+            else
+                Set.singleton name
+
+        Record fields ->
+            fields |> List.map (\f -> exprVars scope f.value) |> List.foldl Set.union Set.empty
+
+        Binary _ left right ->
+            Set.union (exprVars scope left) (exprVars scope right)
+
+        Not inner ->
+            exprVars scope inner
+
+        Aggregate _ arg ->
+            exprVars scope arg
+
+        Call _ args ->
+            args |> List.map (exprVars scope) |> List.foldl Set.union Set.empty
+
+        Cast inner _ ->
+            exprVars scope inner
+
+        _ ->
+            Set.empty
 
 
 tableTarget : Stage -> Maybe String

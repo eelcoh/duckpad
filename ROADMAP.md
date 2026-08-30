@@ -295,11 +295,37 @@ Not built, and each recorded rather than worked around:
   than that many values will cycle. Fine for a handful of series, wrong
   for fifty states.
 
-### Input widgets
+### Input widgets  [DONE]
 
-- Widget cells (`input.range` / `input.select` / `input.dateRange`) as
-  graph nodes with no compile step — just a bound value that
-  re-triggers the graph on change.
+    ```input min_distance
+    range 0 2500 step 250 default 0
+    ```
+
+`range` and `select`. An input is a cell like any other, with its own
+fence in the file, and it is a graph node with no compile step: its
+value is bound to the cell's name, and a query mentioning that name
+depends on it.
+
+**The value is inlined into the SQL rather than passed as a query
+parameter**, and that is the whole design. Moving a control changes the
+generated SQL, which changes the cell's cache key, which re-runs exactly
+what reads it. The reactive machinery needed no special case for widgets
+at all — the two caches that were already there do the work.
+
+One thing did need adjusting. The compile cache keys a cell on the *row
+types* of what it depends on, and an input has no row type, so a moved
+slider would have handed back a stale query. An input's signature is now
+its value, which is correct for the same reason: its value is what its
+dependents compile against.
+
+Dependencies come from free variables in the parse — names no lambda
+bound — which is what puts the input ahead of its readers in the graph
+without a schema being involved.
+
+Not built: `dateRange`, which wants two values and date parsing, and
+options drawn from a query rather than written out, which would make a
+widget depend on a cell and is a real design question rather than a
+missing case.
 
 ## Phase 7 — File format  [DONE]
 

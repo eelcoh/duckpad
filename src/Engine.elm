@@ -134,6 +134,14 @@ join parts =
     Hash.ofString (String.join "\u{0000}" parts)
 
 
+{-| What a dependent cell's *compilation* can depend on.
+
+For a query or a source that is the shape of the rows. For an input it is the
+value itself, because an input's value is inlined into the SQL — so moving a
+control really does change what its dependents compile to, and a signature
+that ignored it would hand back a stale query from the compile cache.
+
+-}
 signatureOf : CellState -> String
 signatureOf state =
     case state.rowType of
@@ -143,7 +151,7 @@ signatureOf state =
                 |> String.join ","
 
         Nothing ->
-            "?"
+            Maybe.withDefault "?" state.valueHash
 
 
 valueHashOf : CellState -> String

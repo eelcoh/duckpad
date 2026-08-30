@@ -15,15 +15,16 @@ import Task
 import Cell exposing (Cell, Kind(..), Status(..))
 import Dag exposing (Graph)
 import Dict exposing (Dict)
-import Dsl.Ast exposing (Constructor, TypeDecl)
+import Dsl.Ast exposing (Constructor, Literal(..), TypeDecl)
 import Chart
 import Dsl.Check exposing (Cardinality(..), Display(..))
 import Dsl.Compile exposing (Compiled)
 import Dsl.Lexer
 import Dsl.Schema as Schema exposing (Schema, Type(..))
+import Dsl.Input
 import Dsl.Source
 import Engine exposing (CellState, Shape)
-import Element exposing (Element, alignRight, centerX, column, el, fill, height, maximum, padding, paddingXY, px, row, spacing, text, width)
+import Element exposing (Element, alignRight, centerX, centerY, column, el, fill, height, maximum, padding, paddingXY, px, row, spacing, text, width)
 import Element.Background as Background
 import Element.Border as Border
 import Element.Events
@@ -76,6 +77,10 @@ type alias Model =
     -- `details`, and holding it here means the disclosure survives a re-render
     -- rather than being the browser's private business.
     , expanded : Set.Set String
+
+    -- Where each input cell currently sits. The cell's source gives the
+    -- control and its default; this is what the reader has moved it to.
+    , inputs : Dict String Literal
     }
 
 
@@ -103,6 +108,7 @@ type Msg
     | EditProse String
     | KeyEdit String Indent.Edit
     | ToggleArtefacts String
+    | InputMoved String Literal
     | Focused (Result Browser.Dom.Error ())
 
 
@@ -122,7 +128,7 @@ init flags =
         ( notebook, notice ) =
             restore flags
     in
-    ( load notebook { title = notebook.title, cells = [], states = Dict.empty, baseSchema = Dict.empty, queue = [], current = Nothing, db = Booting, nextId = 1, notice = notice, resetArmed = False, editing = Nothing, expanded = Set.empty }
+    ( load notebook { title = notebook.title, cells = [], states = Dict.empty, baseSchema = Dict.empty, queue = [], current = Nothing, db = Booting, nextId = 1, notice = notice, resetArmed = False, editing = Nothing, expanded = Set.empty, inputs = Dict.empty }
     , Cmd.none
     )
 
@@ -201,7 +207,8 @@ graphOf model =
                         Set.fromList (Dsl.Compile.readsOf c.source)
 
                     _ ->
-                        -- A source reads external data, never another cell.
+                        -- A source reads external data and an input reads
+                        -- nothing at all; neither depends on another cell.
                         Set.empty
                 )
             )
@@ -335,6 +342,9 @@ step msg model =
                             Source ->
                                 "csv \"https://cdn.jsdelivr.net/npm/vega-datasets@2/data/seattle-weather.csv\""
 
+                            Input ->
+                                "range 0 100 default 50"
+
                             Prose ->
                                 "Notes."
                     }
@@ -417,6 +427,18 @@ step msg model =
             ( updated
             , Cmd.batch [ cmd, Ports.setCaret { id = domIdFor id, pos = edit.caret } ]
             )
+
+        InputMoved id literal ->
+            let
+                updated =
+                    { model | inputs = Dict.insert id literal model.inputs }
+            in
+            withPersist
+                (schedule
+                    { updated
+                        | states = Engine.markStale (Set.singleton id) (graphOf updated) updated.states
+                    }
+                )
 
         ToggleArtefacts id ->
             ( { model
@@ -642,8 +664,67 @@ advance model =
                             Source ->
                                 dispatchSource cell rest model
 
+                            Input ->
+                                dispatchInput cell rest model
+
                             _ ->
                                 dispatch cell rest model
+
+
+{-| An input resolves without touching the database: its value is already
+known, and settling it here is what lets the cells downstream compile.
+-}
+dispatchInput : Cell -> List String -> Model -> ( Model, Cmd Msg )
+dispatchInput cell rest model =
+    let
+        state =
+            stateOf cell.id model
+    in
+    case Dsl.Input.parse cell.source of
+        Err message ->
+            advance
+                { model
+                    | queue = rest
+                    , states = setStatus cell.id (Invalid message) model.states
+                }
+
+        Ok widget ->
+            advance
+                { model
+                    | queue = rest
+                    , states =
+                        Dict.insert cell.id
+                            { state
+                                | status = Fresh { cached = False, millis = 0 }
+                                , valueHash = Just (literalKey (valueOf cell.id widget model))
+                            }
+                            model.states
+                }
+
+
+valueOf : String -> Dsl.Input.Spec -> Model -> Literal
+valueOf id widget model =
+    Dict.get id model.inputs |> Maybe.withDefault (Dsl.Input.defaultLiteral widget)
+
+
+literalKey : Literal -> String
+literalKey literal =
+    case literal of
+        LFloat f ->
+            String.fromFloat f
+
+        LInt n ->
+            String.fromInt n
+
+        LString s ->
+            "s:" ++ s
+
+        LBool b ->
+            if b then
+                "true"
+
+            else
+                "false"
 
 
 {-| A source is not compiled and not materialised. It becomes a view over the
@@ -761,8 +842,39 @@ compileCell : Graph -> Model -> Cell -> Result String Compiled
 compileCell graph model cell =
     Dsl.Compile.compile
         (Engine.schemaFor model.baseSchema graph model.states cell.id)
+        (paramsFor graph model cell.id)
         (moduleNameFor cell.id)
         cell.source
+
+
+{-| The input values a cell may read: those bound by the inputs it depends on,
+and no others, for the same reason a cell cannot name a table it never
+declared it reads.
+-}
+paramsFor : Graph -> Model -> String -> Dsl.Check.Params
+paramsFor graph model id =
+    Dag.dependenciesOf id graph
+        |> Set.foldl
+            (\dep acc ->
+                case findCell dep model of
+                    Just upstream ->
+                        if upstream.kind == Input then
+                            case Dsl.Input.parse upstream.source of
+                                Ok widget ->
+                                    Dict.insert dep
+                                        ( Dsl.Input.valueType widget, valueOf dep widget model )
+                                        acc
+
+                                Err _ ->
+                                    acc
+
+                        else
+                            acc
+
+                    Nothing ->
+                        acc
+            )
+            Dict.empty
 
 
 runOrReuse : Cell -> List String -> Model -> Graph -> CellState -> String -> Compiled -> ( Model, Cmd Msg )
@@ -917,6 +1029,9 @@ freshName kind model =
 
                 Source ->
                     "data_"
+
+                Input ->
+                    "input_"
 
                 Prose ->
                     "note_"
@@ -1186,7 +1301,7 @@ viewCell model graph cell =
         ]
         [ viewCellHead model graph cell state
         , el [ width fill ] (Element.html (viewBody model cell))
-        , viewOutput cell state
+        , viewOutput model cell state
         , viewArtefacts model cell state
         ]
 
@@ -1410,6 +1525,9 @@ editor cell =
                 Source ->
                     "csv \"https://…\""
 
+                Input ->
+                    "range 0 100 default 50"
+
                 Prose ->
                     "Notes…"
             )
@@ -1480,10 +1598,18 @@ keyEdit cellId ctx =
 -- OUTPUT
 
 
-viewOutput : Cell -> CellState -> Element Msg
-viewOutput cell state =
+viewOutput : Model -> Cell -> CellState -> Element Msg
+viewOutput model cell state =
     if cell.kind == Prose then
         Element.none
+
+    else if cell.kind == Input then
+        case Dsl.Input.parse cell.source of
+            Err message ->
+                message_ Ui.bad message
+
+            Ok widget ->
+                viewControl cell.id widget (valueOf cell.id widget model)
 
     else
         case state.status of
@@ -1520,6 +1646,113 @@ viewOutput cell state =
 
                     _ ->
                         message_ Ui.muted "Running…"
+
+
+{-| The control itself. An input's value is the cell's whole output, so this
+sits where a table would.
+-}
+viewControl : String -> Dsl.Input.Spec -> Literal -> Element Msg
+viewControl id widget current =
+    el
+        [ width fill
+        , padding 12
+        , Border.widthEach { top = 1, left = 0, right = 0, bottom = 0 }
+        , Border.color Ui.line
+        ]
+        (case ( widget, current ) of
+            ( Dsl.Input.Range r, LFloat value ) ->
+                row [ width fill, spacing 14 ]
+                    [ Input.slider
+                        [ width fill
+                        , height (px 20)
+                        , Element.behindContent
+                            (el
+                                [ width fill
+                                , height (px 3)
+                                , centerY
+                                , Background.color Ui.line
+                                , Border.rounded 2
+                                ]
+                                Element.none
+                            )
+                        ]
+                        { onChange = \f -> InputMoved id (LFloat f)
+                        , label = Input.labelHidden id
+                        , min = r.min
+                        , max = r.max
+                        , step = Just r.step
+                        , value = value
+                        , thumb = Input.thumb [ width (px 14), height (px 14), Border.rounded 7, Background.color Ui.accent ]
+                        }
+                    , el
+                        [ Font.family Ui.mono
+                        , Font.size Ui.monoSize
+                        , Font.color Ui.accent
+                        , width (px 90)
+                        , Font.alignRight
+                        ]
+                        (text (trimFloat value))
+                    ]
+
+            ( Dsl.Input.Select s, LString value ) ->
+                Element.wrappedRow [ spacing 6 ]
+                    (List.map (viewOption id value) s.options)
+
+            _ ->
+                message_ Ui.bad "this control does not match its value"
+        )
+
+
+viewOption : String -> String -> String -> Element Msg
+viewOption id current option =
+    let
+        chosen =
+            option == current
+    in
+    Input.button
+        [ Font.family Ui.mono
+        , Font.size Ui.monoSize
+        , Font.color
+            (if chosen then
+                Ui.card
+
+             else
+                Ui.ink
+            )
+        , Background.color
+            (if chosen then
+                Ui.accent
+
+             else
+                Ui.card
+            )
+        , Border.width 1
+        , Border.color
+            (if chosen then
+                Ui.accent
+
+             else
+                Ui.line
+            )
+        , Border.rounded 5
+        , paddingXY 10 5
+        ]
+        { onPress = Just (InputMoved id (LString option)), label = text option }
+
+
+{-| Sliders produce values like 249.99999999999997; the control should not.
+-}
+trimFloat : Float -> String
+trimFloat value =
+    let
+        rounded =
+            toFloat (round (value * 100)) / 100
+    in
+    if rounded == toFloat (round rounded) then
+        String.fromInt (round rounded)
+
+    else
+        String.fromFloat rounded
 
 
 message_ : Element.Color -> String -> Element Msg

@@ -1,6 +1,7 @@
 module Dsl.Check exposing
     ( Cardinality(..)
     , ChartSpec
+    , Params
     , Checked
     , CheckedCombine
     , Display(..)
@@ -136,15 +137,27 @@ typeOf expr =
 -- ENTRY POINT
 
 
-check : Schema -> Pipeline -> Result String Checked
-check schema ast =
+{-| Values bound by input cells, ready to be inlined.
+
+Inlined rather than passed as query parameters, and that is the whole design:
+moving a control changes the SQL, which changes the cell's cache key, which
+re-runs exactly what depends on it. The reactive machinery needs no special
+case for widgets at all.
+
+-}
+type alias Params =
+    Dict.Dict String ( Type, Literal )
+
+
+check : Schema -> Params -> Pipeline -> Result String Checked
+check schema params ast =
     case Schema.columnsOf ast.source schema of
         Nothing ->
             Err ("`" ++ ast.source ++ "` is not a table or an earlier cell. Known: " ++ knownTables schema)
 
         Just columns ->
             validateDeclarations columns ast.declarations
-                |> Result.andThen (\_ -> foldStages schema ast (start ast.source columns))
+                |> Result.andThen (\_ -> foldStages schema params ast (start ast.source columns))
                 |> Result.andThen finish
 
 
@@ -201,22 +214,22 @@ start source columns =
     }
 
 
-foldStages : Schema -> Pipeline -> Builder -> Result String Builder
-foldStages schema ast builder =
+foldStages : Schema -> Params -> Pipeline -> Builder -> Result String Builder
+foldStages schema params ast builder =
     List.foldl
-        (\stage acc -> Result.andThen (applyStage schema ast stage) acc)
+        (\stage acc -> Result.andThen (applyStage schema params ast stage) acc)
         (Ok { builder | declarations = ast.declarations })
         ast.stages
 
 
-applyStage : Schema -> Pipeline -> Stage -> Builder -> Result String Builder
-applyStage schema ast stage builder =
+applyStage : Schema -> Params -> Pipeline -> Stage -> Builder -> Result String Builder
+applyStage schema params ast stage builder =
     case ( stage, builder.phase ) of
         ( _, Done ) ->
             Err "nothing may follow `select` or `selectAll` — the pipeline ends there"
 
         ( Filter lambda, Rows ) ->
-            bind ast builder lambda
+            bind params ast builder lambda
                 |> Result.andThen (\env -> checkExpr env lambda.body)
                 |> Result.andThen
                     (\texpr ->
@@ -237,7 +250,7 @@ applyStage schema ast stage builder =
             Err "combining rows has to come before `groupBy`, `reduce` or `map`"
 
         ( Map lambda, Rows ) ->
-            bind ast builder lambda
+            bind params ast builder lambda
                 |> Result.andThen (\env -> checkProjection env lambda.body)
                 |> Result.map
                     (\( fields, hidden ) ->
@@ -252,14 +265,14 @@ applyStage schema ast stage builder =
             Err "`map` cannot follow `groupBy` or `reduce` — use `reduce` to build the grouped row"
 
         ( GroupBy keys, Rows ) ->
-            groupKeys ast keys builder
+            groupKeys params ast keys builder
                 |> Result.map (\resolved -> { builder | groupBy = resolved, phase = Grouped })
 
         ( GroupBy _, _ ) ->
             Err "`groupBy` has to come before any projection"
 
         ( Reduce lambda, Grouped ) ->
-            groupEnv ast builder lambda
+            groupEnv params ast builder lambda
                 |> Result.andThen (\env -> checkProjection env lambda.body)
                 |> Result.map
                     (\( fields, hidden ) ->
@@ -424,8 +437,8 @@ Repeating a key is refused. SQL accepts it and it means nothing, so it is far
 more likely to be a slip.
 
 -}
-groupKeys : Pipeline -> GroupKeys -> Builder -> Result String (List ( String, TExpr ))
-groupKeys ast keys builder =
+groupKeys : Params -> Pipeline -> GroupKeys -> Builder -> Result String (List ( String, TExpr ))
+groupKeys params ast keys builder =
     case keys of
         ByColumns columns ->
             case List.filter (\c -> countOf c columns > 1) columns |> List.head of
@@ -444,7 +457,7 @@ groupKeys ast keys builder =
                             (Ok [])
 
         ByExpressions lambda ->
-            bind ast builder lambda
+            bind params ast builder lambda
                 |> Result.andThen (\env -> computedKeys env lambda.body)
 
 
@@ -608,6 +621,7 @@ type alias Env =
     , inReduce : Bool
     , groupKeys : List ( String, TExpr )
     , sides : List Side
+    , params : Params
     }
 
 
@@ -617,11 +631,11 @@ An arity mismatch is the error that makes combining safe: a row that has
 grown cannot go on being read as though it had not.
 
 -}
-bind : Pipeline -> Builder -> Lambda -> Result String Env
-bind ast builder lambda =
+bind : Params -> Pipeline -> Builder -> Lambda -> Result String Env
+bind params ast builder lambda =
     case ( lambda.pattern, builder.sides ) of
         ( Single name, [ only ] ) ->
-            Ok (envWith ast builder [ ( name, only ) ])
+            Ok (envWith params ast builder [ ( name, only ) ])
 
         ( Single _, sides ) ->
             Err
@@ -644,14 +658,14 @@ bind ast builder lambda =
                     )
 
             else
-                Ok (envWith ast builder (List.map2 Tuple.pair names sides))
+                Ok (envWith params ast builder (List.map2 Tuple.pair names sides))
 
 
 {-| `reduce` binds the group as a whole rather than destructuring it, so a
 column inside an aggregate is resolved across every side.
 -}
-groupEnv : Pipeline -> Builder -> Lambda -> Result String Env
-groupEnv ast builder lambda =
+groupEnv : Params -> Pipeline -> Builder -> Lambda -> Result String Env
+groupEnv params ast builder lambda =
     case lambda.pattern of
         Single name ->
             Ok
@@ -660,19 +674,21 @@ groupEnv ast builder lambda =
                 , inReduce = True
                 , groupKeys = builder.groupBy
                 , sides = builder.sides
+                , params = params
                 }
 
         Destructure _ ->
             Err "`reduce` binds the whole group, so it takes a single name, as in `\\g -> …`"
 
 
-envWith : Pipeline -> Builder -> List ( String, Side ) -> Env
-envWith ast builder bindings =
+envWith : Params -> Pipeline -> Builder -> List ( String, Side ) -> Env
+envWith params ast builder bindings =
     { bindings = bindings
     , declarations = ast.declarations
     , inReduce = False
     , groupKeys = []
     , sides = builder.sides
+    , params = params
     }
 
 
@@ -964,7 +980,12 @@ checkExpr env expr =
                     Err ("`" ++ name ++ "` is a whole row — index it with a column, like `" ++ name ++ ".total`")
 
                 Nothing ->
-                    Err ("there is no value called `" ++ name ++ "` here")
+                    case Dict.get name env.params of
+                        Just ( t, literal ) ->
+                            Ok (TLit literal t)
+
+                        Nothing ->
+                            Err ("there is no value called `" ++ name ++ "` here")
 
         Access obj column ->
             case boundSide obj env of

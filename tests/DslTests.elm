@@ -50,7 +50,7 @@ schema =
 
 compile : String -> Result String Dsl.Compile.Compiled
 compile =
-    Dsl.Compile.compile schema "Generated"
+    Dsl.Compile.compile schema Dict.empty "Generated"
 
 
 rowTypeOf : String -> Result String (List ( String, String ))

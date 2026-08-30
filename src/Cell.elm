@@ -23,6 +23,9 @@ type Kind
       -- External data the notebook reads but does not compute. A source is a
       -- graph node like any other, so cells that read it are ordered after it.
     | Source
+      -- A control bound to a name. No compile step: its value is what a query
+      -- mentioning that name reads.
+    | Input
     | Prose
 
 
@@ -57,6 +60,9 @@ isRunnable cell =
         Source ->
             String.trim cell.source /= ""
 
+        Input ->
+            String.trim cell.source /= ""
+
         Prose ->
             False
 
@@ -69,6 +75,9 @@ kindLabel kind =
 
         Source ->
             "source"
+
+        Input ->
+            "input"
 
         Prose ->
             "prose"

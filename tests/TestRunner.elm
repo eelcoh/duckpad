@@ -13,6 +13,7 @@ import Check exposing (Check)
 import DslTests
 import EngineTests
 import IndentTests
+import InputTests
 import LexerTests
 import NotebookTests
 import SourceTests
@@ -33,7 +34,7 @@ main =
 
 allChecks : List Check
 allChecks =
-    EngineTests.checks ++ DslTests.checks ++ NotebookTests.checks ++ SourceTests.checks ++ IndentTests.checks ++ LexerTests.checks
+    EngineTests.checks ++ DslTests.checks ++ NotebookTests.checks ++ SourceTests.checks ++ IndentTests.checks ++ LexerTests.checks ++ InputTests.checks
 
 
 encode : Check -> E.Value

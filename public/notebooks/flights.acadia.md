@@ -6,7 +6,9 @@ Two sources, both read straight from the web. `airports` is a small CSV; `flight
 
 A terminator says how a cell is shown: `selectAll` gives a table, and `barChart`, `lineChart` or `scatter` a chart. The channels are checked against the row, so plotting something that is not a number is a compile error rather than an empty picture.
 
-`intersect` pairs two tables rather than merging them, so each side keeps its own column names and a later lambda destructures: `\(f, orig, dest) -> …`. Scalar functions work anywhere an expression does — `roundTo 1 (avg g.delay)` below, and `++` to build a label. `groupBy` takes a lambda when a key has to be computed, which is how `daily` turns a minute-resolution timestamp into a day. That is what lets `routes` below join `airports` twice — once for the origin and once for the destination — without the two sides colliding.
+`intersect` pairs two tables rather than merging them, so each side keeps its own column names and a later lambda destructures: `\(f, orig, dest) -> …`. Scalar functions work anywhere an expression does — `roundTo 1 (avg g.delay)` below, and `++` to build a label. `groupBy` takes a lambda when a key has to be computed, which is how `daily` turns a minute-resolution timestamp into a day.
+
+An input cell binds a control to its name. Drag `min_distance` and only the cells that read it re-run — the value is compiled into their SQL, so the cache does the rest. That is what lets `routes` below join `airports` twice — once for the origin and once for the destination — without the two sides colliding.
 
 ```source airports
 csv "https://cdn.jsdelivr.net/npm/vega-datasets@2/data/airports.csv"
@@ -16,8 +18,13 @@ csv "https://cdn.jsdelivr.net/npm/vega-datasets@2/data/airports.csv"
 parquet "https://cdn.jsdelivr.net/npm/vega-datasets@3.2.0/data/flights-3m.parquet"
 ```
 
+```input min_distance
+range 0 2500 step 250 default 0
+```
+
 ```acadia by_state
 access flights ()
+  |> filter (\f -> f.distance >= min_distance)
   |> intersect .origin airports .iata
   |> groupBy .state
   |> reduce (\g ->

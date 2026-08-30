@@ -22,7 +22,7 @@ seedCells : List Cell
 seedCells =
     [ { id = "intro"
       , kind = Prose
-      , source = "Two sources, both read straight from the web. `airports` is a small CSV; `flights` is three million rows of Parquet that DuckDB reads a page at a time, so the whole file never has to come down.\n\nA terminator says how a cell is shown: `selectAll` gives a table, and `barChart`, `lineChart` or `scatter` a chart. The channels are checked against the row, so plotting something that is not a number is a compile error rather than an empty picture.\n\n`intersect` pairs two tables rather than merging them, so each side keeps its own column names and a later lambda destructures: `\\(f, orig, dest) -> …`. Scalar functions work anywhere an expression does — `roundTo 1 (avg g.delay)` below, and `++` to build a label. `groupBy` takes a lambda when a key has to be computed, which is how `daily` turns a minute-resolution timestamp into a day. That is what lets `routes` below join `airports` twice — once for the origin and once for the destination — without the two sides colliding."
+      , source = "Two sources, both read straight from the web. `airports` is a small CSV; `flights` is three million rows of Parquet that DuckDB reads a page at a time, so the whole file never has to come down.\n\nA terminator says how a cell is shown: `selectAll` gives a table, and `barChart`, `lineChart` or `scatter` a chart. The channels are checked against the row, so plotting something that is not a number is a compile error rather than an empty picture.\n\n`intersect` pairs two tables rather than merging them, so each side keeps its own column names and a later lambda destructures: `\\(f, orig, dest) -> …`. Scalar functions work anywhere an expression does — `roundTo 1 (avg g.delay)` below, and `++` to build a label. `groupBy` takes a lambda when a key has to be computed, which is how `daily` turns a minute-resolution timestamp into a day.\n\nAn input cell binds a control to its name. Drag `min_distance` and only the cells that read it re-run — the value is compiled into their SQL, so the cache does the rest. That is what lets `routes` below join `airports` twice — once for the origin and once for the destination — without the two sides colliding."
       }
     , { id = "airports"
       , kind = Source
@@ -32,9 +32,13 @@ seedCells =
       , kind = Source
       , source = "parquet \"https://cdn.jsdelivr.net/npm/vega-datasets@3.2.0/data/flights-3m.parquet\""
       }
+    , { id = "min_distance"
+      , kind = Input
+      , source = "range 0 2500 step 250 default 0"
+      }
     , { id = "by_state"
       , kind = Query
-      , source = "access flights ()\n  |> intersect .origin airports .iata\n  |> groupBy .state\n  |> reduce (\\g ->\n       { state = g.state\n       , departures = count g\n       , avg_delay = roundTo 1 (avg g.delay)\n       })\n  |> sortBy (desc .departures)\n  |> limit 12\n  |> barChart { x = .state, y = .departures }"
+      , source = "access flights ()\n  |> filter (\\f -> f.distance >= min_distance)\n  |> intersect .origin airports .iata\n  |> groupBy .state\n  |> reduce (\\g ->\n       { state = g.state\n       , departures = count g\n       , avg_delay = roundTo 1 (avg g.delay)\n       })\n  |> sortBy (desc .departures)\n  |> limit 12\n  |> barChart { x = .state, y = .departures }"
       }
     , { id = "daily"
       , kind = Query

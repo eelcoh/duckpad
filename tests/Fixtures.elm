@@ -10,6 +10,8 @@ Run through `mise run roundtrip`.
 -}
 
 import Dict
+import Dsl.Ast exposing (Literal(..))
+import Dsl.Check
 import Dsl.Compile
 import Dsl.Schema exposing (Schema, Type(..))
 import Json.Encode as E
@@ -66,6 +68,14 @@ schema =
             ]
           )
         ]
+
+
+{-| The values the seeded notebook's input cells are bound to, so the cells
+that read them can be checked like any other.
+-}
+params : Dsl.Check.Params
+params =
+    Dict.fromList [ ( "min_distance", ( TFloat, LFloat 0 ) ) ]
 
 
 fixtures : List ( String, String )
@@ -146,6 +156,7 @@ access orders ()
     , ( "seeded_by_state"
       , """
 access flights ()
+  |> filter (\\f -> f.distance >= min_distance)
   |> intersect .origin airports .iata
   |> groupBy .state
   |> reduce (\\g ->
@@ -269,7 +280,7 @@ compileFixture index ( name, source ) =
         moduleName =
             "Gen" ++ String.fromInt index
     in
-    case Dsl.Compile.compile schema moduleName source of
+    case Dsl.Compile.compile schema params moduleName source of
         Ok compiled ->
             E.object
                 [ ( "name", E.string name )
