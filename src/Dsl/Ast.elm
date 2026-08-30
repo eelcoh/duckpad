@@ -2,6 +2,7 @@ module Dsl.Ast exposing
     ( ChartKind(..)
     , Constructor
     , CombineKind(..)
+    , Definition(..)
     , Expr(..)
     , GroupKeys(..)
     , Pattern(..)
@@ -47,8 +48,21 @@ is the case the Phase 2 spike had to write by hand.
 -}
 type alias TypeDecl =
     { name : String
-    , constructors : List Constructor
+    , definition : Definition
     }
+
+
+{-| The two shapes a declared type can take.
+
+An `Enum` is a closed set of values a text column holds. A wrapper is a single
+constructor around one primitive — `type OrderId = OrderId Int` — which carries
+no information the column did not already have, and exists so that an order id
+cannot be handed to something expecting a customer id.
+
+-}
+type Definition
+    = Enum (List Constructor)
+    | Wraps String String
 
 
 type alias Constructor =

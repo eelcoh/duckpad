@@ -242,10 +242,11 @@ parserChecks =
     , equal "parse: an enum declaration with wire tags"
         (Ok
             [ { name = "Status"
-              , constructors =
-                    [ { name = "Submitted", tag = "submitted", payloadColumn = Nothing }
-                    , { name = "InTransit", tag = "in_transit", payloadColumn = Nothing }
-                    ]
+              , definition =
+                    Enum
+                        [ { name = "Submitted", tag = "submitted", payloadColumn = Nothing }
+                        , { name = "InTransit", tag = "in_transit", payloadColumn = Nothing }
+                        ]
               }
             ]
         )
@@ -256,7 +257,17 @@ parserChecks =
         (Ok (Just "delivered_at"))
         (Dsl.Parser.parse "type S = Delivered \"delivered\" from .delivered_at\naccess t () |> selectAll"
             |> Result.map .declarations
-            |> Result.map (List.concatMap .constructors)
+            |> Result.map
+                (List.concatMap
+                    (\d ->
+                        case d.definition of
+                            Enum cs ->
+                                cs
+
+                            Wraps _ _ ->
+                                []
+                    )
+                )
             |> Result.andThen
                 (\cs ->
                     case cs of
@@ -485,6 +496,30 @@ checkerChecks =
     , equal "check: a cast gives the column a declared type"
         (Ok [ ( "owner", "String" ), ( "s", "Status" ) ])
         (rowTypeOf declaredStatus)
+    -- Opaque wrappers: the other shape a declared type can take.
+    , equal "wrapper: a column keeps its value and gains a name"
+        (Ok [ ( "id", "OrderId" ) ])
+        (rowTypeOf "type OrderId = OrderId Int\naccess orders () |> map (\\o -> { id = o.id as OrderId }) |> selectAll")
+    , contains "elm: a wrapper is a real newtype, so two ids cannot be confused"
+        "type OrderId\n    = OrderId Int"
+        (elmOf "type OrderId = OrderId Int\naccess orders () |> map (\\o -> { id = o.id as OrderId }) |> selectAll")
+    , contains "elm: its decoder is the primitive's with the constructor round it"
+        "orderIdFrom column =\n    D.map OrderId (D.field column D.int)"
+        (elmOf "type OrderId = OrderId Int\naccess orders () |> map (\\o -> { id = o.id as OrderId }) |> selectAll")
+    , contains "sql: a wrapper changes nothing about the query"
+        "\"orders\".\"id\" AS \"id\""
+        (sqlOf "type OrderId = OrderId Int\naccess orders () |> map (\\o -> { id = o.id as OrderId }) |> selectAll")
+    , equal "wrapper: a wrapped timestamp brings Time with it"
+        (Ok True)
+        (elmOf "type At = At Timestamp\naccess orders () |> map (\\o -> { d = o.delivered_at as At }) |> selectAll"
+            |> Result.map (String.contains "import Time")
+        )
+    , isErr "wrapper: the column has to match what is wrapped"
+        (compile "type OrderId = OrderId Int\naccess orders () |> map (\\o -> { id = o.owner as OrderId }) |> selectAll")
+    , isErr "wrapper: an enum still wants a text column"
+        (compile "type S = A \"a\"\naccess orders () |> map (\\o -> { s = o.id as S }) |> selectAll")
+    , isErr "wrapper: only the primitives can be wrapped"
+        (compile "type Odd = Odd Widget\naccess orders () |> map (\\o -> { s = o.id as Odd }) |> selectAll")
     , isErr "check: casting to an undeclared type is rejected"
         (compile "access orders () |> map (\\o -> { s = o.status as Nope }) |> selectAll")
     , isErr "check: a cast needs a text column"

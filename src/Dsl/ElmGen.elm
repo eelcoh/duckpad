@@ -13,7 +13,7 @@ survive Arrow and JSON.
 
 -}
 
-import Dsl.Ast exposing (Constructor, TypeDecl)
+import Dsl.Ast exposing (Constructor, Definition(..), TypeDecl)
 import Dsl.Check exposing (Cardinality(..), Checked, Projection(..), TExpr(..))
 import Dsl.Schema as Schema exposing (Type(..))
 
@@ -59,13 +59,13 @@ imports checked used =
 
         payloadTime =
             used
-                |> List.concatMap .constructors
+                |> List.concatMap enumConstructors
                 |> List.filterMap .payloadColumn
                 |> List.filterMap (\c -> lookupHidden c checked)
                 |> List.any mentionsTimestamp
     in
     ("import Json.Decode as D"
-        :: (if needsTime || payloadTime then
+        :: (if needsTime || payloadTime || List.any wrapsTimestamp used then
                 [ "import Time" ]
 
             else
@@ -73,6 +73,26 @@ imports checked used =
            )
     )
         |> String.join "\n"
+
+
+enumConstructors : TypeDecl -> List Constructor
+enumConstructors decl =
+    case decl.definition of
+        Enum constructors ->
+            constructors
+
+        Wraps _ _ ->
+            []
+
+
+wrapsTimestamp : TypeDecl -> Bool
+wrapsTimestamp decl =
+    case decl.definition of
+        Wraps _ wrapped ->
+            Schema.primitive wrapped == Just TTimestamp
+
+        Enum _ ->
+            False
 
 
 mentionsTimestamp : Type -> Bool
@@ -126,28 +146,41 @@ lookupHidden name checked =
 
 customType : TypeDecl -> String
 customType decl =
-    let
-        variants =
-            decl.constructors
-                |> List.indexedMap
-                    (\i c ->
-                        (if i == 0 then
-                            "    = "
+    case decl.definition of
+        Wraps constructor wrapped ->
+            "type "
+                ++ decl.name
+                ++ "\n    = "
+                ++ constructor
+                ++ " "
+                ++ (Schema.primitive wrapped
+                        |> Maybe.map Schema.elmAnnotation
+                        |> Maybe.withDefault wrapped
+                   )
 
-                         else
-                            "    | "
-                        )
-                            ++ c.name
-                            ++ (case c.payloadColumn of
-                                    Just _ ->
-                                        " Time.Posix"
+        Enum constructors ->
+            let
+                variants =
+                    constructors
+                        |> List.indexedMap
+                            (\i c ->
+                                (if i == 0 then
+                                    "    = "
 
-                                    Nothing ->
-                                        ""
-                               )
-                    )
-    in
-    ("type " ++ decl.name) :: variants |> String.join "\n"
+                                 else
+                                    "    | "
+                                )
+                                    ++ c.name
+                                    ++ (case c.payloadColumn of
+                                            Just _ ->
+                                                " Time.Posix"
+
+                                            Nothing ->
+                                                ""
+                                       )
+                            )
+            in
+            ("type " ++ decl.name) :: variants |> String.join "\n"
 
 
 {-| The row record, plus the alias naming what the whole cell evaluates to.
@@ -245,9 +278,33 @@ rather than defaulting, which is the whole reason the tags are written down.
 -}
 constructorDecoder : Checked -> TypeDecl -> String
 constructorDecoder _ decl =
+    case decl.definition of
+        Wraps constructor wrapped ->
+            -- A wrapper adds no information, so its decoder is the primitive's
+            -- with the constructor put round it.
+            decoderName decl.name
+                ++ " : String -> D.Decoder "
+                ++ decl.name
+                ++ "\n"
+                ++ decoderName decl.name
+                ++ " column =\n    D.map "
+                ++ constructor
+                ++ " (D.field column "
+                ++ (Schema.primitive wrapped
+                        |> Maybe.map valueDecoder
+                        |> Maybe.withDefault "D.string"
+                   )
+                ++ ")"
+
+        Enum constructors ->
+            enumDecoder decl.name constructors
+
+
+enumDecoder : String -> List Constructor -> String
+enumDecoder typeName constructors =
     let
         branches =
-            decl.constructors
+            constructors
                 |> List.map
                     (\c ->
                         "                    \""
@@ -257,11 +314,11 @@ constructorDecoder _ decl =
                     )
                 |> String.join "\n\n"
     in
-    decoderName decl.name
+    decoderName typeName
         ++ " : String -> D.Decoder "
-        ++ decl.name
+        ++ typeName
         ++ "\n"
-        ++ decoderName decl.name
+        ++ decoderName typeName
         ++ " column =\n"
         ++ "    D.field column D.string\n"
         ++ "        |> D.andThen\n"
@@ -270,7 +327,7 @@ constructorDecoder _ decl =
         ++ branches
         ++ "\n\n                    other ->\n"
         ++ "                        D.fail (\"unknown "
-        ++ decl.name
+        ++ typeName
         ++ ": \" ++ other)\n"
         ++ "            )"
 
@@ -290,7 +347,8 @@ helpers checked used =
     let
         needsPosix =
             List.any (\( _, t ) -> mentionsTimestamp t) checked.rowType
-                || not (List.isEmpty (List.filterMap .payloadColumn (List.concatMap .constructors used)))
+                || not (List.isEmpty (List.filterMap .payloadColumn (List.concatMap enumConstructors used)))
+            || List.any wrapsTimestamp used
 
         andMapHelper =
             [ "andMap : D.Decoder a -> D.Decoder (a -> b) -> D.Decoder b"

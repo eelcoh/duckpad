@@ -161,19 +161,30 @@ typeDecl =
         |. kw "type"
         |= uname
         |. sym "="
-        |= constructorList
+        |= definition
 
 
-constructorList : Parser (List Constructor)
-constructorList =
-    Parser.succeed (::)
-        |= constructor
-        |= many
-            (Parser.backtrackable
-                (Parser.succeed identity
-                    |. sym "|"
-                    |= constructor
-                )
+{-| Both shapes start with a constructor name; what follows decides which.
+
+A quoted tag makes it an enum, a type name makes it a wrapper. Nothing else
+can appear there, so one token of lookahead settles it.
+
+-}
+definition : Parser Definition
+definition =
+    uname
+        |> Parser.andThen
+            (\first ->
+                Parser.oneOf
+                    [ Parser.map (Wraps first) uname
+                    , Parser.succeed (\tag payload rest -> Enum (Constructor first tag payload :: rest))
+                        |= quotedString
+                        |= payloadColumn
+                        |= many
+                            (Parser.backtrackable
+                                (Parser.succeed identity |. sym "|" |= constructor)
+                            )
+                    ]
             )
 
 
@@ -182,10 +193,15 @@ constructor =
     Parser.succeed Constructor
         |= uname
         |= quotedString
-        |= Parser.oneOf
-            [ Parser.succeed Just |. kw "from" |= accessor
-            , Parser.succeed Nothing
-            ]
+        |= payloadColumn
+
+
+payloadColumn : Parser (Maybe String)
+payloadColumn =
+    Parser.oneOf
+        [ Parser.succeed Just |. kw "from" |= accessor
+        , Parser.succeed Nothing
+        ]
 
 
 

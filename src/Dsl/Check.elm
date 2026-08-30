@@ -962,9 +962,32 @@ validateDeclarations columns decls =
 
 validateDecl : List ( String, Type ) -> TypeDecl -> Result String ()
 validateDecl columns decl =
+    case decl.definition of
+        Wraps _ wrapped ->
+            if Schema.primitive wrapped == Nothing then
+                Err
+                    ("type `"
+                        ++ decl.name
+                        ++ "` wraps `"
+                        ++ wrapped
+                        ++ "`, which is not one of Int, Float, String, Bool, Timestamp"
+                    )
+
+            else
+                Ok ()
+
+        Enum constructors ->
+            validateEnum columns decl.name constructors
+
+
+validateEnum : List ( String, Type ) -> String -> List Constructor -> Result String ()
+validateEnum columns name constructors =
     let
+        decl =
+            { name = name }
+
         tags =
-            List.map .tag decl.constructors
+            List.map .tag constructors
 
         duplicates =
             tags |> List.filter (\t -> countOf t tags > 1)
@@ -979,7 +1002,7 @@ validateDecl columns decl =
             )
 
     else
-        decl.constructors
+        constructors
             |> List.filterMap .payloadColumn
             |> List.filter (\col -> lookupColumn col columns == Nothing)
             |> List.head
@@ -1089,7 +1112,7 @@ castPayloads env expr =
             in
             env.declarations
                 |> List.filter (\d -> d.name == typeName)
-                |> List.concatMap .constructors
+                |> List.concatMap enumConstructors
                 |> List.filterMap .payloadColumn
                 |> List.filterMap
                     (\col ->
@@ -1658,10 +1681,23 @@ textual fn arg =
         Err ("`" ++ fn ++ "` needs text, but this is a " ++ Schema.typeName (typeOf arg))
 
 
+{-| Constructors, for a declaration that has any. A wrapper has one, but it
+carries a type rather than a tag and nothing that reads tags wants it.
+-}
+enumConstructors : TypeDecl -> List Constructor
+enumConstructors decl =
+    case decl.definition of
+        Enum constructors ->
+            constructors
+
+        Wraps _ _ ->
+            []
+
+
 checkCast : Env -> Expr -> String -> Result String TExpr
 checkCast env inner typeName =
-    case List.filter (\d -> d.name == typeName) env.declarations of
-        [] ->
+    case List.filter (\d -> d.name == typeName) env.declarations |> List.head of
+        Nothing ->
             Err
                 ("`"
                     ++ typeName
@@ -1670,18 +1706,30 @@ checkCast env inner typeName =
                     ++ " = ...` above the pipeline"
                 )
 
-        _ ->
+        Just decl ->
+            let
+                required =
+                    case decl.definition of
+                        -- An enum's wire form is the text in the column.
+                        Enum _ ->
+                            TString
+
+                        Wraps _ wrapped ->
+                            Schema.primitive wrapped |> Maybe.withDefault TString
+            in
             checkExpr env inner
                 |> Result.andThen
                     (\t ->
-                        if baseType (typeOf t) == TString then
+                        if baseType (typeOf t) == required then
                             Ok (TCast t typeName)
 
                         else
                             Err
                                 ("`as "
                                     ++ typeName
-                                    ++ "` reads a text column, but this one is a "
+                                    ++ "` reads a "
+                                    ++ Schema.typeName required
+                                    ++ " column, but this one is a "
                                     ++ Schema.typeName (typeOf t)
                                 )
                     )

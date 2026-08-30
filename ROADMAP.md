@@ -863,15 +863,34 @@ recorded as they were hit, in the order they are worth closing:
    quietly leave an inner join — the same class of trap as filtering
    after a `limit`, and refused for the same reason.
 
-5. **Opaque newtype wrappers** — `type OrderId = OrderId Int`. The
-   mechanism for attaching a declared type to a column is proven by the
-   enum casts; this is the other shape. The last item on this list that
-   is clearly worth doing.
+5. ~~**Opaque newtype wrappers**~~ — done. `type OrderId = OrderId Int`,
+   the other shape a declared type can take:
+
+       type OrderId = OrderId Int
+
+       access orders ()
+         |> map (\o -> { id = o.id as OrderId, owner = o.owner })
+         |> selectAll
+
+   It changes nothing about the query — the SQL selects the same column
+   — and everything about what the generated Elm will let you do with
+   it: `id : OrderId` rather than `id : Int`, so an order id cannot be
+   handed to something expecting a customer id. Both shapes are cast
+   with `as`, and each requires the column type it reads: text for an
+   enum, the wrapped primitive for a wrapper.
 
 6. **`dateRange` inputs, and options drawn from a query.** The second is
    a design question rather than a missing case: it would make a widget
    depend on a cell, which the graph can express but nothing else
    currently does.
+
+7. **`UNPIVOT`**, which unlike `PIVOT` is statically typeable — the
+   columns to fold and the names to fold them into are all written down.
+   No demonstration data here has the wide shape it is for, which is why
+   it has not been done.
+
+8. **Window functions**, the one item left that needs real design rather
+   than a name and a type rule. See the note in the pandas section.
 
 ## What a pandas user would miss
 

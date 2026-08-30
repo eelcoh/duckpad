@@ -101,6 +101,21 @@ access orders ()
   |> selectAll
 """
       )
+      -- A wrapper carries no information the column did not have; it exists so
+      -- an order id cannot be handed to something expecting a customer id.
+    , ( "wrapped_id"
+      , """
+type OrderId = OrderId Int
+
+access orders ()
+  |> map (\\o ->
+       { id = o.id as OrderId
+       , owner = o.owner
+       })
+  |> limit 20
+  |> selectAll
+"""
+      )
     , ( "custom_type"
       , """
 type Status

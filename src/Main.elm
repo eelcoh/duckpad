@@ -15,7 +15,7 @@ import Task
 import Cell exposing (Cell, Kind(..), Status(..))
 import Dag exposing (Graph)
 import Dict exposing (Dict)
-import Dsl.Ast exposing (Constructor, Literal(..), TypeDecl)
+import Dsl.Ast exposing (Constructor, Definition(..), Literal(..), TypeDecl)
 import Chart
 import Dsl.Check exposing (Cardinality(..), Display(..))
 import Dsl.Compile exposing (Compiled)
@@ -1989,9 +1989,20 @@ renderValue decls columnType column rowValue =
                 |> Maybe.withDefault "?"
 
         TCustom name ->
-            decodeField column D.string rowValue
-                |> Maybe.map (renderConstructor decls name rowValue)
-                |> Maybe.withDefault "?"
+            case declarationOf name decls of
+                -- A wrapper adds no information to show, so the underlying
+                -- value is what there is; the column header already names the
+                -- type.
+                Just (Wraps _ wrapped) ->
+                    renderValue decls
+                        (Schema.primitive wrapped |> Maybe.withDefault TString)
+                        column
+                        rowValue
+
+                _ ->
+                    decodeField column D.string rowValue
+                        |> Maybe.map (renderConstructor decls name rowValue)
+                        |> Maybe.withDefault "?"
 
         _ ->
             Query.cellText column rowValue
@@ -2002,13 +2013,26 @@ This is the same reconstruction the generated decoder performs; doing it here
 means the table proves the mapping without the generated module having to be
 compiled and loaded first.
 -}
+declarationOf : String -> List TypeDecl -> Maybe Definition
+declarationOf name decls =
+    decls |> List.filter (\d -> d.name == name) |> List.head |> Maybe.map .definition
+
+
 renderConstructor : List TypeDecl -> String -> D.Value -> String -> String
 renderConstructor decls typeName rowValue tag =
     let
         found =
             decls
                 |> List.filter (\d -> d.name == typeName)
-                |> List.concatMap .constructors
+                |> List.concatMap
+                    (\d ->
+                        case d.definition of
+                            Enum constructors ->
+                                constructors
+
+                            Wraps _ _ ->
+                                []
+                    )
                 |> List.filter (\c -> c.tag == tag)
                 |> List.head
     in

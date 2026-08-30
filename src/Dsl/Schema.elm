@@ -6,6 +6,7 @@ module Dsl.Schema exposing
     , elmAnnotation
     , fromDuckDb
     , isNumeric
+    , primitive
     , typeName
     )
 
@@ -147,6 +148,30 @@ baseName raw =
 
         [] ->
             raw
+
+
+{-| The primitive a wrapper may wrap, by the name the language writes it as.
+-}
+primitive : String -> Maybe Type
+primitive name =
+    case name of
+        "Int" ->
+            Just TInt
+
+        "Float" ->
+            Just TFloat
+
+        "String" ->
+            Just TString
+
+        "Bool" ->
+            Just TBool
+
+        "Timestamp" ->
+            Just TTimestamp
+
+        _ ->
+            Nothing
 
 
 typeName : Type -> String
