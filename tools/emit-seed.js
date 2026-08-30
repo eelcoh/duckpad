@@ -4,7 +4,7 @@ const fs = require('fs');
 const path = require('path');
 const { Elm } = require('./seed.js');
 
-const OUT = path.resolve(__dirname, '..', 'public', 'notebooks', 'flights.acadia.md');
+const OUT = path.resolve(__dirname, '..', 'public', 'notebooks', 'flights.note-ml.md');
 
 Elm.EmitSeed.init().ports.emit.subscribe(({ markdown, roundTripped }) => {
   if (markdown !== roundTripped) {

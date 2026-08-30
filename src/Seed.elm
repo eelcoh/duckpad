@@ -3,7 +3,7 @@ module Seed exposing (notebook)
 {-| The notebook the app opens on, and the one `Reset` returns to.
 
 It lives here rather than in `Main` because it is also written out as a file:
-`mise run seed` serialises this and `public/notebooks/flights.acadia.md` is the
+`mise run seed` serialises this and `public/notebooks/flights.note-ml.md` is the
 result, so the shipped example and the built-in starting point cannot drift
 apart.
 

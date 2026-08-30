@@ -18,7 +18,7 @@ export function exportStatic(name) {
     try {
       download(name, buildPage());
     } catch (err) {
-      console.error('[acadia] export failed', err);
+      console.error('[note-ml] export failed', err);
     }
   });
 }

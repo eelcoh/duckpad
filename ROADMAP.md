@@ -1,9 +1,10 @@
-# Roadmap: an Elm/Acadia-flavored reactive notebook over DuckDB
+# Roadmap: note-ml, a reactive notebook over DuckDB
 
 ## Concept summary
 
 A Jupyter-alternative notebook environment built around a functional,
-statically-typed query language (Acadia-inspired) for data cells and Elm
+statically-typed query language (Acadia-inspired; see the naming note) for
+data cells and Elm
 for view/compute cells, running against DuckDB (via duckdb-wasm) instead
 of pandas/kernels. Key departures from Jupyter, chosen deliberately:
 
@@ -348,7 +349,7 @@ missing case.
 
 ## Phase 7 — File format  [DONE]
 
-- Markdown container with typed fenced code blocks (Acadia-DSL, Elm,
+- Markdown container with typed fenced code blocks (the DSL, Elm,
   input-widget config) interleaved with prose.
 - Cell identity = binding name (not a hidden UUID) — renaming is a real
   identity change.
@@ -361,7 +362,7 @@ missing case.
 
 ### Phase 7 as built
 
-A notebook is Markdown. Query cells are fenced blocks tagged `acadia`
+A notebook is Markdown. Query cells are fenced blocks tagged `note-ml`
 plus a name; everything else is prose:
 
     ---
@@ -370,7 +371,7 @@ plus a name; everything else is prose:
 
     Intro prose.
 
-    ```acadia delivered
+    ```note-ml delivered
     access orders ()
       |> filter (\o -> o.status == "delivered")
       |> selectAll
@@ -385,7 +386,7 @@ one is assigned on load and never written back.
 
 Everything else held. Reading order is the file's order and is never
 sorted into dependency order. Results, generated SQL and generated Elm
-are not in the file. The parser only takes an interest in an `acadia`
+are not in the file. The parser only takes an interest in a `note-ml`
 fence, so a notebook can contain a shell snippet or a JSON sample
 without confusing it.
 
@@ -478,7 +479,7 @@ roundtrip fixture, checked against local stand-in tables whose schemas
 match what DuckDB infers from the real files, so the tests stay offline.
 
 The notebook lives in `src/Seed.elm` and is written out to
-`public/notebooks/flights.acadia.md` by `mise run seed`, which `build`
+`public/notebooks/flights.note-ml.md` by `mise run seed`, which `build`
 depends on. The shipped example is therefore the starting notebook
 rather than a copy that has to be kept in step, and it is the only
 worked example of the file format outside the tests. The emitter also
@@ -1050,15 +1051,20 @@ notebook different from a Jupyter one, and every unit of effort goes
 into exposing an engine that is already very good at this rather than
 into bolting a second one beside it.
 
-## The name has to change
+## The name
 
-This project is called Acadia after the language that prompted it, and
-that is not sustainable. Acadia is someone's commercial product —
-Evan Czaplicki's — and this borrows its shape without being anything
-like it. Continuing to wear the name would imply a lineage that is not
-there and take credit that belongs elsewhere.
+**This is `note-ml`.** It was called Acadia after the language that
+prompted it, which was never sustainable: Acadia is Evan Czaplicki's
+commercial product, and wearing its name implied a lineage that is not
+there and took credit belonging elsewhere.
 
-**What is honestly borrowed**, and should stay credited in prose
+`note-ml` says the two true things — it is a notebook, and its syntax is
+in the ML tradition — and claims nothing further. The `-ml` is a nod to
+the family Elm and OCaml belong to, not a claim of membership: there is
+no type inference here, no user-defined functions, no pattern matching
+beyond destructuring. It is ML-*shaped*.
+
+**What is honestly borrowed from Acadia**, and should stay credited
 wherever the design is explained:
 
 - The pipeline shape, and `access`, `filter`, `map`, `reduce`.
@@ -1071,32 +1077,25 @@ wherever the design is explained:
   every query terminates in time polynomial to the data. That principle
   is the single most valuable thing taken from it.
 
-**What makes the two not comparable**, which is the reason not to
-present this as an equivalent. Acadia is a database programming
+**What makes the two not comparable.** Acadia is a database programming
 language: row-level security as a property every table must declare,
 transactions, signed migrations, resources and sequences, modules,
 user-defined functions, inserts and deletes, generated clients in more
 than one language, its own compiler and server. This is a read-only
-query surface for a notebook, with none of that, and it has been built
-in a few days against a language someone has been thinking about for
-much longer.
+query surface for a notebook, with none of that, built in days against
+something its author has been thinking about far longer. Acadia should
+keep being named as the trigger and the source of the ideas above. What
+has stopped is this project answering to it.
 
-**The rename is small in code and larger in prose.** The name is
-load-bearing in exactly three places:
+**Done in code**: the fence tag is ```` ```note-ml ````, notebooks are
+`.note-ml.md`, and the browser-storage key changed with them — so a
+notebook saved under the old key is orphaned rather than silently
+half-read. The three remaining mentions of Acadia in the source are
+references to *their* language and are correct.
 
-- the ```` ```acadia ```` fence tag in the notebook format,
-- the `.acadia.md` file extension,
-- the page title and the `Ui` chrome.
-
-Everything else is commentary. The fence tag and the extension are in
-saved notebooks, so a rename either accepts a break — the format has no
-users yet — or has the parser take both for a while. Whatever the new
-name is, it has to work as a lowercase fence tag that will not be
-mistaken for a real language in a Markdown viewer.
-
-Acadia should keep being named in the roadmap and the README as the
-trigger and the source of the ideas above. What should stop is the
-project answering to it.
+**Not done**: the repository directory is still `~/Code/ideas/acadia`,
+and the distrobox container is still `acadia-tauri`. Both are the
+author's to rename, and neither affects anything that ships.
 
 ## A tutorial
 
