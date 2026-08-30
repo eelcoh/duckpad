@@ -1,5 +1,6 @@
 module Dsl.Ast exposing
-    ( Constructor
+    ( ChartKind(..)
+    , Constructor
     , CombineKind(..)
     , Expr(..)
     , Pattern(..)
@@ -70,6 +71,12 @@ type CombineKind
     | Exclude
 
 
+type ChartKind
+    = Bar
+    | Line
+    | Scatter
+
+
 type Stage
     = Filter Lambda
       -- `intersect .customer_id customers .id` — combine the rows so far with
@@ -85,6 +92,9 @@ type Stage
     | Limit Int
     | Select
     | SelectAll
+      -- A chart is a terminator like `selectAll`: the cell's value is still
+      -- its rows, and this says how to show them.
+    | Chart ChartKind (List ( String, String ))
 
 
 type alias SortSpec =

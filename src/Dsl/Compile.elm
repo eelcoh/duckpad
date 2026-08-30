@@ -11,7 +11,7 @@ guess can be retired for those cells.
 -}
 
 import Dsl.Ast exposing (Stage(..), TypeDecl)
-import Dsl.Check as Check exposing (Cardinality, Checked)
+import Dsl.Check as Check exposing (Cardinality, Checked, Display)
 import Dsl.ElmGen
 import Dsl.Parser
 import Dsl.Schema exposing (Schema, Type)
@@ -28,6 +28,7 @@ type alias Compiled =
     , declarations : List TypeDecl
     , reads : List String
     , cardinality : Cardinality
+    , display : Display
 
     -- Whether this cell asked for a row order. The value cache's content hash
     -- is order-insensitive, so only a cell that sorts or limits needs the
@@ -51,6 +52,7 @@ assemble moduleName checked =
     , declarations = checked.declarations
     , reads = checked.reads
     , cardinality = checked.cardinality
+    , display = checked.display
     , orderSignificant = checked.orderSignificant
     }
 

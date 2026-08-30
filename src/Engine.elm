@@ -27,6 +27,7 @@ import Cell exposing (Cell, Status(..))
 import Dsl.Ast exposing (TypeDecl)
 import Dag exposing (Graph)
 import Dict exposing (Dict)
+import Dsl.Check exposing (ChartSpec, Display(..))
 import Dsl.Compile exposing (Compiled)
 import Dsl.Schema as Schema exposing (Schema, Type)
 import Hash
@@ -204,6 +205,7 @@ type alias Shape =
     { rowType : List ( String, Type )
     , declarations : List TypeDecl
     , ordered : Bool
+    , chart : Maybe ChartSpec
     }
 
 
@@ -215,9 +217,18 @@ display state =
                 { rowType = compiled.rowType
                 , declarations = compiled.declarations
                 , ordered = compiled.orderSignificant
+                , chart =
+                    case compiled.display of
+                        AsChart spec ->
+                            Just spec
+
+                        AsRows ->
+                            Nothing
                 }
 
         Nothing ->
             state.rowType
                 |> Maybe.map
-                    (\rowType -> { rowType = rowType, declarations = [], ordered = False })
+                    (\rowType ->
+                        { rowType = rowType, declarations = [], ordered = False, chart = Nothing }
+                    )

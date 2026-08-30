@@ -155,7 +155,7 @@ access flights ()
        })
   |> sortBy (desc .departures)
   |> limit 12
-  |> selectAll
+  |> barChart { x = .state, y = .departures }
 """
       )
     , ( "seeded_routes"

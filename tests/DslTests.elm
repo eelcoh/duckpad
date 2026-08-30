@@ -15,7 +15,7 @@ import Dsl.Schema exposing (Schema, Type(..))
 
 checks : List Check
 checks =
-    parserChecks ++ checkerChecks ++ sqlChecks ++ elmChecks ++ readsChecks ++ joinChecks ++ keywordFieldChecks
+    parserChecks ++ checkerChecks ++ sqlChecks ++ elmChecks ++ readsChecks ++ joinChecks ++ keywordFieldChecks ++ chartChecks
 
 
 {-| The fixture schema every checker test runs against. `delivered_at` is
@@ -650,4 +650,49 @@ keywordFieldChecks =
         (stagesOf "access t () |> sortBy .type")
     , isErr "keywords: but a lambda still cannot bind one"
         (Dsl.Parser.parse "access t () |> map (\\from -> { a = from.x }) |> selectAll")
+    ]
+
+
+
+-- DISPLAY VERBS
+
+
+displayOf : String -> Result String Dsl.Check.Display
+displayOf source =
+    compile source |> Result.map .display
+
+
+chartChecks : List Check
+chartChecks =
+    [ equal "chart: a chart is a terminator, and the value is still rows"
+        (Ok Many)
+        (compile "access orders () |> groupBy .region |> reduce (\\g -> { region = g.region, n = count g }) |> barChart { x = .region, y = .n }"
+            |> Result.map .cardinality
+        )
+    , equal "chart: channels carry the column type the compiler worked out"
+        -- Vega-Lite needs each channel annotated, and those annotations are
+        -- normally hand-written and quietly wrong.
+        (Ok (Dsl.Check.AsChart { kind = Bar, channels = [ ( "x", "region", TString ), ( "y", "n", TInt ) ] }))
+        (displayOf "access orders () |> groupBy .region |> reduce (\\g -> { region = g.region, n = count g }) |> barChart { x = .region, y = .n }")
+    , equal "chart: selectAll leaves the cell as rows"
+        (Ok Dsl.Check.AsRows)
+        (displayOf "access orders () |> selectAll")
+    , assert "chart: a colour channel is allowed"
+        (compile "access orders () |> map (\\o -> { a = o.owner, b = o.total, c = o.region }) |> lineChart { x = .a, y = .b, color = .c }"
+            |> resultOk
+        )
+    , isErr "chart: a y that is not a number is refused, not drawn empty"
+        (compile "access orders () |> map (\\o -> { a = o.owner, b = o.region }) |> barChart { x = .a, y = .b }")
+    , isErr "chart: scatter needs a number on both axes"
+        (compile "access orders () |> map (\\o -> { a = o.owner, b = o.total }) |> scatter { x = .a, y = .b }")
+    , isErr "chart: a channel has to name a column of the row"
+        (compile "access orders () |> map (\\o -> { a = o.owner, b = o.total }) |> barChart { x = .nope, y = .b }")
+    , isErr "chart: an unknown channel is refused"
+        (compile "access orders () |> map (\\o -> { a = o.owner, b = o.total }) |> barChart { x = .a, y = .b, wobble = .a }")
+    , isErr "chart: a chart needs a y"
+        (compile "access orders () |> map (\\o -> { a = o.owner }) |> barChart { x = .a }")
+    , isErr "chart: setting a channel twice is refused"
+        (compile "access orders () |> map (\\o -> { a = o.owner, b = o.total }) |> barChart { x = .a, y = .b, y = .b }")
+    , isErr "chart: nothing may follow a chart"
+        (compile "access orders () |> map (\\o -> { a = o.owner, b = o.total }) |> barChart { x = .a, y = .b } |> limit 5")
     ]

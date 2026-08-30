@@ -16,7 +16,8 @@ import Cell exposing (Cell, Kind(..), Status(..))
 import Dag exposing (Graph)
 import Dict exposing (Dict)
 import Dsl.Ast exposing (Constructor, TypeDecl)
-import Dsl.Check exposing (Cardinality(..))
+import Chart
+import Dsl.Check exposing (Cardinality(..), Display(..))
 import Dsl.Compile exposing (Compiled)
 import Dsl.Lexer
 import Dsl.Schema as Schema exposing (Schema, Type(..))
@@ -226,6 +227,11 @@ setStatus id status states =
                 |> (\s -> Just { s | status = status })
         )
         states
+
+
+previewRows : Int
+previewRows =
+    200
 
 
 domIdFor : String -> String
@@ -801,6 +807,17 @@ runOrReuse cell rest model graph state compileKey artefacts =
             -- Only a cell that asked for an order needs the stricter,
             -- order-sensitive content hash.
             , orderSignificant = artefacts.orderSignificant
+
+            -- A chart of the first two hundred points of a series is a
+            -- misleading picture rather than a partial one, so it asks for
+            -- more than a table would.
+            , rowLimit =
+                case artefacts.display of
+                    AsChart _ ->
+                        Chart.rowLimit
+
+                    AsRows ->
+                        previewRows
             }
         )
 
@@ -1529,30 +1546,29 @@ message_ colour body =
         [ text body ]
 
 
-{-| The result table stays raw HTML: a sticky header over a scrolling body is
-exactly the sort of thing elm-ui does not express.
+{-| A chart if the cell asked for one, the table otherwise. Both keep the
+count line above them, because how many rows there are is worth knowing either
+way — and for a chart it is the only place a truncation would show.
 -}
 viewTable : Engine.Shape -> Table -> Html Msg
 viewTable shape t =
+    case shape.chart of
+        Just spec ->
+            div []
+                [ resultMeta shape t
+                , Html.node "vega-chart"
+                    [ Html.Attributes.property "spec" (Chart.spec spec t.rows) ]
+                    []
+                ]
+
+        Nothing ->
+            viewRows shape t
+
+
+viewRows : Engine.Shape -> Table -> Html Msg
+viewRows shape t =
     div []
-        [ div [ class "result-meta" ]
-            [ Html.text
-                (String.fromInt t.rowCount
-                    ++ " rows"
-                    ++ (if t.truncated then
-                            " (showing first " ++ String.fromInt (List.length t.rows) ++ ")"
-
-                        else
-                            ""
-                       )
-                    ++ (if shape.ordered then
-                            " · ordered"
-
-                        else
-                            ""
-                       )
-                )
-            ]
+        [ resultMeta shape t
         , div [ class "table-scroll" ]
             [ table []
                 [ thead []
@@ -1583,6 +1599,31 @@ viewTable shape t =
                 ]
             ]
         ]
+
+
+resultMeta : Engine.Shape -> Table -> Html Msg
+resultMeta shape t =
+    div []
+        [ div [ class "result-meta" ]
+            [ Html.text
+                (String.fromInt t.rowCount
+                    ++ " rows"
+                    ++ (if t.truncated then
+                            " (showing first " ++ String.fromInt (List.length t.rows) ++ ")"
+
+                        else
+                            ""
+                       )
+                    ++ (if shape.ordered then
+                            " · ordered"
+
+                        else
+                            ""
+                       )
+                )
+            ]
+        ]
+
 
 
 {-| Both artefacts, side by side. They are two renderings of one checked

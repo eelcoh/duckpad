@@ -207,6 +207,10 @@ stage =
             , Parser.succeed SortBy |. kw "sortBy" |= sortSpec
             , Parser.succeed Limit |. kw "limit" |= (Parser.int |. ws)
 
+            , chartStage "barChart" Bar
+            , chartStage "lineChart" Line
+            , chartStage "scatter" Scatter
+
             -- `selectAll` first: `select` is a prefix of it.
             , Parser.succeed SelectAll |. kw "selectAll"
             , Parser.succeed Select |. kw "select"
@@ -225,6 +229,37 @@ combineStage name kind =
         |. kw name
         |= accessor
         |= lname
+        |= accessor
+
+
+{-| `barChart { x = .origin, y = .flights }`
+
+A record of channel names to accessors. Positional arguments would have
+matched `groupBy .a .b`, but a chart has optional channels and there is no
+reading order that stays clear once `color` is one of them.
+
+-}
+chartStage : String -> ChartKind -> Parser Stage
+chartStage name kind =
+    Parser.succeed (Chart kind)
+        |. kw name
+        |. sym "{"
+        |= channels
+        |. sym "}"
+
+
+channels : Parser (List ( String, String ))
+channels =
+    Parser.succeed (::)
+        |= channel
+        |= many (Parser.succeed identity |. sym "," |= channel)
+
+
+channel : Parser ( String, String )
+channel =
+    Parser.succeed Tuple.pair
+        |= fieldName
+        |. sym "="
         |= accessor
 
 

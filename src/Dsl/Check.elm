@@ -1,7 +1,9 @@
 module Dsl.Check exposing
     ( Cardinality(..)
+    , ChartSpec
     , Checked
     , CheckedCombine
+    , Display(..)
     , Projection(..)
     , Side
     , TExpr(..)
@@ -45,6 +47,21 @@ type alias Checked =
     , orderSignificant : Bool
     , rowType : List ( String, Type )
     , declarations : List TypeDecl
+    , display : Display
+    }
+
+
+{-| How the cell's rows should be shown. Not part of the query: the SQL and
+the Elm module are the same either way.
+-}
+type Display
+    = AsRows
+    | AsChart ChartSpec
+
+
+type alias ChartSpec =
+    { kind : ChartKind
+    , channels : List ( String, String, Type )
     }
 
 
@@ -154,6 +171,7 @@ type alias Builder =
     , limit : Maybe Int
     , cardinality : Maybe Cardinality
     , declarations : List TypeDecl
+    , display : Display
     }
 
 
@@ -171,6 +189,7 @@ start source columns =
     , limit = Nothing
     , cardinality = Nothing
     , declarations = []
+    , display = AsRows
     }
 
 
@@ -265,6 +284,126 @@ applyStage schema ast stage builder =
 
         ( SelectAll, _ ) ->
             Ok { builder | cardinality = Just Many, phase = Done }
+
+        ( Chart kind config, _ ) ->
+            chart kind config builder
+                |> Result.map
+                    (\spec ->
+                        { builder
+                            | display = AsChart spec
+                            , cardinality = Just Many
+                            , phase = Done
+                        }
+                    )
+
+
+{-| Check a chart's channels against the row it will be drawn from.
+
+This is the point of the compiler knowing column types. Vega-Lite needs each
+channel annotated as quantitative, nominal or temporal, and those annotations
+are usually written by hand and quietly wrong. Here they are derived. A `y`
+that is not a number is a compile error rather than an empty chart.
+
+-}
+chart : ChartKind -> List ( String, String ) -> Builder -> Result String ChartSpec
+chart kind config builder =
+    outputColumns builder
+        |> Result.andThen
+            (\rowType ->
+                case List.filter (\( name, _ ) -> not (List.member name knownChannels)) config of
+                    ( unknown, _ ) :: _ ->
+                        Err
+                            ("`"
+                                ++ unknown
+                                ++ "` is not a channel. This chart takes "
+                                ++ String.join ", " knownChannels
+                                ++ "."
+                            )
+
+                    [] ->
+                        let
+                            names =
+                                List.map Tuple.first config
+                        in
+                        case List.filter (\n -> countOf n names > 1) names |> List.head of
+                            Just repeated ->
+                                Err ("this chart sets `" ++ repeated ++ "` twice")
+
+                            Nothing ->
+                                config
+                                    |> List.foldl
+                                        (\( name, column ) acc ->
+                                            Result.map2 (\done t -> done ++ [ ( name, column, t ) ])
+                                                acc
+                                                (channelColumn name column rowType)
+                                        )
+                                        (Ok [])
+                                    |> Result.andThen (requireChannels kind)
+            )
+
+
+knownChannels : List String
+knownChannels =
+    [ "x", "y", "color" ]
+
+
+channelColumn : String -> String -> List ( String, Type ) -> Result String Type
+channelColumn name column rowType =
+    case lookupColumn column rowType of
+        Just t ->
+            Ok t
+
+        Nothing ->
+            Err ("`" ++ name ++ "` names `" ++ column ++ "`, but " ++ unknownColumn column rowType)
+
+
+requireChannels : ChartKind -> List ( String, String, Type ) -> Result String ChartSpec
+requireChannels kind channels =
+    let
+        typeOfChannel name =
+            channels
+                |> List.filter (\( n, _, _ ) -> n == name)
+                |> List.head
+                |> Maybe.map (\( _, column, t ) -> ( column, t ))
+
+        numeric name =
+            case typeOfChannel name of
+                Nothing ->
+                    Err ("this chart needs a `" ++ name ++ "` channel")
+
+                Just ( column, t ) ->
+                    if Schema.isNumeric t then
+                        Ok ()
+
+                    else
+                        Err
+                            ("`"
+                                ++ name
+                                ++ "` has to be a number to be plotted, but `"
+                                ++ column
+                                ++ "` is a "
+                                ++ Schema.typeName t
+                            )
+
+        present name =
+            case typeOfChannel name of
+                Nothing ->
+                    Err ("this chart needs an `" ++ name ++ "` channel")
+
+                Just _ ->
+                    Ok ()
+
+        requiredX =
+            case kind of
+                Scatter ->
+                    numeric "x"
+
+                _ ->
+                    present "x"
+    in
+    requiredX
+        |> Result.andThen (\_ -> numeric "y")
+        |> Result.map (\_ -> { kind = kind, channels = channels })
 
 
 {-| Resolve every grouping key, refusing a repeat.
@@ -587,6 +726,7 @@ finish builder =
                         , orderSignificant = builder.sort /= Nothing || builder.limit /= Nothing
                         , rowType = rowType
                         , declarations = builder.declarations
+                        , display = builder.display
                         }
                     )
 

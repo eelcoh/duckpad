@@ -22,7 +22,7 @@ seedCells : List Cell
 seedCells =
     [ { id = "intro"
       , kind = Prose
-      , source = "Two sources, both read straight from the web. `airports` is a small CSV; `flights` is three million rows of Parquet that DuckDB reads a page at a time, so the whole file never has to come down.\n\n`intersect` pairs two tables rather than merging them, so each side keeps its own column names and a later lambda destructures: `\\(f, orig, dest) -> …`. That is what lets `routes` below join `airports` twice — once for the origin and once for the destination — without the two sides colliding."
+      , source = "Two sources, both read straight from the web. `airports` is a small CSV; `flights` is three million rows of Parquet that DuckDB reads a page at a time, so the whole file never has to come down.\n\nA terminator says how a cell is shown: `selectAll` gives a table, `barChart { x = …, y = … }` a chart. The channels are checked against the row, so plotting something that is not a number is a compile error rather than an empty picture.\n\n`intersect` pairs two tables rather than merging them, so each side keeps its own column names and a later lambda destructures: `\\(f, orig, dest) -> …`. That is what lets `routes` below join `airports` twice — once for the origin and once for the destination — without the two sides colliding."
       }
     , { id = "airports"
       , kind = Source
@@ -34,7 +34,7 @@ seedCells =
       }
     , { id = "by_state"
       , kind = Query
-      , source = "access flights ()\n  |> intersect .origin airports .iata\n  |> groupBy .state\n  |> reduce (\\g ->\n       { state = g.state\n       , departures = count g\n       , avg_delay = avg g.delay\n       })\n  |> sortBy (desc .departures)\n  |> limit 12\n  |> selectAll"
+      , source = "access flights ()\n  |> intersect .origin airports .iata\n  |> groupBy .state\n  |> reduce (\\g ->\n       { state = g.state\n       , departures = count g\n       , avg_delay = avg g.delay\n       })\n  |> sortBy (desc .departures)\n  |> limit 12\n  |> barChart { x = .state, y = .departures }"
       }
     , { id = "routes"
       , kind = Query

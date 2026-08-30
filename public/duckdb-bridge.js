@@ -289,7 +289,7 @@ async function nullsBySampling(name, described) {
   )[0];
 }
 
-app.ports.materialize.subscribe(async ({ cellId, sql, orderSignificant }) => {
+app.ports.materialize.subscribe(async ({ cellId, sql, orderSignificant, rowLimit }) => {
   const clock = stopwatch(`query ${cellId}`);
   const name = quoteIdent(cellId);
   try {
@@ -305,7 +305,7 @@ app.ports.materialize.subscribe(async ({ cellId, sql, orderSignificant }) => {
     const { n, h } = plainRows(stats)[0];
     clock.lap('hash');
 
-    const preview = await conn.query(`SELECT * FROM ${name} LIMIT ${PREVIEW_ROWS}`);
+    const preview = await conn.query(`SELECT * FROM ${name} LIMIT ${rowLimit}`);
     const rows = plainRows(preview);
     clock.lap('preview');
 

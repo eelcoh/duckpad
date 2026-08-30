@@ -4,6 +4,8 @@ title: Flights
 
 Two sources, both read straight from the web. `airports` is a small CSV; `flights` is three million rows of Parquet that DuckDB reads a page at a time, so the whole file never has to come down.
 
+A terminator says how a cell is shown: `selectAll` gives a table, `barChart { x = …, y = … }` a chart. The channels are checked against the row, so plotting something that is not a number is a compile error rather than an empty picture.
+
 `intersect` pairs two tables rather than merging them, so each side keeps its own column names and a later lambda destructures: `\(f, orig, dest) -> …`. That is what lets `routes` below join `airports` twice — once for the origin and once for the destination — without the two sides colliding.
 
 ```source airports
@@ -25,7 +27,7 @@ access flights ()
        })
   |> sortBy (desc .departures)
   |> limit 12
-  |> selectAll
+  |> barChart { x = .state, y = .departures }
 ```
 
 ```acadia routes

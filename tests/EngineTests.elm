@@ -9,6 +9,7 @@ import Check exposing (Check, assert, equal)
 import Dag
 import Dict exposing (Dict)
 import Dsl.Check exposing (Cardinality(..))
+import Dsl.Check
 import Dsl.Compile exposing (Compiled)
 import Dsl.Schema exposing (Type(..))
 import Engine exposing (CellState)
@@ -147,6 +148,7 @@ compiledWith rowType =
     , declarations = []
     , reads = [ "a" ]
     , cardinality = Many
+    , display = Dsl.Check.AsRows
     , orderSignificant = False
     }
 

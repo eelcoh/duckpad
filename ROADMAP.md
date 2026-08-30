@@ -220,9 +220,41 @@ side.
 
 ## Phase 6 — Display verbs + input widgets
 
-- `table` / `barChart` / `lineChart` / `scalar` / `json` as pipeline
-  terminators compiling to Vega-Lite specs, rendered by one generic
-  `vega-embed` mount.
+### Display verbs  [DONE]
+
+    |> barChart { x = .state, y = .departures }
+
+`barChart`, `lineChart` and `scatter` are terminators like `selectAll`:
+the cell's value is still its rows, and the verb says how to show them.
+Channels are a record of names to accessors rather than positional
+arguments, because a chart has optional channels and no reading order
+stays clear once `color` is one of them.
+
+What makes generating the spec worth it: Vega-Lite needs every channel
+annotated as quantitative, nominal or temporal, and those annotations
+are normally typed by a person and quietly wrong — a number read as a
+category, a date read as a string, and a chart that renders something
+plausible and false. Here the annotation is derived from the column type
+the compiler already worked out, and a `y` that is not a number is a
+compile error rather than an empty picture.
+
+Drawn by a custom element rather than a port, because the lifecycle is
+the hard part: a port would have to find a div that may not exist yet
+and clean up after one that has gone, whereas Elm creates and removes a
+custom element like any other node. Vega is over a megabyte, so it is
+imported the first time a chart appears and a notebook of tables never
+pays for it.
+
+A chart asks the database for more rows than a table does. A table only
+shows a screenful, but a chart of the first two hundred points of a
+series is a misleading picture rather than a partial one.
+
+Not built: `scalar`, which wants a single number, and cannot be reached
+because a global aggregate with no `groupBy` is not expressible. Worth
+doing together. `json` was dropped as not worth a verb.
+
+### Input widgets
+
 - Widget cells (`input.range` / `input.select` / `input.dateRange`) as
   graph nodes with no compile step — just a bound value that
   re-triggers the graph on change.
@@ -628,7 +660,7 @@ notebook. Four changes, in the order they should be done:
 ## Current state (2026-08-29)
 
 `mise run build` compiles the shell, `mise run serve` hosts it on :8080,
-`mise run test` runs 236 checks under node, and `mise run roundtrip`
+`mise run test` runs 247 checks under node, and `mise run roundtrip`
 executes every fixture's generated SQL against a real DuckDB and compiles
 every generated module with `elm make`.
 
