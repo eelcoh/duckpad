@@ -10,7 +10,7 @@ run = "elm make src/Main.elm --output=public/elm.js"
 
 [tasks.serve]
 description = "Serve the notebook at http://localhost:8080 (build first)"
-run = "python3 -m http.server 8080 --directory public"
+run = "python3 tools/serve.py 8080 public"
 
 [tasks.test]
 description = "Compile and run the engine test suite under node"
