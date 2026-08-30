@@ -36,7 +36,7 @@ type alias Checked =
     , reads : List String
     , combines : List CheckedCombine
     , filter : Maybe TExpr
-    , groupBy : Maybe ( String, String, Type )
+    , groupBy : List ( String, String )
     , projection : Projection
     , hidden : List ( String, String, Type )
     , sort : Maybe SortSpec
@@ -147,7 +147,7 @@ type alias Builder =
     , combines : List CheckedCombine
     , phase : Phase
     , filter : Maybe TExpr
-    , groupBy : Maybe ( String, String, Type )
+    , groupBy : List ( String, String )
     , projection : Projection
     , hidden : List ( String, String, Type )
     , sort : Maybe SortSpec
@@ -164,7 +164,7 @@ start source columns =
     , combines = []
     , phase = Rows
     , filter = Nothing
-    , groupBy = Nothing
+    , groupBy = []
     , projection = All
     , hidden = []
     , sort = Nothing
@@ -224,12 +224,9 @@ applyStage schema ast stage builder =
         ( Map _, _ ) ->
             Err "`map` cannot follow `groupBy` or `reduce` — use `reduce` to build the grouped row"
 
-        ( GroupBy column, Rows ) ->
-            resolve column builder.sides
-                |> Result.map
-                    (\( alias, t ) ->
-                        { builder | groupBy = Just ( alias, column, t ), phase = Grouped }
-                    )
+        ( GroupBy columns, Rows ) ->
+            groupKeys columns builder
+                |> Result.map (\keys -> { builder | groupBy = keys, phase = Grouped })
 
         ( GroupBy _, _ ) ->
             Err "`groupBy` has to come before any projection"
@@ -268,6 +265,29 @@ applyStage schema ast stage builder =
 
         ( SelectAll, _ ) ->
             Ok { builder | cardinality = Just Many, phase = Done }
+
+
+{-| Resolve every grouping key, refusing a repeat.
+
+Grouping twice by the same column is accepted by SQL and means nothing, so it
+is much more likely to be a slip than an intention.
+
+-}
+groupKeys : List String -> Builder -> Result String (List ( String, String ))
+groupKeys columns builder =
+    case List.filter (\c -> countOf c columns > 1) columns |> List.head of
+        Just repeated ->
+            Err ("`groupBy` names `" ++ repeated ++ "` twice")
+
+        Nothing ->
+            columns
+                |> List.foldl
+                    (\column acc ->
+                        Result.map2 (\keys ( alias, _ ) -> keys ++ [ ( alias, column ) ])
+                            acc
+                            (resolve column builder.sides)
+                    )
+                    (Ok [])
 
 
 conjoin : Maybe TExpr -> TExpr -> TExpr
@@ -399,7 +419,7 @@ type alias Env =
     { bindings : List ( String, Side )
     , declarations : List TypeDecl
     , inReduce : Bool
-    , groupKey : Maybe String
+    , groupKeys : List String
     , sides : List Side
     }
 
@@ -451,7 +471,7 @@ groupEnv ast builder lambda =
                 { bindings = List.map (\side -> ( name, side )) builder.sides
                 , declarations = ast.declarations
                 , inReduce = True
-                , groupKey = builder.groupBy |> Maybe.map (\( _, c, _ ) -> c)
+                , groupKeys = List.map Tuple.second builder.groupBy
                 , sides = builder.sides
                 }
 
@@ -464,7 +484,7 @@ envWith ast builder bindings =
     { bindings = bindings
     , declarations = ast.declarations
     , inReduce = False
-    , groupKey = Nothing
+    , groupKeys = []
     , sides = builder.sides
     }
 
@@ -621,6 +641,16 @@ validateDecl columns decl =
                )
 
 
+describeKeys : List String -> String
+describeKeys keys =
+    case keys of
+        [ only ] ->
+            "the grouping key `" ++ only ++ "`"
+
+        _ ->
+            "one of the grouping keys (" ++ String.join ", " keys ++ ")"
+
+
 countOf : a -> List a -> Int
 countOf x =
     List.filter ((==) x) >> List.length
@@ -750,11 +780,13 @@ checkExpr env expr =
                         resolve column env.sides
                             |> Result.andThen
                                 (\( alias, t ) ->
-                                    if env.groupKey /= Just column then
+                                    if not (List.member column env.groupKeys) then
                                         Err
                                             ("`"
                                                 ++ column
-                                                ++ "` is not the grouping key, so it has no single value per group. Wrap it in an aggregate, like `sum "
+                                                ++ "` is not "
+                                                ++ describeKeys env.groupKeys
+                                                ++ ", so it has no single value per group. Wrap it in an aggregate, like `sum "
                                                 ++ obj
                                                 ++ "."
                                                 ++ column

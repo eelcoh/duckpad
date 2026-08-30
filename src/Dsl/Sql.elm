@@ -20,16 +20,21 @@ render checked =
      ]
         ++ List.filterMap joinClause checked.combines
         ++ maybeLine "WHERE " (whereClause checked)
-        ++ maybeLine "GROUP BY " (Maybe.map groupKey checked.groupBy)
+        ++ maybeLine "GROUP BY " (groupKeys checked.groupBy)
         ++ maybeLine "ORDER BY " (Maybe.map sort checked.sort)
         ++ maybeLine "LIMIT " (Maybe.map String.fromInt checked.limit)
     )
         |> String.join "\n"
 
 
-groupKey : ( String, String, a ) -> String
-groupKey ( alias, column, _ ) =
-    qualified alias column
+groupKeys : List ( String, String ) -> Maybe String
+groupKeys keys =
+    case keys of
+        [] ->
+            Nothing
+
+        _ ->
+            Just (keys |> List.map (\( alias, column ) -> qualified alias column) |> String.join ", ")
 
 
 {-| `intersect` and `diff` become joins; `exclude` is an anti-join and is

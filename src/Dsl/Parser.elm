@@ -109,6 +109,15 @@ uname =
         |. ws
 
 
+{-| One or more, where none would be a mistake worth reporting.
+-}
+some : Parser a -> Parser (List a)
+some p =
+    Parser.succeed (::)
+        |= p
+        |= many p
+
+
 many : Parser a -> Parser (List a)
 many p =
     Parser.loop [] <|
@@ -194,7 +203,7 @@ stage =
             , combineStage "exclude" Exclude
             , Parser.map Map (lambdaStage "map")
             , Parser.map Reduce (lambdaStage "reduce")
-            , Parser.succeed GroupBy |. kw "groupBy" |= accessor
+            , Parser.succeed GroupBy |. kw "groupBy" |= some accessor
             , Parser.succeed SortBy |. kw "sortBy" |= sortSpec
             , Parser.succeed Limit |. kw "limit" |= (Parser.int |. ws)
 

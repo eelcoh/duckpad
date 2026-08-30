@@ -389,12 +389,18 @@ It exercises every case at once:
 
 Two limitations this data surfaced, both real:
 
-- The obvious "busiest city pairs" query needs two cells. After joining
-  `airports` twice, `groupBy .city` is ambiguous, and `map` moves the
-  pipeline past the phase where `groupBy` is allowed — so one cell
-  projects the join and the next groups it. `groupBy` also takes a
-  single accessor, so grouping by a pair of columns is not expressible
-  at all.
+- Grouping by a pair of columns used to be impossible, so the busiest
+  routes could not be asked for at all. `groupBy` now takes one or more
+  accessors — `groupBy .origin .destination` — written as repeated
+  accessors rather than a list, because the language has no list syntax
+  and `intersect .a t .b` already reads that way.
+
+  The *city-name* version of that query still needs two cells, for a
+  different reason: after joining `airports` twice both sides have a
+  `city`, and an accessor cannot say which side it means. One cell
+  projects the join, the next groups it. Naming a side in a `groupBy`
+  would need syntax the language does not have, and two cells is not a
+  bad answer in a notebook.
 - Keywords could not be used as column names, which meant the language
   could not read a column called `from`, `to`, `type` or `select` —
   and real data has all of those. Fixed: after a dot, and naming a
@@ -622,7 +628,7 @@ notebook. Four changes, in the order they should be done:
 ## Current state (2026-08-29)
 
 `mise run build` compiles the shell, `mise run serve` hosts it on :8080,
-`mise run test` runs 182 checks under node, and `mise run roundtrip`
+`mise run test` runs 236 checks under node, and `mise run roundtrip`
 executes every fixture's generated SQL against a real DuckDB and compiles
 every generated module with `elm make`.
 

@@ -206,8 +206,11 @@ parserChecks =
             ]
         )
         (stagesOf "access t () |> map (\\o -> { who = o.owner, amount = o.total }) |> selectAll")
+    , equal "parse: groupBy takes several accessors"
+        (Ok [ GroupBy [ "origin", "destination" ] ])
+        (stagesOf "access t () |> groupBy .origin .destination")
     , equal "parse: groupBy takes an accessor"
-        (Ok [ GroupBy "region", SelectAll ])
+        (Ok [ GroupBy [ "region" ], SelectAll ])
         (stagesOf "access t () |> groupBy .region |> selectAll")
     , equal "parse: aggregates over the group and over a column"
         (Ok
@@ -350,6 +353,18 @@ checkerChecks =
         (rowTypeOf "access orders () |> groupBy .region |> reduce (\\g -> { m = min g.owner }) |> selectAll")
     , isErr "check: sum needs a number"
         (compile "access orders () |> groupBy .region |> reduce (\\g -> { s = sum g.owner }) |> selectAll")
+    , equal "check: grouping by two columns keeps both in the row type"
+        (Ok [ ( "region", "String" ), ( "status", "String" ), ( "n", "Int" ) ])
+        (rowTypeOf "access orders () |> groupBy .region .status |> reduce (\\g -> { region = g.region, status = g.status, n = count g }) |> selectAll")
+    , contains "sql: several grouping keys are all in the GROUP BY"
+        "GROUP BY \"orders\".\"region\", \"orders\".\"status\""
+        (sqlOf "access orders () |> groupBy .region .status |> reduce (\\g -> { region = g.region, status = g.status, n = count g }) |> selectAll")
+    , isErr "check: a column that is not any of the keys still has to be aggregated"
+        (compile "access orders () |> groupBy .region .status |> reduce (\\g -> { o = g.owner }) |> selectAll")
+    , isErr "check: grouping twice by the same column is a slip, not a no-op"
+        (compile "access orders () |> groupBy .region .region |> reduce (\\g -> { r = g.region }) |> selectAll")
+    , isErr "check: groupBy needs at least one key"
+        (compile "access orders () |> groupBy |> reduce (\\g -> { n = count g }) |> selectAll")
     , isErr "check: filter cannot follow groupBy"
         (compile "access orders () |> groupBy .region |> filter (\\o -> o.total > 1) |> selectAll")
 

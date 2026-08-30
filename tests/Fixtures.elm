@@ -193,6 +193,23 @@ access airports ()
   |> selectAll
 """
       )
+      -- Busiest routes: the query that could not be written before, because
+      -- grouping took a single key.
+    , ( "busiest_routes"
+      , """
+access flights ()
+  |> groupBy .origin .destination
+  |> reduce (\\g ->
+       { origin = g.origin
+       , destination = g.destination
+       , flights = count g
+       , avg_delay = avg g.delay
+       })
+  |> sortBy (desc .flights)
+  |> limit 20
+  |> selectAll
+"""
+      )
     , ( "self_combined"
       , """
 access orders ()

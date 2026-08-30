@@ -76,7 +76,10 @@ type Stage
       -- another table, matching on a key from each side.
     | Combine CombineKind String String String
     | Map Lambda
-    | GroupBy String
+      -- One or more keys. Repeated accessors rather than a list, because the
+      -- language has no list syntax and `intersect .a t .b` already reads
+      -- this way.
+    | GroupBy (List String)
     | Reduce Lambda
     | SortBy SortSpec
     | Limit Int
