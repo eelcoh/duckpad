@@ -1144,14 +1144,32 @@ decide whether to move DuckDB native. Run the spike on macOS too if a
 Mac is available: WebKitGTK is the likelier to break and WKWebView the
 likelier to ship.
 
-**Setup note for this machine.** The development host is image-based
-Fedora (bootc/rpm-ostree) with a read-only `/usr`, so Tauri's system
-dependencies — `webkit2gtk4.1-devel` and friends — cannot simply be
-installed. Use a `distrobox` container rather than layering them onto
-the host image with `rpm-ostree`: no reboot, and the host stays clean.
-The built binary runs on the host regardless. This is the only part of
-the project so far that mise cannot provide, and it is worth doing
-before the spike rather than during it.
+**Setup on this machine — done.** The host is image-based Fedora
+(bootc/rpm-ostree) with a read-only `/usr`, so Tauri's system
+dependencies cannot simply be installed. They live in a distrobox
+container instead of being layered onto the host image: no reboot, and
+the host stays as it was.
+
+    distrobox create --name acadia-tauri \
+      --image registry.fedoraproject.org/fedora-toolbox:latest
+    distrobox enter acadia-tauri -- sudo dnf install -y \
+      webkit2gtk4.1-devel openssl-devel curl wget file \
+      libappindicator-gtk3-devel librsvg2-devel \
+      gcc gcc-c++ make rust cargo
+    distrobox enter acadia-tauri -- cargo install tauri-cli --version "^2" --locked
+
+What that gives: Rust 1.98 (Tauri 2 wants 1.77 or later), webkit2gtk
+4.1 at 2.52.5, gtk3 3.24 and libsoup3 3.6.
+
+The container shares `$HOME`, so the repository is the same files inside
+and out. That suggests the division of labour for the spike: the
+frontend stays on the host, where mise already has elm and node, and
+only the Rust side runs in the container. Tauri needs nothing but the
+built `public/` directory, which `mise run build` already produces.
+
+Rust and the Tauri CLI install under `~/.cargo`, which is shared — the
+only thing this leaves on the host, and removable with the container by
+deleting that directory.
 
 ## Next up
 
