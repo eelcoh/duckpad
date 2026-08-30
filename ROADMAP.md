@@ -852,6 +852,22 @@ only if rendering has to be identical everywhere, or if nobody wants to
 touch Rust. Wails is the same bargain with Go, and Deno has an
 experimental `deno desktop` that is too new to build on.
 
+macOS is supported from 10.15 and uses WKWebView, which tracks Safari
+and is in better repair than Linux's WebKitGTK — so of the two, Linux is
+the target more likely to find a problem and macOS the one more likely
+to be shipped. Two macOS costs are worth knowing before committing:
+building requires a Mac or a macOS CI runner, there being no
+cross-compiling, and distributing to anyone else's machine wants an
+Apple Developer account for notarisation. Both are true of Electron too,
+but Electron's signing and auto-update tooling is the more mature today,
+which is the strongest argument in its favour if shipping to other
+people's Macs is a real goal rather than a maybe.
+
+Safari has no File System Access API, so `Save` and `Open` would degrade
+there — moot under Tauri, where the native file APIs replace that path
+anyway, and the same change is what makes a local file usable as a
+source.
+
 **The honest risk** is that same system webview. Everything here has been
 developed against Chromium, and Tauri would put it on WebKitGTK on
 Linux, WKWebView on macOS and WebView2 on Windows. This application is
@@ -876,7 +892,18 @@ not help with local files.
 **Suggested sequence.** Spike a Tauri shell that loads the existing page
 unchanged, still on duckdb-wasm. That answers the WebKitGTK question for
 a few hours' work and before any commitment to a Rust backend. Only then
-decide whether to move DuckDB native.
+decide whether to move DuckDB native. Run the spike on macOS too if a
+Mac is available: WebKitGTK is the likelier to break and WKWebView the
+likelier to ship.
+
+**Setup note for this machine.** The development host is image-based
+Fedora (bootc/rpm-ostree) with a read-only `/usr`, so Tauri's system
+dependencies — `webkit2gtk4.1-devel` and friends — cannot simply be
+installed. Use a `distrobox` container rather than layering them onto
+the host image with `rpm-ostree`: no reboot, and the host stays clean.
+The built binary runs on the host regardless. This is the only part of
+the project so far that mise cannot provide, and it is worth doing
+before the spike rather than during it.
 
 ## Next up
 
