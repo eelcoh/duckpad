@@ -1258,6 +1258,9 @@ literalType literal =
         LBool _ ->
             TBool
 
+        LTimestamp _ ->
+            TTimestamp
+
 
 checkBinary : Op -> TExpr -> TExpr -> Result String TExpr
 checkBinary op left right =

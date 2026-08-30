@@ -192,6 +192,9 @@ type Literal
     | LFloat Float
     | LString String
     | LBool Bool
+      -- An ISO date, held as written. Not producible from the language itself;
+      -- it is what a date input binds.
+    | LTimestamp String
 
 
 type Op

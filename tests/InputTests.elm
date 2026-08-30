@@ -38,6 +38,18 @@ specChecks =
         [ Input.valueType (Input.Range { min = 0, max = 1, step = 1, default = 0 })
         , Input.valueType (Input.Select { options = [ "a" ], default = "a" })
         ]
+    , equal "input: a date"
+        (Ok (Input.Date { min = "2001-01-01", max = "2001-07-01", default = "2001-03-01" }))
+        (Input.parse "date \"2001-01-01\" \"2001-07-01\" default \"2001-03-01\"")
+    , equal "input: a date binds a timestamp"
+        TTimestamp
+        (Input.valueType (Input.Date { min = "2001-01-01", max = "2001-07-01", default = "2001-03-01" }))
+    , isErr "input: a date has to be written as YYYY-MM-DD"
+        (Input.parse "date \"1 Jan 2001\" \"2001-07-01\" default \"2001-03-01\"")
+    , isErr "input: a date's default has to sit between its bounds"
+        (Input.parse "date \"2001-01-01\" \"2001-07-01\" default \"2002-01-01\"")
+    , isErr "input: the earlier date comes first"
+        (Input.parse "date \"2001-07-01\" \"2001-01-01\" default \"2001-03-01\"")
     , isErr "input: the bounds have to be the right way round"
         (Input.parse "range 100 0 default 50")
     , isErr "input: the default has to sit between the bounds"

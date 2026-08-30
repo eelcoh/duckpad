@@ -10,7 +10,7 @@ A terminator says how a cell is shown: `selectAll` gives a table, and `barChart`
 
 `countWhere` and its relatives count only the rows matching a condition, which is what a pivot is for — with the cases named rather than discovered in the data, so the row still has a type. A `filter` after a `reduce` becomes a HAVING, which is how `delay_by_distance` drops the distances too rare to average meaningfully.
 
-An input cell binds a control to its name. Drag `min_distance` and only the cells that read it re-run — `total_flights` and `by_state` both do — the value is compiled into their SQL, so the cache does the rest. That is what lets `routes` below join `airports` twice — once for the origin and once for the destination — without the two sides colliding.
+An input cell binds a control to its name. Drag `min_distance` and only the cells that read it re-run — `total_flights` and `by_state` both do, and `since` trims the time series — the value is compiled into their SQL, so the cache does the rest. That is what lets `routes` below join `airports` twice — once for the origin and once for the destination — without the two sides colliding.
 
 ```source airports
 csv "https://cdn.jsdelivr.net/npm/vega-datasets@2/data/airports.csv"
@@ -61,8 +61,13 @@ access flights ()
   |> selectAll
 ```
 
+```input since
+date "2001-01-01" "2001-07-01" default "2001-01-01"
+```
+
 ```acadia daily
 access flights ()
+  |> filter (\f -> f.date >= since)
   |> groupBy (\f -> { day = startOfDay f.date })
   |> reduce (\g ->
        { day = g.day

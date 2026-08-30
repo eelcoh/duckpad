@@ -879,10 +879,26 @@ recorded as they were hit, in the order they are worth closing:
    with `as`, and each requires the column type it reads: text for an
    enum, the wrapped primitive for a wrapper.
 
-6. **`dateRange` inputs, and options drawn from a query.** The second is
-   a design question rather than a missing case: it would make a widget
-   depend on a cell, which the graph can express but nothing else
-   currently does.
+6. ~~**`dateRange` inputs**~~ — done, and not as a range. A cell binds
+   one value to its name, so a *range* of dates is two `date` cells;
+   inventing a two-valued cell to save writing two would have been the
+   more complicated answer, not the simpler one.
+
+       date "2001-01-01" "2001-07-01" default "2001-01-01"
+
+   It binds a `Timestamp`, which meant a timestamp literal — inlined as
+   `TIMESTAMP '…'`, and not writable from the language itself, only
+   bindable by an input. The control is the browser's own date field:
+   elm-ui has no equivalent and a hand-rolled one would be worse than
+   the native picker. ISO dates sort as text, so the bound checks are
+   string comparisons.
+
+   **Options drawn from a query** is still open, and it is a design
+   question rather than a missing case. It would make a widget depend on
+   a cell — which the graph can express, but nothing else does — and it
+   raises what happens to a chosen value when the options beneath it
+   change, and how to keep a cell that filters on the widget from
+   feeding the widget's own options.
 
 7. **`UNPIVOT`**, which unlike `PIVOT` is statically typeable — the
    columns to fold and the names to fold them into are all written down.

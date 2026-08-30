@@ -75,7 +75,10 @@ that read them can be checked like any other.
 -}
 params : Dsl.Check.Params
 params =
-    Dict.fromList [ ( "min_distance", ( TFloat, LFloat 0 ) ) ]
+    Dict.fromList
+        [ ( "min_distance", ( TFloat, LFloat 0 ) )
+        , ( "since", ( TTimestamp, LTimestamp "2001-01-01" ) )
+        ]
 
 
 fixtures : List ( String, String )
@@ -211,6 +214,7 @@ access flights ()
     , ( "seeded_daily"
       , """
 access flights ()
+  |> filter (\\f -> f.date >= since)
   |> groupBy (\\f -> { day = startOfDay f.date })
   |> reduce (\\g ->
        { day = g.day

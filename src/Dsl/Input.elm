@@ -19,6 +19,10 @@ import Parser exposing ((|.), (|=), Parser)
 type Spec
     = Range { min : Float, max : Float, step : Float, default : Float }
     | Select { options : List String, default : String }
+      -- A single date. A *range* of dates is two of these, because a cell
+      -- binds one value to its name and inventing a two-valued cell to avoid
+      -- writing two would be the more complicated answer.
+    | Date { min : String, max : String, default : String }
 
 
 valueType : Spec -> Type
@@ -30,6 +34,9 @@ valueType widget =
         Select _ ->
             TString
 
+        Date _ ->
+            TTimestamp
+
 
 defaultLiteral : Spec -> Literal
 defaultLiteral widget =
@@ -39,6 +46,9 @@ defaultLiteral widget =
 
         Select s ->
             LString s.default
+
+        Date d ->
+            LTimestamp d.default
 
 
 parse : String -> Result String Spec
@@ -55,7 +65,7 @@ widgetSpec : Parser Spec
 widgetSpec =
     Parser.succeed identity
         |. ws
-        |= Parser.oneOf [ range, select ]
+        |= Parser.oneOf [ range, select, date ]
         |. ws
         |. Parser.end
 
@@ -79,6 +89,16 @@ select =
     Parser.succeed (\options default -> Select { options = options, default = default })
         |. keyword "select"
         |= someStrings
+        |. keyword "default"
+        |= string
+
+
+date : Parser Spec
+date =
+    Parser.succeed (\low high default -> Date { min = low, max = high, default = default })
+        |. keyword "date"
+        |= string
+        |= string
         |. keyword "default"
         |= string
 
@@ -125,6 +145,19 @@ validate parsed =
                         }
                     )
 
+        Date d ->
+            if not (List.all isoDate [ d.min, d.max, d.default ]) then
+                Err "a date is written as \"YYYY-MM-DD\""
+
+            else if d.min >= d.max then
+                Err "a date range needs its earlier bound first"
+
+            else if d.default < d.min || d.default > d.max then
+                Err "a date's default has to sit between its bounds"
+
+            else
+                Ok parsed
+
         Select s ->
             if List.isEmpty s.options then
                 Err "a select needs at least one option"
@@ -134,6 +167,22 @@ validate parsed =
 
             else
                 Ok parsed
+
+
+{-| ISO dates sort as text, which is why the bound checks above can simply
+compare strings.
+-}
+isoDate : String -> Bool
+isoDate value =
+    case String.split "-" value of
+        [ y, m, d ] ->
+            (String.length y == 4)
+                && (String.length m == 2)
+                && (String.length d == 2)
+                && List.all (String.all Char.isDigit) [ y, m, d ]
+
+        _ ->
+            False
 
 
 keyword : String -> Parser ()

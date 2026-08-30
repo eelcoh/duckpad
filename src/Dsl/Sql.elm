@@ -313,6 +313,9 @@ lit literal =
         LString s ->
             "'" ++ String.replace "'" "''" s ++ "'"
 
+        LTimestamp iso ->
+            "TIMESTAMP '" ++ String.replace "'" "''" iso ++ "'"
+
 
 qualified : String -> String -> String
 qualified alias column =

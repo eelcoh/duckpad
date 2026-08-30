@@ -30,8 +30,9 @@ import Element.Border as Border
 import Element.Events
 import Element.Font as Font
 import Element.Input as Input
-import Html exposing (Html, div, pre, span, table, tbody, td, textarea, th, thead, tr)
+import Html exposing (Html, div, input, pre, span, table, tbody, td, textarea, th, thead, tr)
 import Html.Attributes exposing (attribute, class, id, placeholder, rows, spellcheck, value)
+import Html.Attributes
 import Html.Events exposing (onBlur, onInput)
 import Ui
 import Indent
@@ -734,6 +735,9 @@ literalKey literal =
 
         LString s ->
             "s:" ++ s
+
+        LTimestamp iso ->
+            "t:" ++ iso
 
         LBool b ->
             if b then
@@ -1714,6 +1718,23 @@ viewControl id widget current =
             ( Dsl.Input.Select s, LString value ) ->
                 Element.wrappedRow [ spacing 6 ]
                     (List.map (viewOption id value) s.options)
+
+            ( Dsl.Input.Date d, LTimestamp value ) ->
+                -- The browser's own date field: elm-ui has no equivalent, and
+                -- a hand-rolled one would be worse than the native picker.
+                el [ Font.family Ui.mono, Font.size Ui.monoSize ]
+                    (Element.html
+                        (Html.input
+                            [ Html.Attributes.type_ "date"
+                            , Html.Attributes.class "date-input"
+                            , Html.Attributes.min d.min
+                            , Html.Attributes.max d.max
+                            , Html.Attributes.value value
+                            , Html.Events.onInput (\iso -> InputMoved id (LTimestamp iso))
+                            ]
+                            []
+                        )
+                    )
 
             _ ->
                 message_ Ui.bad "this control does not match its value"
