@@ -218,8 +218,8 @@ parserChecks =
                 { pattern = Single "g"
                 , body =
                     Record
-                        [ { name = "n", value = Aggregate "count" (Var "g") }
-                        , { name = "revenue", value = Aggregate "sum" (Access "g" "total") }
+                        [ { name = "n", value = Aggregate "count" [ Var "g" ] }
+                        , { name = "revenue", value = Aggregate "sum" [ Access "g" "total" ] }
                         ]
                 }
             ]
@@ -361,6 +361,41 @@ checkerChecks =
     , equal "check: min keeps its column's type"
         (Ok [ ( "m", "String" ) ])
         (rowTypeOf "access orders () |> groupBy .region |> reduce (\\g -> { m = min g.owner }) |> selectAll")
+    -- The rest of what DuckDB already computes, exposed as names.
+    , equal "agg: the statistical aggregates, with DuckDB's own result types"
+        (Ok
+            [ ( "med", "Float" )
+            , ( "sd", "Float" )
+            , ( "var", "Float" )
+            , ( "mode", "String" )
+            , ( "distinct", "Int" )
+            ]
+        )
+        (rowTypeOf "access orders () |> groupBy .region |> reduce (\\g -> { med = median g.total, sd = stdDev g.total, var = variance g.total, mode = mode g.owner, distinct = countDistinct g.owner }) |> selectAll")
+    , equal "agg: a median is a Float even over a whole number"
+        (Ok [ ( "m", "Float" ) ])
+        (rowTypeOf "access orders () |> groupBy .region |> reduce (\\g -> { m = median g.id }) |> selectAll")
+    , equal "agg: quantile reads with the fraction first"
+        (Ok [ ( "p95", "Float" ) ])
+        (rowTypeOf "access orders () |> groupBy .region |> reduce (\\g -> { p95 = quantile 0.95 g.total }) |> selectAll")
+    , contains "sql: but DuckDB wants the fraction last"
+        "quantile_cont(\"orders\".\"total\", 0.95)"
+        (sqlOf "access orders () |> groupBy .region |> reduce (\\g -> { p95 = quantile 0.95 g.total }) |> selectAll")
+    , contains "sql: a distinct count is a modifier, not a function"
+        "count(DISTINCT \"orders\".\"owner\")"
+        (sqlOf "access orders () |> groupBy .region |> reduce (\\g -> { n = countDistinct g.owner }) |> selectAll")
+    , equal "agg: correlation takes two columns"
+        (Ok [ ( "c", "Float" ) ])
+        (rowTypeOf "access orders () |> groupBy .region |> reduce (\\g -> { c = correlation g.id g.total }) |> selectAll")
+    , contains "sql: correlation is DuckDB's corr"
+        "corr(\"orders\".\"id\", \"orders\".\"total\")"
+        (sqlOf "access orders () |> groupBy .region |> reduce (\\g -> { c = correlation g.id g.total }) |> selectAll")
+    , isErr "agg: only count may be given the group itself"
+        (compile "access orders () |> groupBy .region |> reduce (\\g -> { m = median g }) |> selectAll")
+    , isErr "agg: the wrong number of arguments is refused"
+        (compile "access orders () |> groupBy .region |> reduce (\\g -> { c = correlation g.total }) |> selectAll")
+    , isErr "agg: a statistical aggregate needs a number"
+        (compile "access orders () |> groupBy .region |> reduce (\\g -> { s = stdDev g.owner }) |> selectAll")
     , isErr "check: sum needs a number"
         (compile "access orders () |> groupBy .region |> reduce (\\g -> { s = sum g.owner }) |> selectAll")
     -- Computed keys: the case that makes a time series expressible.

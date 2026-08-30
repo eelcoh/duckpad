@@ -44,7 +44,20 @@ is what makes a `reduce` legible.
 -}
 aggregates : Set String
 aggregates =
-    Set.fromList [ "count", "sum", "avg", "min", "max" ]
+    Set.fromList
+        [ "count"
+        , "countDistinct"
+        , "sum"
+        , "avg"
+        , "min"
+        , "max"
+        , "median"
+        , "mode"
+        , "stdDev"
+        , "variance"
+        , "quantile"
+        , "correlation"
+        ]
 
 
 {-| Scalar functions, recognised by position like the aggregates, so a column

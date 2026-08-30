@@ -593,7 +593,7 @@ identifierExpr =
                 Parser.oneOf
                     [ Parser.succeed (Access name) |. Parser.symbol "." |= fieldName
                     , if isAggregate name then
-                        Parser.map (Aggregate name) argument
+                        Parser.map (Aggregate name) (many aggArg)
 
                       else if isFunction name then
                         Parser.map (Call name) (many argAtom)
@@ -604,9 +604,17 @@ identifierExpr =
             )
 
 
-argument : Parser Expr
-argument =
-    lname |> Parser.andThen fieldOrVar
+{-| What may follow an aggregate. Like a function's argument, but a bare name
+is allowed too, because `count g` names the group itself.
+-}
+aggArg : Parser Expr
+aggArg =
+    Parser.oneOf
+        [ Parser.map (Lit << LString) quotedString
+        , numberLiteral
+        , Parser.succeed identity |. sym "(" |= Parser.lazy (\_ -> expr) |. sym ")"
+        , Parser.backtrackable (lname |> Parser.andThen fieldOrVar)
+        ]
 
 
 {-| What may follow a function name without parentheses. Application binds

@@ -30,6 +30,25 @@ of pandas/kernels. Key departures from Jupyter, chosen deliberately:
   the whole design around, especially once real user schemas/data are
   involved.
 
+## What this is, and what it is not
+
+**DuckDB, through an Elm/Acadia-inspired interface.** The engine is
+DuckDB's; the contribution here is a typed, total, reactive surface over
+it. That sentence settles most scope questions on its own:
+
+- If DuckDB already does a thing, exposing it is in scope, and the work
+  is a name, a type rule and a spelling.
+- If it would mean inventing semantics DuckDB does not have, it is
+  probably not worth it. Complex features are the failure mode to avoid,
+  not the goal.
+- Names are Elm-ish rather than SQL-ish — `startOfDay`, not
+  `date_trunc` — because the interface is the point. The *semantics*
+  stay DuckDB's.
+
+The corollary is the escape-hatch decision recorded further down: a
+second engine beside DuckDB is exactly the kind of complexity this rules
+out, and it would cost the totality guarantee besides.
+
 ## Phase 0 — Resolve the Acadia dependency (decision gate)
 
 Acadia (https://acadia.engineering/) is a closed-source, commercially
@@ -846,25 +865,31 @@ Worth separating, because "add pandas" is three different asks:
 2. **The ecosystem** — scikit-learn, scipy, statsmodels, geopandas.
 3. **An escape hatch** — arbitrary code over rows, and glue.
 
-### The first is mostly DuckDB's, and we under-expose it
+### The first is mostly DuckDB's, and we were under-exposing it
 
-This language has thirteen scalar functions and five aggregates. DuckDB
-has window functions with `PARTITION BY` and `QUALIFY`, `stddev`,
-`median`, `corr`, `quantile_cont`, regression aggregates, `PIVOT` and
-`UNPIVOT`, and list aggregates. Ranking routes within each origin, and
-the standard deviation, median, correlation and 95th percentile of three
-million delays, all return instantly today — they are simply not
-reachable from a cell.
+Partly closed. The statistical aggregates are in: `median`, `mode`,
+`stdDev`, `variance`, `countDistinct`, `quantile` and `correlation`,
+with DuckDB's own result types — a median is a double even over
+integers, a mode keeps its column's type. Two needed more than a
+rename, and both are the interface differing from the engine on purpose:
+a distinct count is a modifier rather than a function, and `quantile`
+reads better with the fraction first while DuckDB wants it last.
 
-Most of what a notebook user reaches for pandas to do is this, and
-exposing it costs nothing architecturally: each addition is a name, a
-type rule and a SQL spelling, exactly like the scalar functions. **This
-is where the pandas-shaped value actually is**, and it should be done
-before any escape hatch is contemplated.
+Aggregates take a list of arguments now rather than exactly one, which
+is what made the two-argument ones possible and matches how scalar
+functions already worked.
 
-Window functions are the largest single item, and they need a real
-design: a `partitionBy`/`over` stage, and a result type that is still a
-row rather than a group.
+**Window functions are what is left, and they are the largest single
+item.** They need a stage of their own — a partition, an ordering, and a
+result that is still a row rather than a group — which is the one place
+in this section where real design is required rather than a name and a
+type rule. Worth weighing against the thesis at the top of this
+document before starting: `rank` within a partition is what a pandas
+user asks for most, but a windowing abstraction is also the most complex
+thing this language would contain.
+
+Also unexposed and much cheaper: `PIVOT` and `UNPIVOT`, and the list
+aggregates.
 
 ### The other two need an escape hatch, and it costs the guarantee
 

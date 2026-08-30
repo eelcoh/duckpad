@@ -150,8 +150,8 @@ exprVars scope expr =
         Not inner ->
             exprVars scope inner
 
-        Aggregate _ arg ->
-            exprVars scope arg
+        Aggregate _ args ->
+            args |> List.map (exprVars scope) |> List.foldl Set.union Set.empty
 
         Call _ args ->
             args |> List.map (exprVars scope) |> List.foldl Set.union Set.empty

@@ -161,8 +161,9 @@ type Expr
       -- anywhere else the checker rejects it, because a row has to be indexed
       -- by a column to mean anything.
     | Var String
-      -- `count g`, `sum g.total`. Only legal inside `reduce`.
-    | Aggregate String Expr
+      -- `count g`, `sum g.total`, `quantile 0.95 g.delay`. Only legal inside
+      -- `reduce`. A list, because not every aggregate takes one column.
+    | Aggregate String (List Expr)
       -- `round o.total`, `roundTo 1 g.avg`. Applied by juxtaposition, which
       -- binds tighter than any operator.
     | Call String (List Expr)

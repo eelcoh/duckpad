@@ -170,11 +170,8 @@ expr e =
         TNot inner ->
             "NOT (" ++ expr inner ++ ")"
 
-        TAgg fn Nothing _ ->
-            fn ++ "(*)"
-
-        TAgg fn (Just ( alias, column )) _ ->
-            fn ++ "(" ++ qualified alias column ++ ")"
+        TAgg fn args _ ->
+            aggregate fn (List.map expr args)
 
         TCall fn args _ ->
             call fn (List.map expr args)
@@ -183,6 +180,32 @@ expr e =
             -- A custom type exists only in the Elm output; SQL carries the
             -- underlying tag column through untouched.
             expr inner
+
+
+{-| Each aggregate's DuckDB spelling. Two need more than a rename: a distinct
+count is a modifier rather than a function, and `quantile` reads better with
+the fraction first while DuckDB wants it last.
+-}
+aggregate : String -> List String -> String
+aggregate fn args =
+    case ( fn, args ) of
+        ( "count", [] ) ->
+            "count(*)"
+
+        ( "countDistinct", [ a ] ) ->
+            "count(DISTINCT " ++ a ++ ")"
+
+        ( "stdDev", [ a ] ) ->
+            "stddev(" ++ a ++ ")"
+
+        ( "quantile", [ fraction, a ] ) ->
+            "quantile_cont(" ++ a ++ ", " ++ fraction ++ ")"
+
+        ( "correlation", [ a, b ] ) ->
+            "corr(" ++ a ++ ", " ++ b ++ ")"
+
+        _ ->
+            fn ++ "(" ++ String.join ", " args ++ ")"
 
 
 {-| Each function's DuckDB spelling. The casts are not decoration: `round`

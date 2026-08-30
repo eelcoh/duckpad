@@ -105,7 +105,7 @@ type TExpr
     | TLit Literal Type
     | TBin Op TExpr TExpr Type
     | TNot TExpr
-    | TAgg String (Maybe ( String, String )) Type
+    | TAgg String (List TExpr) Type
     | TCall String (List TExpr) Type
     | TCast TExpr String
 
@@ -1164,8 +1164,8 @@ checkExpr env expr =
             Result.map2 Tuple.pair (checkExpr env left) (checkExpr env right)
                 |> Result.andThen (\( l, r ) -> checkBinary op l r)
 
-        Aggregate fn arg ->
-            checkAggregate env fn arg
+        Aggregate fn args ->
+            checkAggregate env fn args
 
         Call fn args ->
             args
@@ -1313,71 +1313,138 @@ baseType t =
             t
 
 
-checkAggregate : Env -> String -> Expr -> Result String TExpr
-checkAggregate env fn arg =
+checkAggregate : Env -> String -> List Expr -> Result String TExpr
+checkAggregate env fn args =
     if not env.inReduce then
         Err ("`" ++ fn ++ "` is an aggregate, so it only works inside `reduce`")
 
     else
-        case arg of
-            Var name ->
-                if boundSide name env == Nothing then
-                    Err ("`" ++ name ++ "` is not in scope — this group is " ++ paramNames env)
-
-                else if fn == "count" then
-                    Ok (TAgg "count" Nothing TInt)
-
-                else
-                    Err ("`" ++ fn ++ "` needs a column, like `" ++ fn ++ " " ++ name ++ ".total`")
-
-            Access obj column ->
-                if boundSide obj env == Nothing then
-                    Err ("`" ++ obj ++ "` is not in scope — this group is " ++ paramNames env)
-
-                else
-                    resolve column env.sides
-                        |> Result.andThen
-                            (\( alias, t ) -> aggregateResult fn alias column (baseType t))
-
-            _ ->
-                Err ("`" ++ fn ++ "` takes a column, not an expression")
+        args
+            |> List.foldl
+                (\arg acc -> Result.map2 (\done t -> done ++ [ t ]) acc (aggArgument env fn arg))
+                (Ok [])
+            |> Result.andThen (aggregateResult fn)
 
 
-aggregateResult : String -> String -> String -> Type -> Result String TExpr
-aggregateResult fn alias column t =
-    case fn of
-        "count" ->
-            Ok (TAgg fn (Just ( alias, column )) TInt)
-
-        "avg" ->
-            if Schema.isNumeric t then
-                Ok (TAgg fn (Just ( alias, column )) TFloat)
+{-| An aggregate's argument is a column, a literal, or — for `count` alone —
+the group itself.
+-}
+aggArgument : Env -> String -> Expr -> Result String (Maybe TExpr)
+aggArgument env fn arg =
+    case arg of
+        Var name ->
+            if boundSide name env == Nothing then
+                Err ("`" ++ name ++ "` is not in scope — this group is " ++ paramNames env)
 
             else
-                Err ("`avg` needs a number, but `" ++ column ++ "` is a " ++ Schema.typeName t)
+                -- The group itself, which only `count` can be given.
+                Ok Nothing
 
-        "sum" ->
-            if Schema.isNumeric t then
-                Ok (TAgg fn (Just ( alias, column )) t)
+        Access obj column ->
+            if boundSide obj env == Nothing then
+                Err ("`" ++ obj ++ "` is not in scope — this group is " ++ paramNames env)
 
             else
-                Err ("`sum` needs a number, but `" ++ column ++ "` is a " ++ Schema.typeName t)
+                resolve column env.sides
+                    |> Result.map (\( alias, t ) -> Just (TCol alias column t))
+
+        Lit literal ->
+            Ok (Just (TLit literal (literalType literal)))
 
         _ ->
-            if t == TBool then
-                Err ("`" ++ fn ++ "` does not work on a Bool")
+            Err ("`" ++ fn ++ "` takes columns, not expressions")
+
+
+{-| Arity and result type for each aggregate. The result types are DuckDB's
+own: a median is a double even over integers, a mode keeps its column's type.
+-}
+aggregateResult : String -> List (Maybe TExpr) -> Result String TExpr
+aggregateResult fn args =
+    case ( fn, args ) of
+        ( "count", [ Nothing ] ) ->
+            Ok (TAgg "count" [] TInt)
+
+        ( "count", [ Just column ] ) ->
+            Ok (TAgg "count" [ column ] TInt)
+
+        ( "countDistinct", [ Just column ] ) ->
+            Ok (TAgg "countDistinct" [ column ] TInt)
+
+        ( "sum", [ Just column ] ) ->
+            overNumber fn column (baseType (typeOf column))
+
+        ( "avg", [ Just column ] ) ->
+            overNumber fn column TFloat
+
+        ( "median", [ Just column ] ) ->
+            overNumber fn column TFloat
+
+        ( "stdDev", [ Just column ] ) ->
+            overNumber fn column TFloat
+
+        ( "variance", [ Just column ] ) ->
+            overNumber fn column TFloat
+
+        ( "min", [ Just column ] ) ->
+            overOrdered fn column
+
+        ( "max", [ Just column ] ) ->
+            overOrdered fn column
+
+        ( "mode", [ Just column ] ) ->
+            overOrdered fn column
+
+        ( "quantile", [ Just fraction, Just column ] ) ->
+            if not (Schema.isNumeric (typeOf fraction)) then
+                Err "`quantile` takes the fraction first, as in `quantile 0.95 g.delay`"
 
             else
-                Ok (TAgg fn (Just ( alias, column )) t)
+                overNumber fn column TFloat
+                    |> Result.map (\_ -> TAgg fn [ fraction, column ] TFloat)
+
+        ( "correlation", [ Just left, Just right ] ) ->
+            if Schema.isNumeric (typeOf left) && Schema.isNumeric (typeOf right) then
+                Ok (TAgg fn [ left, right ] TFloat)
+
+            else
+                Err "`correlation` needs two numeric columns"
+
+        ( _, [ Nothing ] ) ->
+            Err ("`" ++ fn ++ "` needs a column, not the whole group")
+
+        _ ->
+            Err
+                ("`"
+                    ++ fn
+                    ++ "` does not take "
+                    ++ String.fromInt (List.length args)
+                    ++ (if List.length args == 1 then
+                            " argument"
+
+                        else
+                            " arguments"
+                       )
+                )
 
 
-{-| Scalar functions, checked by name and arity.
+overNumber : String -> TExpr -> Type -> Result String TExpr
+overNumber fn column result =
+    if Schema.isNumeric (typeOf column) then
+        Ok (TAgg fn [ column ] result)
 
-Each one's result type is fixed here rather than read back from DuckDB, which
-is what lets a `startOfDay` be plotted on a temporal axis and a `round` be
-counted as an integer without anyone annotating either.
+    else
+        Err ("`" ++ fn ++ "` needs a number, but this column is a " ++ Schema.typeName (typeOf column))
 
--}
+
+overOrdered : String -> TExpr -> Result String TExpr
+overOrdered fn column =
+    if baseType (typeOf column) == TBool then
+        Err ("`" ++ fn ++ "` does not work on a Bool")
+
+    else
+        Ok (TAgg fn [ column ] (baseType (typeOf column)))
+
+
 checkCall : String -> List TExpr -> Result String TExpr
 checkCall fn args =
     case ( fn, args ) of
