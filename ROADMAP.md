@@ -358,6 +358,14 @@ in the data, so the cast is exhaustive). Every one of them is also a
 roundtrip fixture, checked against local stand-in tables whose schemas
 match what DuckDB infers from the real files, so the tests stay offline.
 
+The notebook lives in `src/Seed.elm` and is written out to
+`public/notebooks/flights.acadia.md` by `mise run seed`, which `build`
+depends on. The shipped example is therefore the starting notebook
+rather than a copy that has to be kept in step, and it is the only
+worked example of the file format outside the tests. The emitter also
+parses what it wrote and re-serialises it, so the format is checked
+against real content and not only against fixtures.
+
 | File | Size | Role |
 |---|---|---|
 | `vega-datasets@2/data/airports.csv` | 3,376 rows | dimension: iata, name, city, state, country, latitude, longitude |

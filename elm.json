@@ -2,7 +2,8 @@
     "type": "application",
     "source-directories": [
         "src",
-        "tests"
+        "tests",
+        "tools"
     ],
     "elm-version": "0.19.2",
     "dependencies": {

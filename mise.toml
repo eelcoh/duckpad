@@ -5,6 +5,7 @@ node = "26"
 
 [tasks.build]
 description = "Compile the Elm notebook shell"
+depends = ["seed"]
 run = "elm make src/Main.elm --output=public/elm.js"
 
 [tasks.serve]
@@ -23,4 +24,11 @@ description = "Execute every fixture's generated SQL in DuckDB and compile its g
 run = """
 elm make tests/Fixtures.elm --output=tests/fixtures.js > /dev/null
 node tests/roundtrip.js
+"""
+
+[tasks.seed]
+description = "Write the seeded notebook out to public/notebooks/"
+run = """
+elm make tools/EmitSeed.elm --output=tools/seed.js > /dev/null
+node tools/emit-seed.js
 """

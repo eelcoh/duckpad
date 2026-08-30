@@ -1,0 +1,62 @@
+---
+title: Flights
+---
+
+Two sources, both read straight from the web. `airports` is a small CSV; `flights` is three million rows of Parquet that DuckDB reads a page at a time, so the whole file never has to come down.
+
+`intersect` pairs two tables rather than merging them, so each side keeps its own column names and a later lambda destructures: `\(f, orig, dest) -> …`. That is what lets `routes` below join `airports` twice — once for the origin and once for the destination — without the two sides colliding.
+
+```source airports
+csv "https://cdn.jsdelivr.net/npm/vega-datasets@2/data/airports.csv"
+```
+
+```source flights
+parquet "https://cdn.jsdelivr.net/npm/vega-datasets@3.2.0/data/flights-3m.parquet"
+```
+
+```acadia by_state
+access flights ()
+  |> intersect .origin airports .iata
+  |> groupBy .state
+  |> reduce (\g ->
+       { state = g.state
+       , departures = count g
+       , avg_delay = avg g.delay
+       })
+  |> sortBy (desc .departures)
+  |> limit 12
+  |> selectAll
+```
+
+```acadia routes
+access flights ()
+  |> intersect .origin airports .iata
+  |> intersect .destination airports .iata
+  |> map (\(f, orig, dest) ->
+       { from = orig.city
+       , to = dest.city
+       , miles = f.distance
+       , delay = f.delay
+       })
+  |> limit 200
+  |> selectAll
+```
+
+```acadia quiet
+type Country
+  = Usa "USA"
+  | Marianas "N Mariana Islands"
+  | Palau "Palau"
+  | Thailand "Thailand"
+  | Micronesia "Federated States of Micronesia"
+
+access airports ()
+  |> exclude .iata flights .origin
+  |> map (\a ->
+       { code = a.iata
+       , city = a.city
+       , country = a.country as Country
+       })
+  |> sortBy .code
+  |> selectAll
+```
