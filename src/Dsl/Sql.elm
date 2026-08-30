@@ -56,6 +56,12 @@ joinClause combine =
         Diff ->
             Just (joinLine "LEFT JOIN " combine)
 
+        Union ->
+            Just (joinLine "FULL OUTER JOIN " combine)
+
+        XUnion ->
+            Just (joinLine "FULL OUTER JOIN " combine)
+
 
 joinLine : String -> CheckedCombine -> String
 joinLine keyword combine =
@@ -94,9 +100,24 @@ maybeToList m =
             []
 
 
+{-| The conditions a combine contributes to the WHERE clause.
+
+`exclude` is an anti-join and lives here entirely; `xunion` is a full outer
+join kept to the rows only one side had, which is a condition on the join
+rather than a join of its own.
+-}
 antiJoin : CheckedCombine -> Maybe String
 antiJoin combine =
     case combine.kind of
+        XUnion ->
+            Just
+                ("("
+                    ++ qualified combine.leftAlias combine.leftKey
+                    ++ " IS NULL OR "
+                    ++ qualified combine.alias combine.rightKey
+                    ++ " IS NULL)"
+                )
+
         Exclude ->
             Just
                 ("NOT EXISTS (SELECT 1 FROM "

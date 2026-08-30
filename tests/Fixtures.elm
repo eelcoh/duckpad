@@ -280,6 +280,32 @@ access flights ()
   |> selectAll
 """
       )
+      -- Either side may be the one missing, so both are optional.
+    , ( "unioned"
+      , """
+access orders ()
+  |> union .owner customers .owner
+  |> map (\\(o, c) ->
+       { who = o.owner
+       , tier = c.tier
+       , amount = o.total
+       })
+  |> limit 50
+  |> selectAll
+"""
+      )
+    , ( "symmetric_difference"
+      , """
+access orders ()
+  |> xunion .owner vips .owner
+  |> map (\\(o, v) ->
+       { ordered_by = o.owner
+       , vip_only = v.owner
+       })
+  |> limit 50
+  |> selectAll
+"""
+      )
     , ( "self_combined"
       , """
 access orders ()

@@ -201,6 +201,8 @@ stage =
             , combineStage "intersect" Intersect
             , combineStage "diff" Diff
             , combineStage "exclude" Exclude
+            , combineStage "union" Union
+            , combineStage "xunion" XUnion
             , Parser.map Map (lambdaStage "map")
             , Parser.map Reduce (lambdaStage "reduce")
             , Parser.succeed GroupBy |. kw "groupBy" |= groupKeys

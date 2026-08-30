@@ -656,34 +656,76 @@ combine schema kind leftKey table rightKey builder =
                                     , rightKey = rightKey
                                     }
                             in
-                            Ok
-                                { builder
-                                    | combines = builder.combines ++ [ entry ]
-                                    , sides =
-                                        case kind of
-                                            Exclude ->
-                                                builder.sides
-
-                                            Diff ->
-                                                -- A row with no match leaves this
-                                                -- side absent, and the row type
-                                                -- has to say so.
-                                                builder.sides
-                                                    ++ [ { alias = alias
-                                                         , table = table
-                                                         , columns = List.map (\( n, t ) -> ( n, optional t )) rightColumns
-                                                         }
-                                                       ]
-
-                                            Intersect ->
-                                                builder.sides
-                                                    ++ [ { alias = alias, table = table, columns = rightColumns } ]
-                                }
+                            outerSafe kind builder
+                                |> Result.map
+                                    (\safe ->
+                                        { safe
+                                            | combines = safe.combines ++ [ entry ]
+                                            , sides = sidesAfter kind alias table rightColumns safe.sides
+                                        }
+                                    )
                     )
 
 
-{-| A table may appear twice in one pipeline, so aliases are made unique.
+{-| How the row's sides change once another table is combined in.
+
+`exclude` contributes nothing — an anti-join removes rows and adds no columns.
+`diff` adds a side that may be absent. A full outer join may leave *either*
+side absent, so every side already in scope becomes optional too: that is what
+the join means, and saying so in the row type is the whole point of having one.
+
 -}
+sidesAfter : CombineKind -> String -> String -> List ( String, Type ) -> List Side -> List Side
+sidesAfter kind alias table rightColumns sides =
+    let
+        added optional_ =
+            sides
+                ++ [ { alias = alias
+                     , table = table
+                     , columns =
+                        if optional_ then
+                            List.map (\( n, t ) -> ( n, optional t )) rightColumns
+
+                        else
+                            rightColumns
+                     }
+                   ]
+    in
+    case kind of
+        Exclude ->
+            sides
+
+        Intersect ->
+            added False
+
+        Diff ->
+            added True
+
+        Union ->
+            List.map optionalSide (added True)
+
+        XUnion ->
+            List.map optionalSide (added True)
+
+
+optionalSide : Side -> Side
+optionalSide side =
+    { side | columns = List.map (\( n, t ) -> ( n, optional t )) side.columns }
+
+
+{-| A filter already gathered would become a WHERE, which SQL applies after
+the join — and after a full outer join that would silently discard every row
+the other side contributed alone, turning it back into an inner join.
+-}
+outerSafe : CombineKind -> Builder -> Result String Builder
+outerSafe kind builder =
+    if (kind == Union || kind == XUnion) && builder.filter /= Nothing then
+        Err "a `filter` before a `union` would be applied after the join and drop the rows only the other side has — filter after it, or project that side in its own cell first"
+
+    else
+        Ok builder
+
+
 uniqueAlias : String -> List Side -> String
 uniqueAlias table sides =
     let

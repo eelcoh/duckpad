@@ -849,13 +849,24 @@ recorded as they were hit, in the order they are worth closing:
    source's cache key — an option changes the data as surely as the URI
    does.
 
-4. **`union` and `xunion`** — the full outer joins, completing the set
-   Acadia's `Rows` module has. `intersect`, `diff` and `exclude` are
-   built.
+4. ~~**`union` and `xunion`**~~ — done, completing the set Acadia's
+   `Rows` module has. Both are full outer joins; `xunion` keeps only the
+   rows one side had alone.
+
+   A union makes *every* side optional, not only the one being added:
+   a row the right side contributed alone has no left side at all, and
+   the row type says so. That is the difference between this and SQL,
+   where it is a runtime surprise.
+
+   A `filter` before a union is refused. SQL applies WHERE after the
+   join, so it would drop every row the right side contributed alone and
+   quietly leave an inner join — the same class of trap as filtering
+   after a `limit`, and refused for the same reason.
 
 5. **Opaque newtype wrappers** — `type OrderId = OrderId Int`. The
    mechanism for attaching a declared type to a column is proven by the
-   enum casts; this is the other shape.
+   enum casts; this is the other shape. The last item on this list that
+   is clearly worth doing.
 
 6. **`dateRange` inputs, and options drawn from a query.** The second is
    a design question rather than a missing case: it would make a widget

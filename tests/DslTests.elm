@@ -703,6 +703,30 @@ joinChecks =
         "AS \"orders_2\""
         (sqlOf "access orders () |> intersect .owner orders .owner |> map (\\(a, b) -> { x = a.id, y = b.id }) |> selectAll")
 
+    -- Full outer joins, where either side may be the one that is absent.
+    , equal "combine: union parses like the others"
+        (Ok [ Combine Union "owner" "customers" "owner", Combine XUnion "owner" "vips" "owner" ])
+        (stagesOf "access orders () |> union .owner customers .owner |> xunion .owner vips .owner")
+    , equal "combine: a union makes both sides optional, not just the new one"
+        -- Which is what the join means: a row contributed by the right side
+        -- alone has no left side at all.
+        (Ok [ ( "who", "Maybe String" ), ( "tier", "Maybe String" ) ])
+        (rowTypeOf "access orders () |> union .owner customers .owner |> map (\\(o, c) -> { who = o.owner, tier = c.tier }) |> selectAll")
+    , contains "sql: union is a full outer join"
+        "FULL OUTER JOIN \"customers\" AS \"customers\""
+        (sqlOf "access orders () |> union .owner customers .owner |> map (\\(o, c) -> { t = c.tier }) |> selectAll")
+    , contains "sql: xunion keeps only the rows one side had alone"
+        "(\"orders\".\"owner\" IS NULL OR \"vips\".\"owner\" IS NULL)"
+        (sqlOf "access orders () |> xunion .owner vips .owner |> map (\\(o, v) -> { a = o.owner, b = v.owner }) |> selectAll")
+    , isErr "combine: a filter before a union would quietly undo it"
+        -- SQL applies WHERE after the join, so this would drop every row the
+        -- right side contributed alone and leave an inner join.
+        (compile "access orders () |> filter (\\o -> o.total > 1.0) |> union .owner customers .owner |> map (\\(o, c) -> { t = c.tier }) |> selectAll")
+    , assert "combine: filtering after a union is fine"
+        (compile "access orders () |> union .owner customers .owner |> map (\\(o, c) -> { t = c.tier }) |> selectAll"
+            |> resultOk
+        )
+
     -- Scope and arity.
     , isErr "combine: a single name cannot read a combined row"
         (compile "access orders () |> intersect .owner customers .owner |> map (\\o -> { w = o.owner }) |> selectAll")

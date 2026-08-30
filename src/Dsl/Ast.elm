@@ -70,6 +70,8 @@ type CombineKind
     = Intersect
     | Diff
     | Exclude
+    | Union
+    | XUnion
 
 
 type ChartKind
