@@ -158,6 +158,28 @@ access flights ()
   |> barChart { x = .state, y = .departures }
 """
       )
+    , ( "seeded_delay_by_distance"
+      , """
+access flights ()
+  |> groupBy .distance
+  |> reduce (\\g ->
+       { distance = g.distance
+       , avg_delay = avg g.delay
+       })
+  |> lineChart { x = .distance, y = .avg_delay }
+"""
+      )
+    , ( "seeded_airport_map"
+      , """
+access airports ()
+  |> filter (\\a -> a.longitude > -130.0 && a.latitude > 22.0)
+  |> map (\\a ->
+       { lon = a.longitude
+       , lat = a.latitude
+       })
+  |> scatter { x = .lon, y = .lat }
+"""
+      )
     , ( "seeded_routes"
       , """
 access flights ()

@@ -249,9 +249,25 @@ A chart asks the database for more rows than a table does. A table only
 shows a screenful, but a chart of the first two hundred points of a
 series is a misleading picture rather than a partial one.
 
-Not built: `scalar`, which wants a single number, and cannot be reached
-because a global aggregate with no `groupBy` is not expressible. Worth
-doing together. `json` was dropped as not worth a verb.
+The seeded notebook uses all three: `by_state` is a bar chart,
+`delay_by_distance` a line over 1,109 distinct distances, and
+`airport_map` a scatter of longitude against latitude, which is
+recognisably a map of the United States.
+
+Not built, and each recorded rather than worked around:
+
+- `scalar`, which wants a single number and cannot be reached until a
+  global aggregate with no `groupBy` is expressible. One job, not two.
+- `json` was dropped as not worth a verb.
+- **No scalar functions at all** — no `date_trunc`, no `round`, no
+  string operations. This is the gap that bites first: `flights.date` is
+  a minute-resolution timestamp with 213,834 distinct values, so flights
+  per day cannot be asked for, and the obvious time series in the seeded
+  data is unwritable. The `temporal` channel type is derived and tested
+  but nothing in the notebook reaches it.
+- The category palette has seven colours, so a `color` channel over more
+  than that many values will cycle. Fine for a handful of series, wrong
+  for fifty states.
 
 ### Input widgets
 
