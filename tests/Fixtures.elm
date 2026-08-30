@@ -158,6 +158,18 @@ access flights ()
   |> barChart { x = .state, y = .departures }
 """
       )
+    , ( "seeded_daily"
+      , """
+access flights ()
+  |> groupBy (\\f -> { day = startOfDay f.date })
+  |> reduce (\\g ->
+       { day = g.day
+       , flights = count g
+       })
+  |> sortBy .day
+  |> lineChart { x = .day, y = .flights }
+"""
+      )
     , ( "seeded_delay_by_distance"
       , """
 access flights ()

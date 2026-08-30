@@ -273,11 +273,24 @@ Not built, and each recorded rather than worked around:
   `floor` and `ceiling`, because DuckDB returns a double for all three
   and the column type would otherwise disagree with the value.
 
-  **This did not unblock the time series**, and that is worth being
-  precise about. Grouping by `startOfDay .date` needs `groupBy` to take
-  an expression and give it a name, and it takes a bare accessor. So the
-  `temporal` channel is still derived, tested, and unreached by anything
-  in the notebook. That is the next gap.
+- ~~Grouping by a computed value.~~ `groupBy` now takes a lambda as
+  well as bare accessors:
+
+      |> groupBy (\f -> { day = startOfDay f.date })
+
+  A lambda rather than a bare expression, because a computed key needs a
+  name of its own — `reduce` says `g.day`, and there is no column called
+  `day` to point at — and a lambda is how every other stage already
+  names things. Bare accessors still work for the common case, where the
+  key is a column and takes its own name.
+
+  Reading a key inlines its expression rather than referring to the
+  alias, which sidesteps the question of whether a SELECT alias is
+  visible to its own GROUP BY.
+
+  This is what finally reaches the `temporal` channel: the seeded
+  notebook's `daily` cell turns 213,834 minute-resolution timestamps
+  into 182 days and draws them as a line.
 - The category palette has seven colours, so a `color` channel over more
   than that many values will cycle. Fine for a handful of series, wrong
   for fifty states.

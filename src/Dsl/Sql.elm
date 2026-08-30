@@ -27,14 +27,17 @@ render checked =
         |> String.join "\n"
 
 
-groupKeys : List ( String, String ) -> Maybe String
+groupKeys : List TExpr -> Maybe String
 groupKeys keys =
     case keys of
         [] ->
             Nothing
 
         _ ->
-            Just (keys |> List.map (\( alias, column ) -> qualified alias column) |> String.join ", ")
+            -- The expressions themselves, not the aliases they are selected
+            -- under: a computed key has no column to point at, and repeating
+            -- the expression is valid wherever an alias would have been.
+            Just (keys |> List.map expr |> String.join ", ")
 
 
 {-| `intersect` and `diff` become joins; `exclude` is an anti-join and is

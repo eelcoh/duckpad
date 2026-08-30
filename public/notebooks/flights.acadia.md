@@ -6,7 +6,7 @@ Two sources, both read straight from the web. `airports` is a small CSV; `flight
 
 A terminator says how a cell is shown: `selectAll` gives a table, and `barChart`, `lineChart` or `scatter` a chart. The channels are checked against the row, so plotting something that is not a number is a compile error rather than an empty picture.
 
-`intersect` pairs two tables rather than merging them, so each side keeps its own column names and a later lambda destructures: `\(f, orig, dest) -> …`. Scalar functions work anywhere an expression does — `roundTo 1 (avg g.delay)` below, and `++` to build a label. That is what lets `routes` below join `airports` twice — once for the origin and once for the destination — without the two sides colliding.
+`intersect` pairs two tables rather than merging them, so each side keeps its own column names and a later lambda destructures: `\(f, orig, dest) -> …`. Scalar functions work anywhere an expression does — `roundTo 1 (avg g.delay)` below, and `++` to build a label. `groupBy` takes a lambda when a key has to be computed, which is how `daily` turns a minute-resolution timestamp into a day. That is what lets `routes` below join `airports` twice — once for the origin and once for the destination — without the two sides colliding.
 
 ```source airports
 csv "https://cdn.jsdelivr.net/npm/vega-datasets@2/data/airports.csv"
@@ -28,6 +28,17 @@ access flights ()
   |> sortBy (desc .departures)
   |> limit 12
   |> barChart { x = .state, y = .departures }
+```
+
+```acadia daily
+access flights ()
+  |> groupBy (\f -> { day = startOfDay f.date })
+  |> reduce (\g ->
+       { day = g.day
+       , flights = count g
+       })
+  |> sortBy .day
+  |> lineChart { x = .day, y = .flights }
 ```
 
 ```acadia delay_by_distance

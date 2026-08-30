@@ -207,10 +207,10 @@ parserChecks =
         )
         (stagesOf "access t () |> map (\\o -> { who = o.owner, amount = o.total }) |> selectAll")
     , equal "parse: groupBy takes several accessors"
-        (Ok [ GroupBy [ "origin", "destination" ] ])
+        (Ok [ GroupBy (ByColumns [ "origin", "destination" ]) ])
         (stagesOf "access t () |> groupBy .origin .destination")
     , equal "parse: groupBy takes an accessor"
-        (Ok [ GroupBy [ "region" ], SelectAll ])
+        (Ok [ GroupBy (ByColumns [ "region" ]), SelectAll ])
         (stagesOf "access t () |> groupBy .region |> selectAll")
     , equal "parse: aggregates over the group and over a column"
         (Ok
@@ -353,6 +353,27 @@ checkerChecks =
         (rowTypeOf "access orders () |> groupBy .region |> reduce (\\g -> { m = min g.owner }) |> selectAll")
     , isErr "check: sum needs a number"
         (compile "access orders () |> groupBy .region |> reduce (\\g -> { s = sum g.owner }) |> selectAll")
+    -- Computed keys: the case that makes a time series expressible.
+    , equal "group: a lambda names each key itself"
+        (Ok [ ( "day", "Timestamp" ), ( "n", "Int" ) ])
+        (rowTypeOf "access orders () |> groupBy (\\o -> { day = startOfDay o.delivered_at }) |> reduce (\\g -> { day = g.day, n = count g }) |> selectAll")
+    , contains "sql: a computed key is grouped by its expression, not an alias"
+        "GROUP BY date_trunc('day', \"orders\".\"delivered_at\")"
+        (sqlOf "access orders () |> groupBy (\\o -> { day = startOfDay o.delivered_at }) |> reduce (\\g -> { day = g.day, n = count g }) |> selectAll")
+    , contains "sql: reading the key inlines the expression again"
+        "date_trunc('day', \"orders\".\"delivered_at\") AS \"day\""
+        (sqlOf "access orders () |> groupBy (\\o -> { day = startOfDay o.delivered_at }) |> reduce (\\g -> { day = g.day, n = count g }) |> selectAll")
+    , equal "group: several computed keys"
+        (Ok [ ( "y", "Int" ), ( "m", "Int" ), ( "n", "Int" ) ])
+        (rowTypeOf "access orders () |> groupBy (\\o -> { y = year o.delivered_at, m = month o.delivered_at }) |> reduce (\\g -> { y = g.y, m = g.m, n = count g }) |> selectAll")
+    , isErr "group: a name that is not a key still has to be aggregated"
+        (compile "access orders () |> groupBy (\\o -> { day = startOfDay o.delivered_at }) |> reduce (\\g -> { o = g.owner }) |> selectAll")
+    , isErr "group: the original column is not a key once it has been transformed"
+        (compile "access orders () |> groupBy (\\o -> { day = startOfDay o.delivered_at }) |> reduce (\\g -> { d = g.delivered_at }) |> selectAll")
+    , isErr "group: a lambda has to produce a record"
+        (compile "access orders () |> groupBy (\\o -> o.region) |> reduce (\\g -> { n = count g }) |> selectAll")
+    , isErr "group: naming two keys the same is refused"
+        (compile "access orders () |> groupBy (\\o -> { a = o.region, a = o.status }) |> reduce (\\g -> { a = g.a }) |> selectAll")
     , equal "check: grouping by two columns keeps both in the row type"
         (Ok [ ( "region", "String" ), ( "status", "String" ), ( "n", "Int" ) ])
         (rowTypeOf "access orders () |> groupBy .region .status |> reduce (\\g -> { region = g.region, status = g.status, n = count g }) |> selectAll")

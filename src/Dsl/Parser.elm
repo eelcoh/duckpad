@@ -203,7 +203,7 @@ stage =
             , combineStage "exclude" Exclude
             , Parser.map Map (lambdaStage "map")
             , Parser.map Reduce (lambdaStage "reduce")
-            , Parser.succeed GroupBy |. kw "groupBy" |= some accessor
+            , Parser.succeed GroupBy |. kw "groupBy" |= groupKeys
             , Parser.succeed SortBy |. kw "sortBy" |= sortSpec
             , Parser.succeed Limit |. kw "limit" |= (Parser.int |. ws)
 
@@ -230,6 +230,17 @@ combineStage name kind =
         |= accessor
         |= lname
         |= accessor
+
+
+groupKeys : Parser GroupKeys
+groupKeys =
+    Parser.oneOf
+        [ Parser.succeed ByExpressions
+            |. sym "("
+            |= lambda
+            |. sym ")"
+        , Parser.map ByColumns (some accessor)
+        ]
 
 
 {-| `barChart { x = .origin, y = .flights }`

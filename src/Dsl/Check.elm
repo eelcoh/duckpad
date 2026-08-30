@@ -38,7 +38,9 @@ type alias Checked =
     , reads : List String
     , combines : List CheckedCombine
     , filter : Maybe TExpr
-    , groupBy : List ( String, String )
+      -- What to GROUP BY. A plain column key is just its own column
+      -- expression, so both kinds of key render the same way.
+    , groupBy : List TExpr
     , projection : Projection
     , hidden : List ( String, String, Type )
     , sort : Maybe SortSpec
@@ -168,7 +170,9 @@ type alias Builder =
     , combines : List CheckedCombine
     , phase : Phase
     , filter : Maybe TExpr
-    , groupBy : List ( String, String )
+      -- Name to expression: the name is how `reduce` refers to the key, the
+      -- expression is what the database groups by.
+    , groupBy : List ( String, TExpr )
     , projection : Projection
     , hidden : List ( String, String, Type )
     , sort : Maybe SortSpec
@@ -247,9 +251,9 @@ applyStage schema ast stage builder =
         ( Map _, _ ) ->
             Err "`map` cannot follow `groupBy` or `reduce` — use `reduce` to build the grouped row"
 
-        ( GroupBy columns, Rows ) ->
-            groupKeys columns builder
-                |> Result.map (\keys -> { builder | groupBy = keys, phase = Grouped })
+        ( GroupBy keys, Rows ) ->
+            groupKeys ast keys builder
+                |> Result.map (\resolved -> { builder | groupBy = resolved, phase = Grouped })
 
         ( GroupBy _, _ ) ->
             Err "`groupBy` has to come before any projection"
@@ -410,27 +414,67 @@ requireChannels kind channels =
         |> Result.map (\_ -> { kind = kind, channels = channels })
 
 
-{-| Resolve every grouping key, refusing a repeat.
+{-| Resolve every grouping key to a name and an expression.
 
-Grouping twice by the same column is accepted by SQL and means nothing, so it
-is much more likely to be a slip than an intention.
+A bare accessor takes its own name. A lambda names each key itself, which is
+what makes a computed key referable at all: `reduce` says `g.day`, and there
+is no column called `day` to point at.
+
+Repeating a key is refused. SQL accepts it and it means nothing, so it is far
+more likely to be a slip.
 
 -}
-groupKeys : List String -> Builder -> Result String (List ( String, String ))
-groupKeys columns builder =
-    case List.filter (\c -> countOf c columns > 1) columns |> List.head of
-        Just repeated ->
-            Err ("`groupBy` names `" ++ repeated ++ "` twice")
+groupKeys : Pipeline -> GroupKeys -> Builder -> Result String (List ( String, TExpr ))
+groupKeys ast keys builder =
+    case keys of
+        ByColumns columns ->
+            case List.filter (\c -> countOf c columns > 1) columns |> List.head of
+                Just repeated ->
+                    Err ("`groupBy` names `" ++ repeated ++ "` twice")
 
-        Nothing ->
-            columns
-                |> List.foldl
-                    (\column acc ->
-                        Result.map2 (\keys ( alias, _ ) -> keys ++ [ ( alias, column ) ])
-                            acc
-                            (resolve column builder.sides)
-                    )
-                    (Ok [])
+                Nothing ->
+                    columns
+                        |> List.foldl
+                            (\column acc ->
+                                Result.map2
+                                    (\resolved ( alias, t ) -> resolved ++ [ ( column, TCol alias column t ) ])
+                                    acc
+                                    (resolve column builder.sides)
+                            )
+                            (Ok [])
+
+        ByExpressions lambda ->
+            bind ast builder lambda
+                |> Result.andThen (\env -> computedKeys env lambda.body)
+
+
+computedKeys : Env -> Expr -> Result String (List ( String, TExpr ))
+computedKeys env body =
+    case body of
+        Record [] ->
+            Err "this `groupBy` names no keys"
+
+        Record fields ->
+            let
+                names =
+                    List.map .name fields
+            in
+            case List.filter (\n -> countOf n names > 1) names |> List.head of
+                Just repeated ->
+                    Err ("`groupBy` names `" ++ repeated ++ "` twice")
+
+                Nothing ->
+                    fields
+                        |> List.foldl
+                            (\f acc ->
+                                Result.map2 (\done t -> done ++ [ ( f.name, t ) ])
+                                    acc
+                                    (checkExpr env f.value)
+                            )
+                            (Ok [])
+
+        _ ->
+            Err "a `groupBy` lambda has to produce a record, like `{ day = startOfDay f.date }`"
 
 
 conjoin : Maybe TExpr -> TExpr -> TExpr
@@ -562,7 +606,7 @@ type alias Env =
     { bindings : List ( String, Side )
     , declarations : List TypeDecl
     , inReduce : Bool
-    , groupKeys : List String
+    , groupKeys : List ( String, TExpr )
     , sides : List Side
     }
 
@@ -614,7 +658,7 @@ groupEnv ast builder lambda =
                 { bindings = List.map (\side -> ( name, side )) builder.sides
                 , declarations = ast.declarations
                 , inReduce = True
-                , groupKeys = List.map Tuple.second builder.groupBy
+                , groupKeys = builder.groupBy
                 , sides = builder.sides
                 }
 
@@ -717,7 +761,7 @@ finish builder =
                         , reads = builder.source :: List.map .table builder.combines
                         , combines = builder.combines
                         , filter = builder.filter
-                        , groupBy = builder.groupBy
+                        , groupBy = List.map Tuple.second builder.groupBy
                         , projection = builder.projection
                         , hidden = builder.hidden
                         , sort = builder.sort
@@ -783,6 +827,11 @@ validateDecl columns decl =
                         Nothing ->
                             Ok ()
                )
+
+
+lookupKey : String -> List ( String, TExpr ) -> Maybe TExpr
+lookupKey name keys =
+    keys |> List.filter (\( n, _ ) -> n == name) |> List.head |> Maybe.map Tuple.second
 
 
 describeKeys : List String -> String
@@ -924,25 +973,25 @@ checkExpr env expr =
 
                 Just side ->
                     if env.inReduce then
-                        resolve column env.sides
-                            |> Result.andThen
-                                (\( alias, t ) ->
-                                    if not (List.member column env.groupKeys) then
-                                        Err
-                                            ("`"
-                                                ++ column
-                                                ++ "` is not "
-                                                ++ describeKeys env.groupKeys
-                                                ++ ", so it has no single value per group. Wrap it in an aggregate, like `sum "
-                                                ++ obj
-                                                ++ "."
-                                                ++ column
-                                                ++ "`"
-                                            )
+                        -- A key is referred to by the name `groupBy` gave it,
+                        -- and reading it inlines the expression rather than
+                        -- relying on the alias existing yet.
+                        case lookupKey column env.groupKeys of
+                            Just keyExpr ->
+                                Ok keyExpr
 
-                                    else
-                                        Ok (TCol alias column t)
-                                )
+                            Nothing ->
+                                Err
+                                    ("`"
+                                        ++ column
+                                        ++ "` is not "
+                                        ++ describeKeys (List.map Tuple.first env.groupKeys)
+                                        ++ ", so it has no single value per group. Wrap it in an aggregate, like `sum "
+                                        ++ obj
+                                        ++ "."
+                                        ++ column
+                                        ++ "`"
+                                    )
 
                     else
                         case lookupColumn column side.columns of

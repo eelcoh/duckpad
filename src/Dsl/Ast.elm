@@ -3,6 +3,7 @@ module Dsl.Ast exposing
     , Constructor
     , CombineKind(..)
     , Expr(..)
+    , GroupKeys(..)
     , Pattern(..)
     , Field
     , Lambda
@@ -86,7 +87,7 @@ type Stage
       -- One or more keys. Repeated accessors rather than a list, because the
       -- language has no list syntax and `intersect .a t .b` already reads
       -- this way.
-    | GroupBy (List String)
+    | GroupBy GroupKeys
     | Reduce Lambda
     | SortBy SortSpec
     | Limit Int
@@ -95,6 +96,19 @@ type Stage
       -- A chart is a terminator like `selectAll`: the cell's value is still
       -- its rows, and this says how to show them.
     | Chart ChartKind (List ( String, String ))
+
+
+{-| How a `groupBy` names its keys.
+
+Bare accessors for the common case, where the key is a column and takes its
+name; a lambda when the key is computed, because then it needs a name of its
+own and an expression to compute it — and a lambda is how every other stage
+already writes one.
+
+-}
+type GroupKeys
+    = ByColumns (List String)
+    | ByExpressions Lambda
 
 
 type alias SortSpec =
