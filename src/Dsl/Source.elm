@@ -1,4 +1,4 @@
-module Dsl.Source exposing (Format(..), Spec, extension, formatName, parse, reader)
+module Dsl.Source exposing (Format(..), Option(..), Spec, extension, formatName, parse, reader, readerOptions)
 
 {-| The tiny language a source cell is written in.
 
@@ -23,7 +23,23 @@ type Format
 type alias Spec =
     { format : Format
     , uri : String
+    , options : List Option
     }
+
+
+{-| Reader options, for files that are not tidy.
+
+Only the handful that decide whether a file can be read at all. The
+motivating case is real: palmerpenguins writes missing values as the string
+`NA`, so without `nulls "NA"` every numeric column is inferred as text and the
+file is useless.
+
+-}
+type Option
+    = Nulls String
+    | Delimiter String
+    | Header Bool
+    | Skip Int
 
 
 parse : String -> Result String Spec
@@ -44,7 +60,84 @@ spec =
         |. ws
         |= quoted
         |. ws
+        |= many option
+        |. ws
         |. Parser.end
+
+
+option : Parser Option
+option =
+    Parser.oneOf
+        [ Parser.succeed Nulls |. keyword "nulls" |= quoted
+        , Parser.succeed Delimiter |. keyword "delimiter" |= quoted
+        , Parser.succeed Header |. keyword "header" |= boolean
+        , Parser.succeed Skip |. keyword "skip" |= wholeNumber
+        ]
+        |. ws
+
+
+keyword : String -> Parser ()
+keyword word =
+    Parser.succeed () |. Parser.keyword word |. ws
+
+
+boolean : Parser Bool
+boolean =
+    Parser.oneOf
+        [ Parser.succeed True |. Parser.keyword "true"
+        , Parser.succeed False |. Parser.keyword "false"
+        ]
+        |. ws
+
+
+wholeNumber : Parser Int
+wholeNumber =
+    Parser.int |. ws
+
+
+many : Parser a -> Parser (List a)
+many p =
+    Parser.loop [] <|
+        \acc ->
+            Parser.oneOf
+                [ Parser.succeed (\x -> Parser.Loop (x :: acc)) |= p
+                , Parser.succeed (Parser.Done (List.reverse acc))
+                ]
+
+
+{-| The options as DuckDB wants them, appended to the reader call.
+
+Rendered here rather than in the bridge so that quoting a value the reader
+supplied happens in one place, next to the URI checks.
+
+-}
+readerOptions : Spec -> String
+readerOptions parsed =
+    parsed.options |> List.map (\o -> ", " ++ renderOption o) |> String.concat
+
+
+renderOption : Option -> String
+renderOption o =
+    case o of
+        Nulls value ->
+            "nullstr=" ++ quote value
+
+        Delimiter value ->
+            "delim=" ++ quote value
+
+        Header True ->
+            "header=true"
+
+        Header False ->
+            "header=false"
+
+        Skip n ->
+            "skip=" ++ String.fromInt n
+
+
+quote : String -> String
+quote value =
+    "'" ++ String.replace "'" "''" value ++ "'"
 
 
 format : Parser Format
@@ -99,7 +192,10 @@ validate parsed =
         uri =
             String.trim parsed.uri
     in
-    if uri == "" then
+    if parsed.format /= Csv && not (List.isEmpty parsed.options) then
+        Err "reader options only apply to a csv"
+
+    else if uri == "" then
         Err "this source has no location"
 
     else if String.startsWith "https://" uri then

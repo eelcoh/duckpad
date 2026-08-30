@@ -21,7 +21,7 @@ schema DuckDB inferred, because for a source that is the only place a row type
 can come from.
 
 -}
-port loadSource : { cellId : String, format : String, uri : String } -> Cmd msg
+port loadSource : { cellId : String, format : String, uri : String, options : String } -> Cmd msg
 
 
 {-| Forget a cell's table or view, when it is deleted or renamed. Without this

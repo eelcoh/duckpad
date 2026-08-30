@@ -186,7 +186,7 @@ function stopwatch(label) {
 // pruning down into the file, so a query over a remote Parquet fetches the
 // byte ranges it needs instead of the whole thing. Materialising it here would
 // pull every row into wasm memory and make the range requests pointless.
-app.ports.loadSource.subscribe(async ({ cellId, format, uri }) => {
+app.ports.loadSource.subscribe(async ({ cellId, format, uri, options }) => {
   const clock = stopwatch(`source ${cellId}`);
   const name = quoteIdent(cellId);
   const reader = READERS[format];
@@ -200,7 +200,7 @@ app.ports.loadSource.subscribe(async ({ cellId, format, uri }) => {
     clock.lap('register');
 
     await conn.query(
-      `CREATE OR REPLACE VIEW ${name} AS SELECT * FROM ${reader}('${vfsName}')`
+      `CREATE OR REPLACE VIEW ${name} AS SELECT * FROM ${reader}('${vfsName}'${options})`
     );
     clock.lap('view');
 

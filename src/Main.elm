@@ -710,6 +710,14 @@ dispatchInput cell rest model =
                 }
 
 
+{-| What identifies a source: where it points and how it is read. An option
+changes the data as surely as the URI does.
+-}
+sourceKey : Dsl.Source.Spec -> String
+sourceKey spec =
+    Dsl.Source.formatName spec.format ++ " " ++ spec.uri ++ Dsl.Source.readerOptions spec
+
+
 valueOf : String -> Dsl.Input.Spec -> Model -> Literal
 valueOf id widget model =
     Dict.get id model.inputs |> Maybe.withDefault (Dsl.Input.defaultLiteral widget)
@@ -756,7 +764,7 @@ dispatchSource cell rest model =
                     stateOf cell.id model
 
                 key =
-                    Engine.valueKeyFor (graphOf model) model.states cell.id (Dsl.Source.formatName spec.format ++ " " ++ spec.uri)
+                    Engine.valueKeyFor (graphOf model) model.states cell.id (sourceKey spec)
             in
             if state.keyForValue == Just key && Engine.hasValue state then
                 advance
@@ -782,6 +790,7 @@ dispatchSource cell rest model =
                     { cellId = cell.id
                     , format = Dsl.Source.formatName spec.format
                     , uri = spec.uri
+                    , options = Dsl.Source.readerOptions spec
                     }
                 )
 
@@ -959,8 +968,7 @@ applyOutcome outcome model =
                             |> Maybe.andThen (\c -> Dsl.Source.parse c.source |> Result.toMaybe)
                             |> Maybe.map
                                 (\spec ->
-                                    Engine.valueKeyFor (graphOf model) model.states id
-                                        (Dsl.Source.formatName spec.format ++ " " ++ spec.uri)
+                                    Engine.valueKeyFor (graphOf model) model.states id (sourceKey spec)
                                 )
 
                     else

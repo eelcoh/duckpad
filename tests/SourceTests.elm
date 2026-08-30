@@ -6,7 +6,7 @@ how such a cell appears in the file format.
 
 import Cell exposing (Kind(..))
 import Check exposing (Check, assert, equal, isErr)
-import Dsl.Source as Source exposing (Format(..))
+import Dsl.Source as Source exposing (Format(..), Option(..))
 import Notebook
 
 
@@ -18,19 +18,19 @@ checks =
 specChecks : List Check
 specChecks =
     [ equal "source: a csv over https"
-        (Ok { format = Csv, uri = "https://example.com/a.csv" })
+        (Ok { format = Csv, uri = "https://example.com/a.csv", options = [] })
         (Source.parse "csv \"https://example.com/a.csv\"")
     , equal "source: parquet"
-        (Ok { format = Parquet, uri = "https://example.com/a.parquet" })
+        (Ok { format = Parquet, uri = "https://example.com/a.parquet", options = [] })
         (Source.parse "parquet \"https://example.com/a.parquet\"")
     , equal "source: json"
-        (Ok { format = Json, uri = "https://example.com/a.json" })
+        (Ok { format = Json, uri = "https://example.com/a.json", options = [] })
         (Source.parse "json \"https://example.com/a.json\"")
     , equal "source: a path relative to the notebook"
-        (Ok { format = Csv, uri = "data/orders.csv" })
+        (Ok { format = Csv, uri = "data/orders.csv", options = [] })
         (Source.parse "csv \"data/orders.csv\"")
     , equal "source: surrounding whitespace and comments are ignored"
-        (Ok { format = Csv, uri = "data/orders.csv" })
+        (Ok { format = Csv, uri = "data/orders.csv", options = [] })
         (Source.parse "-- where the data lives\n  csv  \"data/orders.csv\"  \n")
 
     -- The URI is handed to the browser to fetch, so what it may name is
@@ -61,6 +61,23 @@ specChecks =
         (Source.parse "csv")
     , isErr "source: an empty location is refused"
         (Source.parse "csv \"\"")
+    -- Reader options, for files that are not tidy.
+    , equal "source: a null string"
+        (Ok { format = Csv, uri = "a.csv", options = [ Nulls "NA" ] })
+        (Source.parse "csv \"a.csv\" nulls \"NA\"")
+    , equal "source: several options together"
+        (Ok { format = Csv, uri = "a.csv", options = [ Delimiter ";", Header False, Skip 2 ] })
+        (Source.parse "csv \"a.csv\" delimiter \";\" header false skip 2")
+    , equal "source: options render as DuckDB wants them"
+        ", nullstr='NA', delim=';'"
+        (Source.readerOptions { format = Csv, uri = "a.csv", options = [ Nulls "NA", Delimiter ";" ] })
+    , equal "source: a value with a quote in it is escaped"
+        ", nullstr='it''s'"
+        (Source.readerOptions { format = Csv, uri = "a.csv", options = [ Nulls "it's" ] })
+    , isErr "source: options do not apply to parquet, which has none"
+        (Source.parse "parquet \"a.parquet\" nulls \"NA\"")
+    , isErr "source: an unknown option is refused"
+        (Source.parse "csv \"a.csv\" wobble \"NA\"")
     , equal "source: each format names the DuckDB reader for it"
         [ "read_csv_auto", "read_parquet", "read_json_auto" ]
         (List.map Source.reader [ Csv, Parquet, Json ])

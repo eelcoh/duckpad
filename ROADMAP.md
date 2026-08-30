@@ -837,11 +837,17 @@ recorded as they were hit, in the order they are worth closing:
    slider `by_state` does, which is the clearest demonstration that an
    input feeds whatever depends on it rather than one designated cell.
 
-3. **Reader options for sources** — a null string, an explicit
-   delimiter. Small, and it is what stands between the notebook and
-   messy real-world CSVs: palmerpenguins writes missing values as the
-   string `NA`, so DuckDB types every numeric column as text and the
-   file is effectively unreadable.
+3. ~~**Reader options for sources**~~ — done. `nulls`, `delimiter`,
+   `header` and `skip`, appended to the reader call:
+
+       csv "…/penguins.csv" nulls "NA"
+
+   That example is the motivating one and it works: without the option
+   `bill_length_mm` is inferred as text and the file is useless; with
+   it, the column is a double with two real nulls. Options apply to csv
+   only, since that is the format that has them, and they are part of a
+   source's cache key — an option changes the data as surely as the URI
+   does.
 
 4. **`union` and `xunion`** — the full outer joins, completing the set
    Acadia's `Rows` module has. `intersect`, `diff` and `exclude` are
@@ -887,6 +893,12 @@ type rule. Worth weighing against the thesis at the top of this
 document before starting: `rank` within a partition is what a pandas
 user asks for most, but a windowing abstraction is also the most complex
 thing this language would contain.
+
+Note on **list aggregates**, which an earlier draft of this section
+called cheap: they are not. `list(x)` returns a list, and this type
+language has no list — adding one means a new constructor through the
+checker, the Elm codegen, the table rendering and the chart channels.
+Worth doing only if something actually needs it.
 
 **Pivoting is done, and not as `PIVOT`.** DuckDB's `PIVOT` produces one
 column per distinct value found in the data, so its result has no row
