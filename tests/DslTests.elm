@@ -624,6 +624,9 @@ keywordFieldChecks =
     [ equal "keywords: a column may be called `from`"
         (Ok (Access "o" "from"))
         (bodyOf "access t () |> map (\\o -> o.from)")
+    , equal "keywords: a projection may name a field `from`"
+        (Ok [ ( "from", "String" ) ])
+        (rowTypeOf "access orders () |> map (\\o -> { from = o.owner }) |> selectAll")
     , equal "keywords: a projection may name a field `select`"
         (Ok [ ( "select", "String" ) ])
         (rowTypeOf "access orders () |> map (\\o -> { select = o.owner }) |> selectAll")

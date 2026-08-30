@@ -1,6 +1,8 @@
 module Engine exposing
     ( CellState
+    , Shape
     , blockingUpstream
+    , display
     , compileKeyFor
     , hasValue
     , initialState
@@ -22,6 +24,7 @@ invalidates the second and not the first.
 -}
 
 import Cell exposing (Cell, Status(..))
+import Dsl.Ast exposing (TypeDecl)
 import Dag exposing (Graph)
 import Dict exposing (Dict)
 import Dsl.Compile exposing (Compiled)
@@ -186,3 +189,35 @@ markStale seeds graph states =
                 Dict.update id (Maybe.map (\s -> { s | status = Stale })) acc
             )
             states
+
+
+{-| What is needed to render a cell's result: the row type, whatever declared
+types its columns refer to, and whether the order means anything.
+
+A query cell has all of that on its compilation. A source cell is never
+compiled — DuckDB reports its row type instead — so it has to be handled
+separately. Forgetting that is why a source used to show "Running…" under a
+pill that already said it was fresh.
+
+-}
+type alias Shape =
+    { rowType : List ( String, Type )
+    , declarations : List TypeDecl
+    , ordered : Bool
+    }
+
+
+display : CellState -> Maybe Shape
+display state =
+    case state.compiled of
+        Just compiled ->
+            Just
+                { rowType = compiled.rowType
+                , declarations = compiled.declarations
+                , ordered = compiled.orderSignificant
+                }
+
+        Nothing ->
+            state.rowType
+                |> Maybe.map
+                    (\rowType -> { rowType = rowType, declarations = [], ordered = False })

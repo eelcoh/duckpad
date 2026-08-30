@@ -281,4 +281,29 @@ engineChecks =
         )
     , assert "engine: a never-run cell has no value"
         (not (Engine.hasValue Engine.initialState))
+
+    -- A source is never compiled: DuckDB reports its row type instead. A
+    -- result view that only knew how to read a compilation showed sources as
+    -- still running under a pill that said they were fresh.
+    , equal "engine: a query cell renders from its compilation"
+        (Just defaultRow)
+        (Engine.display (upstreamState defaultRow "H1") |> Maybe.map .rowType)
+    , equal "engine: a source cell renders from the row type DuckDB reported"
+        (Just [ ( "iata", TString ) ])
+        (Engine.display
+            { initialState
+                | status = Fresh { cached = False, millis = 1 }
+                , rowType = Just [ ( "iata", TString ) ]
+                , table = Just (tableWith "H1")
+            }
+            |> Maybe.map .rowType
+        )
+    , equal "engine: a cell with no row type at all cannot be rendered"
+        Nothing
+        (Engine.display Engine.initialState |> Maybe.map .rowType)
     ]
+
+
+initialState : CellState
+initialState =
+    Engine.initialState

@@ -18,7 +18,7 @@ import Dsl.Check exposing (Cardinality(..))
 import Dsl.Compile exposing (Compiled)
 import Dsl.Schema as Schema exposing (Schema, Type(..))
 import Dsl.Source
-import Engine exposing (CellState)
+import Engine exposing (CellState, Shape)
 import Html exposing (Html, button, details, div, input, p, pre, section, span, summary, table, tbody, td, text, textarea, th, thead, tr)
 import Html.Attributes exposing (attribute, class, classList, disabled, placeholder, rows, spellcheck, title, value)
 import Html.Events exposing (onBlur, onClick, onInput)
@@ -1147,11 +1147,11 @@ viewOutput cell state =
                     [ text ("Cyclic dependency: " ++ String.join " ↔ " cyclic) ]
 
             Stale ->
-                case ( state.table, state.compiled ) of
-                    ( Just t, Just compiled ) ->
+                case ( state.table, Engine.display state ) of
+                    ( Just t, Just shape ) ->
                         div [ class "stale-wrap" ]
                             [ div [ class "out out-stale" ] [ text "Stale — showing the previous result until this re-runs." ]
-                            , viewTable compiled t
+                            , viewTable shape t
                             ]
 
                     _ ->
@@ -1161,20 +1161,16 @@ viewOutput cell state =
                 div [ class "out out-idle" ] [ text "Not run yet." ]
 
             _ ->
-                case ( state.table, state.compiled ) of
-                    ( Just t, Just compiled ) ->
-                        viewTable compiled t
+                case ( state.table, Engine.display state ) of
+                    ( Just t, Just shape ) ->
+                        viewTable shape t
 
                     _ ->
                         div [ class "out out-idle" ] [ text "Running…" ]
 
 
-{-| Rendered against the compiler's row type rather than against whatever JSON
-happens to arrive, so a timestamp shows as a date and a custom type shows as
-its constructor.
--}
-viewTable : Compiled -> Table -> Html Msg
-viewTable compiled t =
+viewTable : Shape -> Table -> Html Msg
+viewTable shape t =
     div []
         [ div [ class "result-meta" ]
             [ text
@@ -1186,7 +1182,7 @@ viewTable compiled t =
                         else
                             ""
                        )
-                    ++ (if compiled.orderSignificant then
+                    ++ (if shape.ordered then
                             " · ordered"
 
                         else
@@ -1198,7 +1194,7 @@ viewTable compiled t =
             [ table []
                 [ thead []
                     [ tr []
-                        (compiled.rowType
+                        (shape.rowType
                             |> List.map
                                 (\( name, columnType ) ->
                                     th []
@@ -1213,10 +1209,10 @@ viewTable compiled t =
                         |> List.map
                             (\row ->
                                 tr []
-                                    (compiled.rowType
+                                    (shape.rowType
                                         |> List.map
                                             (\( name, columnType ) ->
-                                                td [] [ text (renderValue compiled.declarations columnType name row) ]
+                                                td [] [ text (renderValue shape.declarations columnType name row) ]
                                             )
                                     )
                             )
