@@ -20,7 +20,7 @@ import Dsl.Schema as Schema exposing (Schema, Type(..))
 import Dsl.Source
 import Engine exposing (CellState)
 import Html exposing (Html, button, details, div, input, p, pre, section, span, summary, table, tbody, td, text, textarea, th, thead, tr)
-import Html.Attributes exposing (class, classList, disabled, placeholder, rows, title, value)
+import Html.Attributes exposing (attribute, class, classList, disabled, placeholder, rows, spellcheck, title, value)
 import Html.Events exposing (onBlur, onClick, onInput)
 import Json.Decode as D
 import Notebook exposing (Notebook)
@@ -998,6 +998,14 @@ viewCell model graph cell =
             ]
         , textarea
             [ class "cell-source"
+
+            -- Browsers spell-check a textarea by default, which underlines
+            -- source in red as though it were an error. The mobile
+            -- attributes go with it: autocorrect happily rewrites code.
+            , spellcheck False
+            , attribute "autocorrect" "off"
+            , attribute "autocapitalize" "off"
+            , attribute "autocomplete" "off"
             , value cell.source
             , rows (max 3 (List.length (String.lines cell.source)))
             , placeholder

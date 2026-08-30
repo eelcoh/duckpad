@@ -10,11 +10,8 @@ import * as duckdb from 'https://cdn.jsdelivr.net/npm/@duckdb/duckdb-wasm@1.32.0
 
 const PREVIEW_ROWS = 200;
 
-// Nullability for a source is observed from at most this many rows. Scanning a
-// three-million-row Parquet just to learn which columns can be absent would
-// pull the whole file over the network and throw away the point of reading it
-// a page at a time. A column whose only nulls lie past this shows as
-// non-nullable and renders as `?`, which is visible rather than silent.
+// How many rows are sampled to learn which columns contain nulls, for formats
+// that cannot say. Parquet can, and is handled separately.
 const NULL_SAMPLE = 200000;
 
 const READERS = {
@@ -163,7 +160,7 @@ app.ports.loadSource.subscribe(async ({ cellId, format, uri }) => {
       `CREATE OR REPLACE VIEW ${name} AS SELECT * FROM ${reader}('${vfsName}')`
     );
 
-    const described = await describe(name);
+    const described = await describe(name, format, vfsName);
     const counted = plainRows(await conn.query(`SELECT count(*) AS n FROM ${name}`))[0];
     const rowCount = Number(counted.n);
     const preview = await conn.query(`SELECT * FROM ${name} LIMIT ${PREVIEW_ROWS}`);
@@ -198,23 +195,52 @@ app.ports.loadSource.subscribe(async ({ cellId, format, uri }) => {
 // NULL constraints, so every column reports itself as nullable and the row
 // type would drown in Maybe. What the notebook actually wants to know is
 // whether a column *does* contain nulls, which is a question about the data.
-async function describe(name) {
+async function describe(name, format, vfsName) {
   const described = plainRows(await conn.query(`DESCRIBE ${name}`));
 
-  const nullCounts = described
-    .map((c) => `count(*) - count(${quoteIdent(c.column_name)}) AS ${quoteIdent(c.column_name)}`)
-    .join(', ');
-  const observed = plainRows(
-    await conn.query(
-      `SELECT ${nullCounts} FROM (SELECT * FROM ${name} LIMIT ${NULL_SAMPLE})`
-    )
-  )[0];
+  const nulls =
+    (format === 'parquet' ? await nullsFromParquet(vfsName) : null) ||
+    (await nullsBySampling(name, described));
 
   return described.map((c) => ({
     name: c.column_name,
     type: c.column_type,
-    nullable: Number(observed[c.column_name]) > 0,
+    nullable: Number(nulls[c.column_name] || 0) > 0,
   }));
+}
+
+// Parquet already knows. Every column chunk carries a null count in the file
+// footer, so the answer is exact for the whole file and costs one metadata
+// read instead of a scan — which matters most for exactly the files where
+// scanning would hurt.
+async function nullsFromParquet(vfsName) {
+  try {
+    const rows = plainRows(
+      await conn.query(
+        `SELECT path_in_schema AS column_name, sum(stats_null_count)::BIGINT AS nulls
+         FROM parquet_metadata('${vfsName}')
+         GROUP BY path_in_schema`
+      )
+    );
+    return Object.fromEntries(rows.map((r) => [r.column_name, Number(r.nulls)]));
+  } catch {
+    // Statistics are optional in the format, and a writer may omit them.
+    return null;
+  }
+}
+
+// Everything else has to be counted. Capped, because a source is a view over
+// a file that may be remote: scanning all of it to learn which columns can be
+// absent would defeat reading it a page at a time. A column whose only nulls
+// lie past the cap shows as non-nullable and renders as `?`, which is visible
+// rather than silent.
+async function nullsBySampling(name, described) {
+  const counts = described
+    .map((c) => `count(*) - count(${quoteIdent(c.column_name)}) AS ${quoteIdent(c.column_name)}`)
+    .join(', ');
+  return plainRows(
+    await conn.query(`SELECT ${counts} FROM (SELECT * FROM ${name} LIMIT ${NULL_SAMPLE})`)
+  )[0];
 }
 
 app.ports.materialize.subscribe(async ({ cellId, sql, orderSignificant }) => {
@@ -238,7 +264,9 @@ app.ports.materialize.subscribe(async ({ cellId, sql, orderSignificant }) => {
       ok: true,
       cellId,
       columns: schemaOf(preview),
-      described: await describe(name),
+      // A materialised query result is local and has no file metadata, so
+      // nullability is sampled — cheaply, since nothing has to be fetched.
+      described: await describe(name, null, null),
       rows,
       rowCount: Number(n),
       truncated: Number(n) > rows.length,

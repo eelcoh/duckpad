@@ -323,11 +323,13 @@ Decisions:
   `javascript:` are refused, as is plain http except on localhost. The
   first attempt tested for `://` and let `data:` and `javascript:`
   through as relative paths; the tests caught it.
-- **Nullability is sampled, not counted in full.** Scanning three million
-  Parquet rows to learn which columns can be absent would pull the whole
-  file and throw away the reason for reading it a page at a time. A
-  column whose only nulls lie past the sample renders as `?` rather than
-  failing silently.
+- **Nullability comes from Parquet's own metadata where it exists.**
+  Every column chunk carries a null count in the file footer, so the
+  answer is exact for the whole file and costs one metadata read.
+  Measured against the CLI: 0.05s for three million rows, against 0.14s
+  to sample 200k. For CSV and JSON, which cannot say, it is sampled up
+  to a cap — a column whose only nulls lie past the cap renders as `?`
+  rather than failing silently.
 - The hardcoded base table is gone. The seeded notebook uses a source
   cell, so the mechanism is the only path in. It ships two: `orders` and
   `customers`, keyed on `owner` so the combining stages have something
@@ -487,11 +489,9 @@ The cell surface is a plain `<textarea>` over hand-written CSS, which was
 enough to get the engine working and is now the weakest part of the
 notebook. Four changes, in the order they should be done:
 
-1. **Suppress the spell checker.** The browser currently underlines DSL
-   source in red, which is noise that looks like an error. One attribute
-   on the textarea (`spellcheck False`, plus `autocorrect` and
-   `autocapitalize` off so mobile keyboards do not rewrite code). Do
-   this first; it is a one-line change and an active annoyance.
+1. ~~**Suppress the spell checker.**~~ Done. `spellcheck False` on the
+   textarea, with `autocorrect`, `autocapitalize` and `autocomplete` off
+   so mobile keyboards do not rewrite code.
 
 2. **A monospace font with programming ligatures.** Fira Code is the
    obvious pick and is on Google Fonts; JetBrains Mono, Iosevka or
