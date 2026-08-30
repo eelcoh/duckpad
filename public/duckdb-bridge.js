@@ -7,6 +7,7 @@
 // so the value cache can decide whether downstream work is needed.
 
 import * as duckdb from 'https://cdn.jsdelivr.net/npm/@duckdb/duckdb-wasm@1.32.0/+esm';
+import { exportStatic } from './export.js';
 
 const PREVIEW_ROWS = 200;
 
@@ -51,6 +52,8 @@ app.ports.setCaret.subscribe(({ id, pos }) => {
     el.setSelectionRange(pos, pos);
   });
 });
+
+app.ports.exportStatic.subscribe(exportStatic);
 
 app.ports.persist.subscribe((content) => {
   try {

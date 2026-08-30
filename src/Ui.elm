@@ -9,6 +9,7 @@ module Ui exposing
     , mono
     , monoSize
     , muted
+    , dropOnExport
     , pill
     , sans
     , stale
@@ -30,6 +31,7 @@ rendered Markdown of a prose cell, and the result table's sticky header.
 import Element exposing (Element)
 import Element.Border as Border
 import Element.Font as Font
+import Html.Attributes
 
 
 
@@ -133,3 +135,15 @@ pill colour label =
         , Element.paddingXY 8 3
         ]
         (Element.text (String.toUpper label))
+
+
+{-| Marks a control that has no meaning in an exported notebook.
+
+Export snapshots the page as it stands, so anything that only works because
+the app is running — a button, a delete cross — has to be identifiable and
+removed rather than left in place looking clickable.
+
+-}
+dropOnExport : Element.Attribute msg
+dropOnExport =
+    Element.htmlAttribute (Html.Attributes.attribute "data-export" "drop")

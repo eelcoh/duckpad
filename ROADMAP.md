@@ -718,17 +718,46 @@ notebook. Four changes, in the order they should be done:
    private business — but it is a state the app did not previously have
    to hold.
 
-## Phase 8 — Sharing story
+## Phase 8 — Sharing story  [DONE]
 
-- "Export as static artifact": bake compiled JS + snapshotted/OPFS
-  data into a single shareable HTML file, viewable with no daemon.
-- Promote hand-authored Elm escape-hatch cells (structurally supported
-  since Phase 4) to a polished, documented feature.
+The plan here said "bake compiled JS and snapshotted data into a single
+shareable HTML file, viewable with no daemon". That was written when a
+daemon was expected. There is no daemon, the page is already static, and
+"viewable without one" has been true since Phase 5 — so the original
+wording no longer describes anything missing.
+
+What was actually missing is a **report**: the notebook as it currently
+stands, results and all, for someone who wants to read what you found
+rather than re-run it. `Export` writes a single page that carries no
+database, fetches nothing, and does not need this application to open.
+
+It works by snapshotting the rendered page rather than re-deriving it,
+which is the only way to be certain the export shows what the reader was
+actually looking at. Three things have to be repaired in the copy, and
+each is a property of the DOM rather than an oversight:
+
+- A chart lives in a canvas, and a cloned canvas is blank — its pixels
+  are not markup. The image is read off the live page and inlined.
+- A textarea's contents are a property, not markup, so a clone
+  serialises empty. For a code cell the coloured layer underneath
+  already shows the source, so the textarea goes; prose caught
+  mid-edit becomes text.
+- Every control is inert once the scripts are gone, so it should not be
+  there at all. Chrome that only makes sense while the app is running
+  is marked `data-export="drop"` in the view rather than guessed at by
+  class name, since elm-ui's class names are opaque.
+
+Note that the `.md` file and the export are different artefacts and both
+are worth having: the Markdown is the document, diffable and re-runnable;
+the export is a picture of one run of it.
+
+Not built: promoting hand-authored Elm cells to a documented feature,
+which still waits on a daemon that nothing else needs.
 
 ## Current state (2026-08-29)
 
 `mise run build` compiles the shell, `mise run serve` hosts it on :8080,
-`mise run test` runs 247 checks under node, and `mise run roundtrip`
+`mise run test` runs 293 checks under node, and `mise run roundtrip`
 executes every fixture's generated SQL against a real DuckDB and compiles
 every generated module with `elm make`.
 

@@ -1,4 +1,4 @@
-port module Ports exposing (dbReady, dropTable, fileOpened, loadSource, materialize, persist, queryOutcome, requestOpen, requestSave, setCaret)
+port module Ports exposing (dbReady, dropTable, exportStatic, fileOpened, loadSource, materialize, persist, queryOutcome, requestOpen, requestSave, setCaret)
 
 import Json.Decode as D
 
@@ -60,3 +60,9 @@ Enter and Tab compute where it should be instead, and this puts it there once
 the new value has been rendered.
 -}
 port setCaret : { id : String, pos : Int } -> Cmd msg
+
+
+{-| Save the notebook as it currently stands: a single page with its results
+already in it, no database and no network.
+-}
+port exportStatic : String -> Cmd msg

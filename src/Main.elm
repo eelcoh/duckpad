@@ -105,6 +105,7 @@ type Msg
     | FileOpened D.Value
     | DismissNotice
     | ResetNotebook
+    | ExportNotebook
     | EditProse String
     | KeyEdit String Indent.Edit
     | ToggleArtefacts String
@@ -461,6 +462,13 @@ step msg model =
             -- Nothing to do either way: if the field could not be focused the
             -- reader can still click it.
             ( model, Cmd.none )
+
+        ExportNotebook ->
+            -- Any prose being edited is a textarea rather than rendered
+            -- Markdown, and a snapshot would catch it mid-edit.
+            ( { model | editing = Nothing }
+            , Ports.exportStatic (fileNameFor model.title |> String.replace ".acadia.md" ".html")
+            )
 
         ResetNotebook ->
             if model.resetArmed then
@@ -1102,12 +1110,13 @@ viewHeader model graph =
                 , el [ Font.size 12, Font.color Ui.muted ]
                     (text "reactive graph · DSL compiled in-browser · DuckDB-wasm")
                 ]
-            , Element.wrappedRow [ alignRight, spacing 10 ]
+            , Element.wrappedRow [ alignRight, spacing 10, Ui.dropOnExport ]
                 [ viewExecutionOrder graph
                 , viewDbStatus model.db
                 , plainButton "Reset" model.resetArmed (Just ResetNotebook)
                 , plainButton "Open" False (Just OpenFile)
                 , plainButton "Save" False (Just SaveFile)
+                , plainButton "Export" False (Just ExportNotebook)
                 , plainButton "Run all"
                     False
                     (if model.db == Ready then
@@ -1225,7 +1234,7 @@ viewNotice notice =
                 , Border.rounded 6
                 ]
                 [ Element.paragraph [ width fill ] [ text message ]
-                , Input.button [ alignRight, Font.color Ui.muted, Font.size 16 ]
+                , Input.button [ alignRight, Font.color Ui.muted, Font.size 16, Ui.dropOnExport ]
                     { onPress = Just DismissNotice, label = text "×" }
                 ]
             ]
@@ -1261,7 +1270,7 @@ viewExecutionOrder graph =
 
 viewAddRow : Element Msg
 viewAddRow =
-    row [ spacing 8 ]
+    row [ spacing 8, Ui.dropOnExport ]
         [ plainButton "+ source" False (Just (AddCell Source))
         , plainButton "+ query cell" False (Just (AddCell Query))
         , plainButton "+ prose cell" False (Just (AddCell Prose))
@@ -1332,7 +1341,7 @@ viewCellHead model graph cell state =
             ++ viewSignature state
             ++ [ el [ width fill ] Element.none
                , viewEdges graph cell
-               , Input.button [ Font.color Ui.muted, Font.size 16, alignRight ]
+               , Input.button [ Font.color Ui.muted, Font.size 16, alignRight, Ui.dropOnExport ]
                     { onPress = Just (DeleteCell cell.id), label = text "×" }
                ]
         )
