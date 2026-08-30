@@ -32,3 +32,8 @@ run = """
 elm make tools/EmitSeed.elm --output=tools/seed.js > /dev/null
 node tools/emit-seed.js
 """
+
+[tasks.desktop]
+description = "Run duckpad as a desktop app (the Rust side builds in the duckpad-tauri container)"
+depends = ["build"]
+run = "distrobox enter duckpad-tauri -- bash -lc 'cd ~/Code/ideas/duckpad/src-tauri && cargo tauri dev'"
