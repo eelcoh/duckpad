@@ -26,6 +26,10 @@ CREATE TABLE regions AS SELECT DISTINCT region FROM orders;
 CREATE TABLE customers AS SELECT * FROM read_csv_auto('${CUSTOMERS}');
 CREATE TABLE people AS SELECT DISTINCT owner AS person, length(owner) AS rank FROM orders;
 
+-- A cell the tutorial's chart reads, so its query can be checked like the rest.
+CREATE TABLE by_region AS
+  SELECT region, count(*) AS orders, round(sum(total), 2) AS revenue FROM orders GROUP BY region;
+
 -- Stand-ins for the two remote sources the seeded notebook ships with. The
 -- schemas match what DuckDB infers from the real files, so the seeded cells
 -- are checked for real without the tests needing a network.

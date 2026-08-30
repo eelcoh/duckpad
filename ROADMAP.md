@@ -1108,22 +1108,30 @@ only thing that needed care there was the editor's per-project memory,
 which is keyed on the directory path and would have been orphaned by the
 move.
 
-## A tutorial
+## A tutorial  [DONE]
 
-Nothing here teaches the language. The seeded notebook demonstrates it,
-which is not the same thing: it shows a finished pipeline rather than
-how to arrive at one, and it says nothing about why `intersect` pairs
-rows or when a `reduce` needs a `groupBy`.
+`public/notebooks/tutorial.duckpad.md`, openable with the Open button.
+Ten worked queries with prose between them, building from `access`
+through filtering, projection, grouping, HAVING, combining, declared
+types, a chart and a control.
 
-A tutorial should be a notebook, because that is the honest medium for
-this — prose cells between worked queries, each one runnable and
-editable, building from `access` through to a chart. It would ride the
-same machinery as the seed: written in Elm, emitted to
-`public/notebooks/`, and every cell a roundtrip fixture, so the teaching
-material cannot rot without a test failing.
+Three things about how it is built, each deliberate:
 
-Worth doing after the language settles rather than before, so it is
-written once.
+- **It is a notebook**, which is the honest medium: every cell is live
+  and editable, so the prose can say "change this and watch that" and
+  mean it.
+- **It uses the two bundled CSVs**, not the flights data. A tutorial
+  should not need the network — or a thirteen-megabyte download —
+  before its first query runs.
+- **It lives in `src/Tutorial.elm`** and is emitted alongside the
+  seeded notebook, with every one of its queries a roundtrip fixture.
+  Teaching material rots when it is prose about code that has moved on;
+  this cannot, without a test failing first.
+
+The prose deliberately points at errors as well as results — swapping a
+grouping key for a non-key column, plotting text on a numeric axis,
+deleting a constructor the data still contains — because the checks are
+the part of duckpad worth learning.
 
 ## Packaging
 

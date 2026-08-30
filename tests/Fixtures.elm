@@ -47,6 +47,7 @@ schema =
         , ( "regions", [ ( "region", TString ) ] )
         , ( "customers", [ ( "owner", TString ), ( "tier", TString ), ( "joined", TTimestamp ) ] )
         , ( "people", [ ( "person", TString ), ( "rank", TInt ) ] )
+        , ( "by_region", [ ( "region", TString ), ( "orders", TInt ), ( "revenue", TFloat ) ] )
 
         -- The two sources the seeded notebook ships with.
         , ( "airports"
@@ -79,6 +80,7 @@ params =
         [ ( "min_distance", ( TFloat, LFloat 0 ) )
         , ( "since", ( TTimestamp, LTimestamp "2001-01-01" ) )
         , ( "focus_state", ( TString, LString "CA" ) )
+        , ( "floor_price", ( TFloat, LFloat 300 ) )
         ]
 
 
@@ -177,6 +179,93 @@ access orders ()
 access flights ()
   |> filter (\\f -> f.distance >= min_distance)
   |> reduce (\\g -> { flights = count g })
+  |> scalar
+"""
+      )
+      -- Every query the tutorial teaches, so the teaching material cannot go
+      -- stale without a test failing.
+    , ( "tutorial_everything", "access orders () |> selectAll" )
+    , ( "tutorial_large"
+      , """
+access orders ()
+  |> filter (\\o -> o.total > 500.0)
+  |> selectAll
+"""
+      )
+    , ( "tutorial_summary"
+      , """
+access orders ()
+  |> map (\\o ->
+       { who = o.owner
+       , where_from = o.region
+       , amount = o.total
+       })
+  |> selectAll
+"""
+      )
+    , ( "tutorial_by_region"
+      , """
+access orders ()
+  |> groupBy .region
+  |> reduce (\\g ->
+       { region = g.region
+       , orders = count g
+       , revenue = roundTo 2 (sum g.total)
+       })
+  |> sortBy (desc .revenue)
+  |> selectAll
+"""
+      )
+    , ( "tutorial_busy"
+      , """
+access orders ()
+  |> groupBy .region
+  |> reduce (\\g -> { region = g.region, orders = count g })
+  |> filter (\\r -> r.orders > 60)
+  |> selectAll
+"""
+      )
+    , ( "tutorial_by_tier"
+      , """
+access orders ()
+  |> intersect .owner customers .owner
+  |> groupBy .tier
+  |> reduce (\\g ->
+       { tier = g.tier
+       , orders = count g
+       , revenue = roundTo 2 (sum g.total)
+       })
+  |> sortBy (desc .revenue)
+  |> selectAll
+"""
+      )
+    , ( "tutorial_typed"
+      , """
+type Status
+  = Submitted "submitted"
+  | InTransit "in_transit"
+  | Delivered "delivered" from .delivered_at
+
+access orders ()
+  |> map (\\o ->
+       { owner = o.owner
+       , status = o.status as Status
+       })
+  |> limit 20
+  |> selectAll
+"""
+      )
+    , ( "tutorial_chart"
+      , """
+access by_region ()
+  |> barChart { x = .region, y = .revenue }
+"""
+      )
+    , ( "tutorial_above_floor"
+      , """
+access orders ()
+  |> filter (\\o -> o.total >= floor_price)
+  |> reduce (\\g -> { orders = count g })
   |> scalar
 """
       )
