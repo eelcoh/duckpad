@@ -11,3 +11,4 @@ tools/seed.js
 debug/
 src-tauri/target/
 src-tauri/Cargo.lock
+src-tauri/gen/
