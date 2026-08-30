@@ -538,7 +538,7 @@ step msg model =
             -- Any prose being edited is a textarea rather than rendered
             -- Markdown, and a snapshot would catch it mid-edit.
             ( { model | editing = Nothing }
-            , Ports.exportStatic (fileNameFor model.title |> String.replace ".note-ml.md" ".html")
+            , Ports.exportStatic (fileNameFor model.title |> String.replace ".duckpad.md" ".html")
             )
 
         ResetNotebook ->
@@ -574,7 +574,7 @@ fileNameFor title =
         |> String.foldr collapseDashes ""
         |> orDefault "notebook"
     )
-        ++ ".note-ml.md"
+        ++ ".duckpad.md"
 
 
 collapseDashes : Char -> String -> String

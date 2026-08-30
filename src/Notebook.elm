@@ -43,7 +43,7 @@ the parser taking an interest in it.
 -}
 tags : List ( String, Kind )
 tags =
-    [ ( "note-ml", Query ), ( "source", Source ), ( "input", Input ) ]
+    [ ( "duckpad", Query ), ( "source", Source ), ( "input", Input ) ]
 
 
 tagFor : Kind -> String
@@ -52,7 +52,7 @@ tagFor kind =
         |> List.filter (\( _, k ) -> k == kind)
         |> List.head
         |> Maybe.map Tuple.first
-        |> Maybe.withDefault "note-ml"
+        |> Maybe.withDefault "duckpad"
 
 
 
@@ -195,7 +195,7 @@ field key line =
         Nothing
 
 
-{-| Walk the lines, switching into cell mode only on a `note-ml` fence.
+{-| Walk the lines, switching into cell mode only on a `duckpad` fence.
 
 Any other fenced block is prose and stays prose, so a notebook can contain a
 shell snippet or a JSON sample without the parser taking an interest in it.

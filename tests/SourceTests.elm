@@ -88,7 +88,7 @@ formatChecks : List Check
 formatChecks =
     let
         text =
-            "```source orders\ncsv \"data/orders.csv\"\n```\n\n```note-ml recent\naccess orders () |> selectAll\n```"
+            "```source orders\ncsv \"data/orders.csv\"\n```\n\n```duckpad recent\naccess orders () |> selectAll\n```"
     in
     [ equal "source: a source block round-trips through the file format"
         (Ok [ ( "orders", Source ), ( "recent", Query ) ])
@@ -102,7 +102,7 @@ formatChecks =
         )
     , equal "source: a source and a query cannot share a name"
         True
-        (case Notebook.parse "```source a\ncsv \"x.csv\"\n```\n\n```note-ml a\naccess t () |> selectAll\n```" of
+        (case Notebook.parse "```source a\ncsv \"x.csv\"\n```\n\n```duckpad a\naccess t () |> selectAll\n```" of
             Err _ ->
                 True
 

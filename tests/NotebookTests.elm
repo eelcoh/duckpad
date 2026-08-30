@@ -39,14 +39,14 @@ formatChecks =
     , equal "notebook: the serialized form is the obvious one"
         ("---\ntitle: Orders\n---\n\n"
             ++ "Intro prose.\n\n"
-            ++ "```note-ml a\naccess orders ()\n  |> selectAll\n```\n\n"
+            ++ "```duckpad a\naccess orders ()\n  |> selectAll\n```\n\n"
             ++ "Middle prose.\n\n"
-            ++ "```note-ml b\naccess a ()\n  |> selectAll\n```\n"
+            ++ "```duckpad b\naccess a ()\n  |> selectAll\n```\n"
         )
         sampleText
     , equal "notebook: reading order is preserved, not sorted into dependency order"
         (Ok [ "b", "a" ])
-        (Notebook.parse "```note-ml b\naccess a () |> selectAll\n```\n\n```note-ml a\naccess orders () |> selectAll\n```"
+        (Notebook.parse "```duckpad b\naccess a () |> selectAll\n```\n\n```duckpad a\naccess orders () |> selectAll\n```"
             |> Result.map (.cells >> List.filter (\c -> c.kind == Query) >> List.map .id)
         )
     , equal "notebook: prose carries no identity"
@@ -65,7 +65,7 @@ formatChecks =
         (Notebook.parse "```sql\nSELECT 1\n```" |> Result.map (.cells >> List.map .kind))
     , equal "notebook: blank space between blocks does not become a prose cell"
         (Ok 2)
-        (Notebook.parse "```note-ml a\naccess t () |> selectAll\n```\n\n\n\n```note-ml b\naccess t () |> selectAll\n```"
+        (Notebook.parse "```duckpad a\naccess t () |> selectAll\n```\n\n\n\n```duckpad b\naccess t () |> selectAll\n```"
             |> Result.map (.cells >> List.length)
         )
     , equal "notebook: indentation inside a cell survives the trip"
@@ -75,15 +75,15 @@ formatChecks =
         )
     , equal "notebook: carriage returns are normalised away"
         (Ok [ "a" ])
-        (Notebook.parse "```note-ml a\r\naccess t () |> selectAll\r\n```\r\n"
+        (Notebook.parse "```duckpad a\r\naccess t () |> selectAll\r\n```\r\n"
             |> Result.map (.cells >> List.map .id)
         )
     , isErr "notebook: two cells cannot share a name"
-        (Notebook.parse "```note-ml a\naccess t () |> selectAll\n```\n\n```note-ml a\naccess t () |> selectAll\n```")
+        (Notebook.parse "```duckpad a\naccess t () |> selectAll\n```\n\n```duckpad a\naccess t () |> selectAll\n```")
     , isErr "notebook: a query block has to be named"
-        (Notebook.parse "```note-ml\naccess t () |> selectAll\n```")
+        (Notebook.parse "```duckpad\naccess t () |> selectAll\n```")
     , isErr "notebook: a name has to be usable as a binding"
-        (Notebook.parse "```note-ml Not-A-Name\naccess t () |> selectAll\n```")
+        (Notebook.parse "```duckpad Not-A-Name\naccess t () |> selectAll\n```")
     , assert "notebook: an empty notebook round-trips"
         (Notebook.parse (Notebook.serialize Notebook.blank) == Ok Notebook.blank)
     ]
@@ -91,7 +91,7 @@ formatChecks =
 
 sampleWithIndent : String
 sampleWithIndent =
-    "```note-ml a\naccess orders ()\n  |> filter (\\o -> o.x > 1)\n  |> selectAll\n```"
+    "```duckpad a\naccess orders ()\n  |> filter (\\o -> o.x > 1)\n  |> selectAll\n```"
 
 
 

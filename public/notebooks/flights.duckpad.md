@@ -24,14 +24,14 @@ parquet "https://cdn.jsdelivr.net/npm/vega-datasets@3.2.0/data/flights-3m.parque
 range 0 2500 step 250 default 0
 ```
 
-```note-ml total_flights
+```duckpad total_flights
 access flights ()
   |> filter (\f -> f.distance >= min_distance)
   |> reduce (\g -> { flights = count g })
   |> scalar
 ```
 
-```note-ml by_state
+```duckpad by_state
 access flights ()
   |> filter (\f -> f.distance >= min_distance)
   |> intersect .origin airports .iata
@@ -46,7 +46,7 @@ access flights ()
   |> barChart { x = .state, y = .departures }
 ```
 
-```note-ml punctuality
+```duckpad punctuality
 access flights ()
   |> intersect .origin airports .iata
   |> groupBy .state
@@ -65,7 +65,7 @@ access flights ()
 select from by_state .state default "CA"
 ```
 
-```note-ml state_airports
+```duckpad state_airports
 access airports ()
   |> filter (\a -> a.state == focus_state)
   |> map (\a ->
@@ -80,7 +80,7 @@ access airports ()
 date "2001-01-01" "2001-07-01" default "2001-01-01"
 ```
 
-```note-ml daily
+```duckpad daily
 access flights ()
   |> filter (\f -> f.date >= since)
   |> groupBy (\f -> { day = startOfDay f.date })
@@ -92,7 +92,7 @@ access flights ()
   |> lineChart { x = .day, y = .flights }
 ```
 
-```note-ml delay_by_distance
+```duckpad delay_by_distance
 access flights ()
   |> groupBy .distance
   |> reduce (\g ->
@@ -104,7 +104,7 @@ access flights ()
   |> lineChart { x = .distance, y = .avg_delay }
 ```
 
-```note-ml airport_map
+```duckpad airport_map
 access airports ()
   |> filter (\a -> a.longitude > -130.0 && a.latitude > 22.0)
   |> map (\a ->
@@ -114,7 +114,7 @@ access airports ()
   |> scatter { x = .lon, y = .lat }
 ```
 
-```note-ml routes
+```duckpad routes
 access flights ()
   |> intersect .origin airports .iata
   |> intersect .destination airports .iata
@@ -127,7 +127,7 @@ access flights ()
   |> selectAll
 ```
 
-```note-ml quiet
+```duckpad quiet
 type Country
   = Usa "USA"
   | Marianas "N Mariana Islands"

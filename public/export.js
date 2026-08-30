@@ -18,7 +18,7 @@ export function exportStatic(name) {
     try {
       download(name, buildPage());
     } catch (err) {
-      console.error('[note-ml] export failed', err);
+      console.error('[duckpad] export failed', err);
     }
   });
 }

@@ -1,4 +1,4 @@
-# Roadmap: note-ml, a reactive notebook over DuckDB
+# Roadmap: duckpad, a reactive notebook over DuckDB
 
 ## Concept summary
 
@@ -362,7 +362,7 @@ missing case.
 
 ### Phase 7 as built
 
-A notebook is Markdown. Query cells are fenced blocks tagged `note-ml`
+A notebook is Markdown. Query cells are fenced blocks tagged `duckpad`
 plus a name; everything else is prose:
 
     ---
@@ -371,7 +371,7 @@ plus a name; everything else is prose:
 
     Intro prose.
 
-    ```note-ml delivered
+    ```duckpad delivered
     access orders ()
       |> filter (\o -> o.status == "delivered")
       |> selectAll
@@ -386,7 +386,7 @@ one is assigned on load and never written back.
 
 Everything else held. Reading order is the file's order and is never
 sorted into dependency order. Results, generated SQL and generated Elm
-are not in the file. The parser only takes an interest in a `note-ml`
+are not in the file. The parser only takes an interest in a `duckpad`
 fence, so a notebook can contain a shell snippet or a JSON sample
 without confusing it.
 
@@ -479,7 +479,7 @@ roundtrip fixture, checked against local stand-in tables whose schemas
 match what DuckDB infers from the real files, so the tests stay offline.
 
 The notebook lives in `src/Seed.elm` and is written out to
-`public/notebooks/flights.note-ml.md` by `mise run seed`, which `build`
+`public/notebooks/flights.duckpad.md` by `mise run seed`, which `build`
 depends on. The shipped example is therefore the starting notebook
 rather than a copy that has to be kept in step, and it is the only
 worked example of the file format outside the tests. The emitter also
@@ -1053,16 +1053,24 @@ into bolting a second one beside it.
 
 ## The name
 
-**This is `note-ml`.** It was called Acadia after the language that
-prompted it, which was never sustainable: Acadia is Evan Czaplicki's
-commercial product, and wearing its name implied a lineage that is not
-there and took credit belonging elsewhere.
+**This is `duckpad`.** A notepad over DuckDB, which is what it is.
 
-`note-ml` says the two true things — it is a notebook, and its syntax is
-in the ML tradition — and claims nothing further. The `-ml` is a nod to
-the family Elm and OCaml belong to, not a claim of membership: there is
-no type inference here, no user-defined functions, no pattern matching
-beyond destructuring. It is ML-*shaped*.
+It was called Acadia after the language that prompted it, and that was
+never sustainable: Acadia is Evan Czaplicki's commercial product, and
+wearing its name implied a lineage that is not there and took credit
+belonging elsewhere. `note-ml` was a brief intermediate, dropped because
+the `-ml` claimed a place in a family this has no real membership of —
+no type inference, no user-defined functions, no pattern matching beyond
+destructuring.
+
+`duckpad` claims nothing at all. It says where the data lives and what
+shape the thing is, and leaves the rest to be discovered by reading it.
+
+**The trade, recorded rather than glossed:** the name is welded to one
+engine. If this ever ran on something other than DuckDB the name would
+be wrong, where a name claiming nothing — the `Pluto` and `Marimo`
+pattern of a short concrete noun — would still fit. That is a real cost
+and was accepted knowingly.
 
 **What is honestly borrowed from Acadia**, and should stay credited
 wherever the design is explained:
@@ -1087,11 +1095,12 @@ something its author has been thinking about far longer. Acadia should
 keep being named as the trigger and the source of the ideas above. What
 has stopped is this project answering to it.
 
-**Done in code**: the fence tag is ```` ```note-ml ````, notebooks are
-`.note-ml.md`, and the browser-storage key changed with them — so a
-notebook saved under the old key is orphaned rather than silently
-half-read. The three remaining mentions of Acadia in the source are
-references to *their* language and are correct.
+**Done in code**: the fence tag is ```` ```duckpad ````, notebooks are
+`.duckpad.md`, and the browser-storage key changed with them — so a
+notebook saved under an older key is orphaned rather than silently
+half-read by a parser that no longer knows its fences. The three
+remaining mentions of Acadia in the source are references to *their*
+language and are correct.
 
 **Not done**: the repository directory is still `~/Code/ideas/acadia`,
 and the distrobox container is still `acadia-tauri`. Both are the

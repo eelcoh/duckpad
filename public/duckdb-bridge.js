@@ -24,7 +24,7 @@ const READERS = {
 let db = null;
 let conn = null;
 
-const STORAGE_KEY = 'note-ml.notebook';
+const STORAGE_KEY = 'duckpad.notebook';
 
 const app = window.Elm.Main.init({
   node: document.getElementById('notebook'),
@@ -73,7 +73,7 @@ app.ports.requestSave.subscribe(async ({ name, content }) => {
     try {
       const handle = await window.showSaveFilePicker({
         suggestedName: name,
-        types: [{ description: 'note-ml notebook', accept: { 'text/markdown': ['.md'] } }],
+        types: [{ description: 'duckpad notebook', accept: { 'text/markdown': ['.md'] } }],
       });
       const writable = await handle.createWritable();
       await writable.write(content);
@@ -109,7 +109,7 @@ function pickFile() {
   if (window.showOpenFilePicker) {
     return window
       .showOpenFilePicker({
-        types: [{ description: 'note-ml notebook', accept: { 'text/markdown': ['.md'] } }],
+        types: [{ description: 'duckpad notebook', accept: { 'text/markdown': ['.md'] } }],
       })
       .then(([handle]) => handle.getFile())
       .then((file) => file.text())
@@ -173,7 +173,7 @@ function stopwatch(label) {
     },
     done() {
       const total = performance.now() - started;
-      console.debug(`[note-ml] ${label} ${Math.round(total)}ms`, phases);
+      console.debug(`[duckpad] ${label} ${Math.round(total)}ms`, phases);
       return total;
     },
   };

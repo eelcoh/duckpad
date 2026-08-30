@@ -149,7 +149,7 @@ formatChecks : List Check
 formatChecks =
     [ equal "input: an input block round-trips through the file format"
         (Ok [ ( "threshold", Input ), ( "big", Query ) ])
-        (Notebook.parse "```input threshold\nrange 0 100 default 50\n```\n\n```note-ml big\naccess orders () |> selectAll\n```"
+        (Notebook.parse "```input threshold\nrange 0 100 default 50\n```\n\n```duckpad big\naccess orders () |> selectAll\n```"
             |> Result.map (.cells >> List.map (\c -> ( c.id, c.kind )))
         )
     ]
