@@ -40,6 +40,18 @@ function readSaved() {
   }
 }
 
+// Elm owns the textarea's value, so replacing it after an Enter or Tab moves
+// the caret to the end. The handler computed where it belongs; this puts it
+// there, on the next frame, once Elm has actually rendered the new value.
+app.ports.setCaret.subscribe(({ id, pos }) => {
+  requestAnimationFrame(() => {
+    const el = document.getElementById(id);
+    if (!el) return;
+    el.focus();
+    el.setSelectionRange(pos, pos);
+  });
+});
+
 app.ports.persist.subscribe((content) => {
   try {
     localStorage.setItem(STORAGE_KEY, content);

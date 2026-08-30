@@ -540,7 +540,28 @@ notebook. Four changes, in the order they should be done:
    thing people pass around. Spell-checking is on for prose and off for
    code, which is the right way round and was not before.
 
-3. **Colour coding.** The interesting part is that the notebook already
+3. ~~**Keyboard editing.**~~ Done, and not on the original list. A
+   textarea's own Enter goes to column zero, which loses the indentation
+   on every line of a pipeline, and its own Tab leaves the field
+   entirely. Both are intercepted now: Enter starts the new line at the
+   indent of the one before it, one step deeper after a line that opens
+   a bracket or ends in a lambda arrow; Tab indents, and shifts a whole
+   block when the selection covers more than one line; Shift-Tab goes
+   back out.
+
+   Deliberately **not** an auto-formatter. The layout these cells are
+   conventionally written in is hand-aligned in the Elm style — a
+   record's `{` lines up under what it belongs to, not at a multiple of
+   two — and a rule trying to reproduce that would be wrong more often
+   than right, and would fight the author when it was. It never loses
+   ground; going back out is explicit rather than guessed.
+
+   The logic is in `src/Indent.elm` with tests, because it is entirely
+   off-by-one positions. Elm owns the textarea's value, so a synthetic
+   edit moves the caret to the end; a port puts it back on the next
+   frame.
+
+4. **Colour coding.** The interesting part is that the notebook already
    has a real lexer, so highlighting can be driven by `Dsl.Parser`'s own
    tokens rather than by a regex approximation. Highlighting would then
    agree with the compiler by construction — the same property the SQL
@@ -555,18 +576,18 @@ notebook. Four changes, in the order they should be done:
    editing model outside Elm. Prefer the overlay; reconsider only if
    selection or IME handling turns out badly.
 
-4. **Rebuild the view on elm-ui** (`mdgriffith/elm-ui`, pin 1.1.8 for
+5. **Rebuild the view on elm-ui** (`mdgriffith/elm-ui`, pin 1.1.8 for
    Elm 0.19; version 2 is not released). Layout becomes Elm values
    rather than a stylesheet, which suits a UI whose structure is already
    computed — cell states, staleness, the execution-order strip.
 
-   One tension to plan around: items 3 and 4 pull against each other.
+   One tension to plan around: items 4 and 5 pull against each other.
    The highlight overlay needs exact text metrics and absolute
    positioning, which is precisely what elm-ui abstracts away. The
    workable split is elm-ui for the shell — chrome, cell frames, status
    pills, tables, the generated-artefact panels — and a raw
    `Element.html` escape hatch for the editor surface itself, which
-   keeps its own CSS. Doing 3 before 4 means the editor's CSS is already
+   keeps its own CSS. Doing 4 before 5 means the editor's CSS is already
    isolated when the rest is converted.
 
 ## Phase 8 — Sharing story

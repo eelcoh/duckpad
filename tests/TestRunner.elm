@@ -12,6 +12,7 @@ otherwise need.
 import Check exposing (Check)
 import DslTests
 import EngineTests
+import IndentTests
 import NotebookTests
 import SourceTests
 import Json.Encode as E
@@ -31,7 +32,7 @@ main =
 
 allChecks : List Check
 allChecks =
-    EngineTests.checks ++ DslTests.checks ++ NotebookTests.checks ++ SourceTests.checks
+    EngineTests.checks ++ DslTests.checks ++ NotebookTests.checks ++ SourceTests.checks ++ IndentTests.checks
 
 
 encode : Check -> E.Value

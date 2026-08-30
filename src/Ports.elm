@@ -1,4 +1,4 @@
-port module Ports exposing (dbReady, dropTable, fileOpened, loadSource, materialize, persist, queryOutcome, requestOpen, requestSave)
+port module Ports exposing (dbReady, dropTable, fileOpened, loadSource, materialize, persist, queryOutcome, requestOpen, requestSave, setCaret)
 
 import Json.Decode as D
 
@@ -51,3 +51,12 @@ port requestOpen : () -> Cmd msg
 
 
 port fileOpened : (D.Value -> msg) -> Sub msg
+
+
+{-| Put the caret back after an edit the keyboard handler made itself.
+
+Elm owns the textarea's value, so replacing it moves the caret to the end.
+Enter and Tab compute where it should be instead, and this puts it there once
+the new value has been rendered.
+-}
+port setCaret : { id : String, pos : Int } -> Cmd msg

@@ -24,6 +24,7 @@ import Engine exposing (CellState, Shape)
 import Html exposing (Html, button, details, div, input, p, pre, section, span, summary, table, tbody, td, text, textarea, th, thead, tr)
 import Html.Attributes exposing (attribute, class, classList, disabled, id, placeholder, rows, spellcheck, title, value)
 import Html.Events exposing (onBlur, onClick, onInput)
+import Indent
 import Json.Decode as D
 import Notebook exposing (Notebook)
 import Seed
@@ -86,6 +87,7 @@ type Msg
     | DismissNotice
     | ResetNotebook
     | EditProse String
+    | KeyEdit String Indent.Edit
     | Focused (Result Browser.Dom.Error ())
 
 
@@ -386,6 +388,15 @@ step msg model =
 
         DismissNotice ->
             ( { model | notice = Nothing }, Cmd.none )
+
+        KeyEdit id edit ->
+            let
+                ( updated, cmd ) =
+                    step (SourceEdited id edit.text) model
+            in
+            ( updated
+            , Cmd.batch [ cmd, Ports.setCaret { id = domIdFor id, pos = edit.caret } ]
+            )
 
         EditProse id ->
             ( { model | editing = Just id }
@@ -1097,8 +1108,65 @@ viewBody model cell =
                 )
             , onInput (SourceEdited cell.id)
             , onBlur CommitEdit
+            , onKeyDown cell.id
             ]
             []
+
+
+{-| Enter and Tab, handled here rather than left to the browser.
+
+A textarea's own Enter goes to column zero, which loses the indentation on
+every line of a pipeline, and its own Tab leaves the field entirely. Both are
+intercepted; every other key falls through untouched, because the decoder
+fails and a failed decoder neither dispatches nor prevents the default.
+
+-}
+onKeyDown : String -> Html.Attribute Msg
+onKeyDown cellId =
+    Html.Events.custom "keydown" (D.andThen (keyEdit cellId) keyContext)
+
+
+type alias KeyContext =
+    { key : String
+    , shift : Bool
+    , value : String
+    , start : Int
+    , end : Int
+    }
+
+
+keyContext : D.Decoder KeyContext
+keyContext =
+    D.map5 KeyContext
+        (D.field "key" D.string)
+        (D.field "shiftKey" D.bool)
+        (D.at [ "target", "value" ] D.string)
+        (D.at [ "target", "selectionStart" ] D.int)
+        (D.at [ "target", "selectionEnd" ] D.int)
+
+
+keyEdit : String -> KeyContext -> D.Decoder { message : Msg, stopPropagation : Bool, preventDefault : Bool }
+keyEdit cellId ctx =
+    let
+        handled edit =
+            D.succeed
+                { message = KeyEdit cellId edit
+                , stopPropagation = False
+                , preventDefault = True
+                }
+    in
+    case ( ctx.key, ctx.shift ) of
+        ( "Enter", False ) ->
+            handled (Indent.enter ctx.value ctx.start ctx.end)
+
+        ( "Tab", False ) ->
+            handled (Indent.tab ctx.value ctx.start ctx.end)
+
+        ( "Tab", True ) ->
+            handled (Indent.shiftTab ctx.value ctx.start ctx.end)
+
+        _ ->
+            D.fail "not an editing key"
 
 
 viewEdges : Graph -> Cell -> Html Msg
