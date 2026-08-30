@@ -48,6 +48,10 @@ type alias Model =
     , db : DbStatus
     , nextId : Int
     , notice : Maybe String
+
+    -- Reset discards unsaved work, so it takes two clicks: the first arms it
+    -- and the second does it. Any other action disarms it again.
+    , resetArmed : Bool
     }
 
 
@@ -71,6 +75,7 @@ type Msg
     | OpenFile
     | FileOpened D.Value
     | DismissNotice
+    | ResetNotebook
 
 
 main : Program Flags Model Msg
@@ -89,7 +94,7 @@ init flags =
         ( notebook, notice ) =
             restore flags
     in
-    ( load notebook { title = notebook.title, cells = [], states = Dict.empty, baseSchema = Dict.empty, queue = [], current = Nothing, db = Booting, nextId = 1, notice = notice }
+    ( load notebook { title = notebook.title, cells = [], states = Dict.empty, baseSchema = Dict.empty, queue = [], current = Nothing, db = Booting, nextId = 1, notice = notice, resetArmed = False }
     , Cmd.none
     )
 
@@ -241,6 +246,18 @@ moduleNameFor id =
 
 update : Msg -> Model -> ( Model, Cmd Msg )
 update msg model =
+    step msg
+        (case msg of
+            ResetNotebook ->
+                model
+
+            _ ->
+                { model | resetArmed = False }
+        )
+
+
+step : Msg -> Model -> ( Model, Cmd Msg )
+step msg model =
     case msg of
         DbReady payload ->
             case D.decodeValue bootDecoder payload of
@@ -387,6 +404,13 @@ update msg model =
 
         DismissNotice ->
             ( { model | notice = Nothing }, Cmd.none )
+
+        ResetNotebook ->
+            if model.resetArmed then
+                withPersist (schedule (load seeded { model | notice = Nothing, resetArmed = False }))
+
+            else
+                ( { model | resetArmed = True }, Cmd.none )
 
 
 {-| The bridge reports the tables it built, so the checker knows what
@@ -912,6 +936,19 @@ viewHeader model graph =
         , div [ class "topbar-right" ]
             [ viewExecutionOrder graph
             , viewDbStatus model.db
+            , button
+                [ onClick ResetNotebook
+                , classList [ ( "armed", model.resetArmed ) ]
+                , title "Replace this notebook with the one it starts from"
+                ]
+                [ text
+                    (if model.resetArmed then
+                        "Discard and reset?"
+
+                     else
+                        "Reset"
+                    )
+                ]
             , button [ onClick OpenFile, title "Open a notebook file" ] [ text "Open" ]
             , button [ onClick SaveFile, title "Save this notebook as Markdown" ] [ text "Save" ]
             , button
