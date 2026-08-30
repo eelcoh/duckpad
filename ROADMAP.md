@@ -888,8 +888,25 @@ document before starting: `rank` within a partition is what a pandas
 user asks for most, but a windowing abstraction is also the most complex
 thing this language would contain.
 
-Also unexposed and much cheaper: `PIVOT` and `UNPIVOT`, and the list
-aggregates.
+**Pivoting is done, and not as `PIVOT`.** DuckDB's `PIVOT` produces one
+column per distinct value found in the data, so its result has no row
+type until the query has run — and a row type known before the query
+runs is what this entire design rests on. Naming the cases instead gives
+the same table statically, through `FILTER`:
+
+    |> reduce (\g ->
+         { state = g.state
+         , early = countWhere (g.delay <= 0)
+         , late = countWhere (g.delay > 30)
+         })
+
+`countWhere`, `sumWhere` and `avgWhere`. It generalises past what a
+pivot does — any condition, not only equality against a value that
+happens to be present — and inside the condition the grouping rule is
+lifted, because a condition looks at one row at a time and a bare column
+is exactly what is meant there.
+
+`UNPIVOT` and the list aggregates remain unexposed and are cheap.
 
 ### The other two need an escape hatch, and it costs the guarantee
 
@@ -939,6 +956,23 @@ totality guarantee survives intact, which is the thing that makes this
 notebook different from a Jupyter one, and every unit of effort goes
 into exposing an engine that is already very good at this rather than
 into bolting a second one beside it.
+
+## A tutorial
+
+Nothing here teaches the language. The seeded notebook demonstrates it,
+which is not the same thing: it shows a finished pipeline rather than
+how to arrive at one, and it says nothing about why `intersect` pairs
+rows or when a `reduce` needs a `groupBy`.
+
+A tutorial should be a notebook, because that is the honest medium for
+this — prose cells between worked queries, each one runnable and
+editable, building from `access` through to a chart. It would ride the
+same machinery as the seed: written in Elm, emitted to
+`public/notebooks/`, and every cell a roundtrip fixture, so the teaching
+material cannot rot without a test failing.
+
+Worth doing after the language settles rather than before, so it is
+written once.
 
 ## Packaging
 

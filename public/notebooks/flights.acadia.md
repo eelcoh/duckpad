@@ -8,7 +8,7 @@ A terminator says how a cell is shown: `selectAll` gives a table, and `barChart`
 
 `intersect` pairs two tables rather than merging them, so each side keeps its own column names and a later lambda destructures: `\(f, orig, dest) -> …`. Scalar functions work anywhere an expression does — `roundTo 1 (avg g.delay)` below, and `++` to build a label. `groupBy` takes a lambda when a key has to be computed, which is how `daily` turns a minute-resolution timestamp into a day.
 
-A `filter` after a `reduce` becomes a HAVING, which is how `delay_by_distance` drops the distances too rare to average meaningfully.
+`countWhere` and its relatives count only the rows matching a condition, which is what a pivot is for — with the cases named rather than discovered in the data, so the row still has a type. A `filter` after a `reduce` becomes a HAVING, which is how `delay_by_distance` drops the distances too rare to average meaningfully.
 
 An input cell binds a control to its name. Drag `min_distance` and only the cells that read it re-run — `total_flights` and `by_state` both do — the value is compiled into their SQL, so the cache does the rest. That is what lets `routes` below join `airports` twice — once for the origin and once for the destination — without the two sides colliding.
 
@@ -44,6 +44,21 @@ access flights ()
   |> sortBy (desc .departures)
   |> limit 12
   |> barChart { x = .state, y = .departures }
+```
+
+```acadia punctuality
+access flights ()
+  |> intersect .origin airports .iata
+  |> groupBy .state
+  |> reduce (\g ->
+       { state = g.state
+       , early = countWhere (g.delay <= 0)
+       , late = countWhere (g.delay > 30)
+       , worst = max g.delay
+       })
+  |> filter (\r -> r.late > 2000)
+  |> sortBy (desc .late)
+  |> selectAll
 ```
 
 ```acadia daily

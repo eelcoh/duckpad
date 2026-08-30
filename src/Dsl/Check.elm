@@ -1318,12 +1318,90 @@ checkAggregate env fn args =
     if not env.inReduce then
         Err ("`" ++ fn ++ "` is an aggregate, so it only works inside `reduce`")
 
+    else if List.member fn conditional then
+        checkConditional env fn args
+
     else
         args
             |> List.foldl
                 (\arg acc -> Result.map2 (\done t -> done ++ [ t ]) acc (aggArgument env fn arg))
                 (Ok [])
             |> Result.andThen (aggregateResult fn)
+
+
+{-| Aggregates that count or total only the rows matching a condition.
+
+This is what a pivot is for, arrived at from the other side. DuckDB's `PIVOT`
+produces a column per distinct value found in the data, which cannot be given
+a row type before the query runs — and a row type known ahead of the query is
+the thing this whole design rests on. Naming the cases instead gives the same
+table, statically, and generalises: any condition, not only equality against a
+value that happens to be present.
+
+-}
+conditional : List String
+conditional =
+    [ "countWhere", "sumWhere", "avgWhere" ]
+
+
+checkConditional : Env -> String -> List Expr -> Result String TExpr
+checkConditional env fn args =
+    case ( fn, args ) of
+        ( "countWhere", [ predicate ] ) ->
+            checkPredicate env fn predicate
+                |> Result.map (\p -> TAgg fn [ p ] TInt)
+
+        ( "sumWhere", [ column, predicate ] ) ->
+            conditionalOver env fn column predicate identity
+
+        ( "avgWhere", [ column, predicate ] ) ->
+            conditionalOver env fn column predicate (always TFloat)
+
+        _ ->
+            Err
+                (case fn of
+                    "countWhere" ->
+                        "`countWhere` takes a condition, as in `countWhere (g.delay > 30)`"
+
+                    _ ->
+                        "`" ++ fn ++ "` takes a column and a condition, as in `" ++ fn ++ " g.distance (g.delay > 30)`"
+                )
+
+
+conditionalOver : Env -> String -> Expr -> Expr -> (Type -> Type) -> Result String TExpr
+conditionalOver env fn column predicate result =
+    Result.map2 Tuple.pair
+        (aggArgument env fn column)
+        (checkPredicate env fn predicate)
+        |> Result.andThen
+            (\( maybeColumn, p ) ->
+                case maybeColumn of
+                    Nothing ->
+                        Err ("`" ++ fn ++ "` needs a column, not the whole group")
+
+                    Just c ->
+                        if Schema.isNumeric (typeOf c) then
+                            Ok (TAgg fn [ c, p ] (result (baseType (typeOf c))))
+
+                        else
+                            Err ("`" ++ fn ++ "` needs a number, but this column is a " ++ Schema.typeName (typeOf c))
+            )
+
+
+{-| The condition looks at one row at a time, so the grouping rule is lifted
+for it: inside the condition a bare column is exactly what is meant.
+-}
+checkPredicate : Env -> String -> Expr -> Result String TExpr
+checkPredicate env fn predicate =
+    checkExpr { env | inReduce = False, groupKeys = [] } predicate
+        |> Result.andThen
+            (\p ->
+                if Schema.typeName (typeOf p) == "Bool" then
+                    Ok p
+
+                else
+                    Err ("`" ++ fn ++ "` needs a condition, but this is a " ++ Schema.typeName (typeOf p))
+            )
 
 
 {-| An aggregate's argument is a column, a literal, or — for `count` alone —

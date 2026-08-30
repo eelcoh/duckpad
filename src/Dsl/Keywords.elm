@@ -57,6 +57,9 @@ aggregates =
         , "variance"
         , "quantile"
         , "correlation"
+        , "countWhere"
+        , "sumWhere"
+        , "avgWhere"
         ]
 
 

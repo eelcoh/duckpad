@@ -177,6 +177,22 @@ access flights ()
   |> barChart { x = .state, y = .departures }
 """
       )
+    , ( "seeded_punctuality"
+      , """
+access flights ()
+  |> intersect .origin airports .iata
+  |> groupBy .state
+  |> reduce (\\g ->
+       { state = g.state
+       , early = countWhere (g.delay <= 0)
+       , late = countWhere (g.delay > 30)
+       , worst = max g.delay
+       })
+  |> filter (\\r -> r.late > 2000)
+  |> sortBy (desc .late)
+  |> selectAll
+"""
+      )
     , ( "seeded_daily"
       , """
 access flights ()

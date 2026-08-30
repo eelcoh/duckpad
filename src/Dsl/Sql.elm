@@ -204,6 +204,15 @@ aggregate fn args =
         ( "correlation", [ a, b ] ) ->
             "corr(" ++ a ++ ", " ++ b ++ ")"
 
+        ( "countWhere", [ predicate ] ) ->
+            "count(*) FILTER (WHERE " ++ predicate ++ ")"
+
+        ( "sumWhere", [ a, predicate ] ) ->
+            "sum(" ++ a ++ ") FILTER (WHERE " ++ predicate ++ ")"
+
+        ( "avgWhere", [ a, predicate ] ) ->
+            "avg(" ++ a ++ ") FILTER (WHERE " ++ predicate ++ ")"
+
         _ ->
             fn ++ "(" ++ String.join ", " args ++ ")"
 

@@ -390,6 +390,28 @@ checkerChecks =
     , contains "sql: correlation is DuckDB's corr"
         "corr(\"orders\".\"id\", \"orders\".\"total\")"
         (sqlOf "access orders () |> groupBy .region |> reduce (\\g -> { c = correlation g.id g.total }) |> selectAll")
+    -- Conditional aggregates: a pivot arrived at from the other side, with
+    -- the cases named rather than discovered in the data.
+    , equal "agg: counting and totalling only the rows that match"
+        (Ok [ ( "late", "Int" ), ( "late_miles", "Int" ), ( "late_delay", "Float" ) ])
+        (rowTypeOf "access orders () |> groupBy .region |> reduce (\\g -> { late = countWhere (g.total > 100.0), late_miles = sumWhere g.id (g.total > 100.0), late_delay = avgWhere g.id (g.total > 100.0) }) |> selectAll")
+    , contains "sql: a conditional count is a FILTER, not a subquery"
+        "count(*) FILTER (WHERE (\"orders\".\"total\" > 100))"
+        (sqlOf "access orders () |> groupBy .region |> reduce (\\g -> { late = countWhere (g.total > 100.0) }) |> selectAll")
+    , contains "sql: a conditional sum filters its own column"
+        "sum(\"orders\".\"id\") FILTER (WHERE (\"orders\".\"status\" = 'delivered'))"
+        (sqlOf "access orders () |> groupBy .region |> reduce (\\g -> { s = sumWhere g.id (g.status == \"delivered\") }) |> selectAll")
+    , equal "agg: several conditions give the columns a pivot would have"
+        (Ok [ ( "region", "String" ), ( "submitted", "Int" ), ( "delivered", "Int" ) ])
+        (rowTypeOf "access orders () |> groupBy .region |> reduce (\\g -> { region = g.region, submitted = countWhere (g.status == \"submitted\"), delivered = countWhere (g.status == \"delivered\") }) |> selectAll")
+    , isErr "agg: the condition has to be a condition"
+        (compile "access orders () |> groupBy .region |> reduce (\\g -> { n = countWhere (g.total) }) |> selectAll")
+    , isErr "agg: a condition cannot contain an aggregate"
+        (compile "access orders () |> groupBy .region |> reduce (\\g -> { n = countWhere (count g > 1) }) |> selectAll")
+    , isErr "agg: countWhere takes only a condition"
+        (compile "access orders () |> groupBy .region |> reduce (\\g -> { n = countWhere g.total (g.total > 1.0) }) |> selectAll")
+    , isErr "agg: sumWhere needs a numeric column"
+        (compile "access orders () |> groupBy .region |> reduce (\\g -> { n = sumWhere g.owner (g.total > 1.0) }) |> selectAll")
     , isErr "agg: only count may be given the group itself"
         (compile "access orders () |> groupBy .region |> reduce (\\g -> { m = median g }) |> selectAll")
     , isErr "agg: the wrong number of arguments is refused"
