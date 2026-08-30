@@ -32,7 +32,7 @@ import Element.Border as Border
 import Element.Events
 import Element.Font as Font
 import Element.Input as Input
-import Html exposing (Html, div, pre, span, table, tbody, td, textarea, th, thead, tr)
+import Html exposing (Html, div, option, pre, select, span, table, tbody, td, textarea, th, thead, tr)
 import Html.Attributes exposing (attribute, class, id, placeholder, rows, spellcheck, value)
 import Html.Attributes
 import Html.Events exposing (onBlur, onInput)
@@ -226,9 +226,18 @@ graphOf model =
                     Query ->
                         Set.fromList (Dsl.Compile.readsOf c.source)
 
+                    Input ->
+                        -- Most inputs depend on nothing; one that draws its
+                        -- options from a column depends on the cell it draws
+                        -- them from.
+                        Dsl.Input.parse c.source
+                            |> Result.toMaybe
+                            |> Maybe.andThen Dsl.Input.optionSource
+                            |> Maybe.map Set.singleton
+                            |> Maybe.withDefault Set.empty
+
                     _ ->
-                        -- A source reads external data and an input reads
-                        -- nothing at all; neither depends on another cell.
+                        -- A source reads external data, and depends on no cell.
                         Set.empty
                 )
             )
@@ -759,17 +768,143 @@ dispatchInput cell rest model =
                 }
 
         Ok widget ->
+            let
+                settled =
+                    case Dsl.Input.optionSource widget of
+                        Nothing ->
+                            Ok ()
+
+                        Just from ->
+                            optionsFrom from widget model
+                                |> Result.andThen (stillChosen cell.id widget model)
+            in
             advance
                 { model
                     | queue = rest
                     , states =
                         Dict.insert cell.id
-                            { state
-                                | status = Fresh { cached = False, millis = 0 }
-                                , valueHash = Just (literalKey (valueOf cell.id widget model))
-                            }
+                            (case settled of
+                                Err message ->
+                                    { state | status = Invalid message, valueHash = Nothing }
+
+                                Ok () ->
+                                    { state
+                                        | status = Fresh { cached = False, millis = 0 }
+                                        , valueHash = Just (literalKey (valueOf cell.id widget model))
+                                    }
+                            )
                             model.states
                 }
+
+
+{-| The distinct values of the column an input draws its options from.
+
+They come from the rows the cell actually fetched, so a truncated result is
+refused rather than quietly offering a subset — an input that silently omitted
+half its options would be exactly the sort of unintentional effect the
+blocking rule elsewhere is there to prevent.
+
+-}
+optionsFrom : String -> Dsl.Input.Spec -> Model -> Result String (List String)
+optionsFrom from widget model =
+    let
+        column =
+            case widget of
+                Dsl.Input.SelectFrom s ->
+                    s.column
+
+                _ ->
+                    ""
+
+        upstream =
+            Dict.get from model.states
+    in
+    case upstream |> Maybe.andThen .table of
+        Nothing ->
+            Err ("`" ++ from ++ "` has not produced any rows yet")
+
+        Just t ->
+            if t.truncated then
+                Err
+                    ("`"
+                        ++ from
+                        ++ "` returned more rows than were fetched, so its options would be incomplete — group it down first"
+                    )
+
+            else if not (List.member column (List.map Tuple.first (rowTypeOf upstream))) then
+                Err ("`" ++ from ++ "` has no column `" ++ column ++ "`")
+
+            else
+                let
+                    values =
+                        t.rows
+                            |> List.filterMap (decodeField column D.string)
+                            |> List.sort
+                            |> dedupe
+                in
+                if List.isEmpty values then
+                    Err ("`" ++ column ++ "` is not a text column, or has no values")
+
+                else if List.length values > optionCap then
+                    Err
+                        ("`"
+                            ++ column
+                            ++ "` has "
+                            ++ String.fromInt (List.length values)
+                            ++ " distinct values, which is too many to choose between — group it down first"
+                        )
+
+                else
+                    Ok values
+
+
+optionCap : Int
+optionCap =
+    100
+
+
+{-| Refuse rather than move the value on the reader's behalf.
+
+The options can change under a choice that was already made. Snapping to a
+default would re-run everything downstream with a value nobody picked, so the
+input blocks instead and says what happened.
+
+-}
+stillChosen : String -> Dsl.Input.Spec -> Model -> List String -> Result String ()
+stillChosen id widget model options =
+    case valueOf id widget model of
+        LString chosen ->
+            if List.member chosen options then
+                Ok ()
+
+            else
+                Err ("`" ++ chosen ++ "` is no longer one of the options — choose again")
+
+        _ ->
+            Ok ()
+
+
+rowTypeOf : Maybe CellState -> List ( String, Type )
+rowTypeOf state =
+    state |> Maybe.andThen .rowType |> Maybe.withDefault []
+
+
+dedupe : List String -> List String
+dedupe =
+    List.foldr
+        (\x acc ->
+            case acc of
+                first :: _ ->
+                    if first == x then
+                        acc
+
+                    else
+                        x :: acc
+
+                [] ->
+                    [ x ]
+        )
+        []
 
 
 {-| What identifies a source: where it points and how it is read. An option
@@ -1740,7 +1875,19 @@ viewOutput model cell state =
                 message_ Ui.bad message
 
             Ok widget ->
-                viewControl cell.id widget (valueOf cell.id widget model) (pickerFor cell.id model)
+                -- A blocked input still draws its control: the reader is being
+                -- asked to choose, so taking the control away would be
+                -- perverse.
+                column [ width fill ]
+                    (case state.status of
+                        Invalid message ->
+                            [ message_ Ui.bad message
+                            , viewControl model cell.id widget (valueOf cell.id widget model) (pickerFor cell.id model)
+                            ]
+
+                        _ ->
+                            [ viewControl model cell.id widget (valueOf cell.id widget model) (pickerFor cell.id model) ]
+                    )
 
     else
         case state.status of
@@ -1782,8 +1929,8 @@ viewOutput model cell state =
 {-| The control itself. An input's value is the cell's whole output, so this
 sits where a table would.
 -}
-viewControl : String -> Dsl.Input.Spec -> Literal -> Picker -> Element Msg
-viewControl id widget current picker =
+viewControl : Model -> String -> Dsl.Input.Spec -> Literal -> Picker -> Element Msg
+viewControl model id widget current picker =
     el
         [ width fill
         , padding 12
@@ -1826,8 +1973,16 @@ viewControl id widget current picker =
                     ]
 
             ( Dsl.Input.Select s, LString value ) ->
-                Element.wrappedRow [ spacing 6 ]
-                    (List.map (viewOption id value) s.options)
+                viewChoices id value s.options
+
+            ( Dsl.Input.SelectFrom from, LString value ) ->
+                case optionsFrom from.cell widget model of
+                    Ok options ->
+                        viewChoices id value options
+
+                    Err _ ->
+                        -- The reason is already shown above the control.
+                        viewChoices id value [ value ]
 
             ( Dsl.Input.Date d, LTimestamp value ) ->
                 viewDatePicker id d value picker
@@ -1959,6 +2114,44 @@ outside bounds day =
             Date.toIsoString day
     in
     iso < bounds.min || iso > bounds.max
+
+
+{-| A row of buttons while they fit, a dropdown once they do not.
+
+Buttons show every choice at once, which is worth having for a handful and
+unreadable for fifty; the threshold is where one stops being true and the
+other starts.
+
+-}
+viewChoices : String -> String -> List String -> Element Msg
+viewChoices id chosen options =
+    if List.length options <= buttonLimit then
+        Element.wrappedRow [ spacing 6 ] (List.map (viewOption id chosen) options)
+
+    else
+        el [ Font.family Ui.mono, Font.size Ui.monoSize ]
+            (Element.html
+                (Html.select
+                    [ Html.Attributes.class "choice-select"
+                    , Html.Events.onInput (\picked -> InputMoved id (LString picked))
+                    ]
+                    (options
+                        |> List.map
+                            (\option ->
+                                Html.option
+                                    [ Html.Attributes.value option
+                                    , Html.Attributes.selected (option == chosen)
+                                    ]
+                                    [ Html.text option ]
+                            )
+                    )
+                )
+            )
+
+
+buttonLimit : Int
+buttonLimit =
+    12
 
 
 viewOption : String -> String -> String -> Element Msg

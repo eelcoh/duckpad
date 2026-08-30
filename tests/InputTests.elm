@@ -58,6 +58,18 @@ specChecks =
         (Input.parse "select \"a\" \"b\" default \"c\"")
     , isErr "input: a select needs options"
         (Input.parse "select default \"a\"")
+    , equal "input: a select whose options come from a column"
+        (Ok (Input.SelectFrom { cell = "by_state", column = "state", default = "CA" }))
+        (Input.parse "select from by_state .state default \"CA\"")
+    , equal "input: it binds text, like any other select"
+        TString
+        (Input.valueType (Input.SelectFrom { cell = "b", column = "c", default = "x" }))
+    , equal "input: the cell it reads is a dependency"
+        (Just "by_state")
+        (Input.parse "select from by_state .state default \"CA\"" |> Result.toMaybe |> Maybe.andThen Input.optionSource)
+    , equal "input: a plain select depends on nothing"
+        Nothing
+        (Input.parse "select \"a\" \"b\" default \"a\"" |> Result.toMaybe |> Maybe.andThen Input.optionSource)
     , isErr "input: an unknown control is refused"
         (Input.parse "dial 0 10 default 5")
     ]

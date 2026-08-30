@@ -1,4 +1,4 @@
-module Dsl.Input exposing (Spec(..), defaultLiteral, parse, valueType)
+module Dsl.Input exposing (Spec(..), defaultLiteral, optionSource, parse, valueType)
 
 {-| The tiny language an input cell is written in.
 
@@ -14,6 +14,7 @@ the control re-runs exactly what reads it.
 import Dsl.Ast exposing (Literal(..))
 import Dsl.Schema exposing (Type(..))
 import Parser exposing ((|.), (|=), Parser)
+import Set
 
 
 type Spec
@@ -23,6 +24,10 @@ type Spec
       -- binds one value to its name and inventing a two-valued cell to avoid
       -- writing two would be the more complicated answer.
     | Date { min : String, max : String, default : String }
+      -- A select whose options are a column of another cell. The cell is a
+      -- dependency like any other, so it runs first and this reruns when it
+      -- changes.
+    | SelectFrom { cell : String, column : String, default : String }
 
 
 valueType : Spec -> Type
@@ -37,6 +42,9 @@ valueType widget =
         Date _ ->
             TTimestamp
 
+        SelectFrom _ ->
+            TString
+
 
 defaultLiteral : Spec -> Literal
 defaultLiteral widget =
@@ -49,6 +57,9 @@ defaultLiteral widget =
 
         Date d ->
             LTimestamp d.default
+
+        SelectFrom s ->
+            LString s.default
 
 
 parse : String -> Result String Spec
@@ -65,7 +76,7 @@ widgetSpec : Parser Spec
 widgetSpec =
     Parser.succeed identity
         |. ws
-        |= Parser.oneOf [ range, select, date ]
+        |= Parser.oneOf [ range, selectFrom, select, date ]
         |. ws
         |. Parser.end
 
@@ -91,6 +102,48 @@ select =
         |= someStrings
         |. keyword "default"
         |= string
+
+
+{-| `select from by_state .state default "CA"`
+
+Tried before the plain `select`, since both start with the same word and only
+what follows tells them apart.
+
+-}
+selectFrom : Parser Spec
+selectFrom =
+    Parser.succeed (\cell column default -> SelectFrom { cell = cell, column = column, default = default })
+        |. Parser.backtrackable (keyword "select")
+        |. keyword "from"
+        |= lowerName
+        |. ws
+        |. Parser.symbol "."
+        |= lowerName
+        |. ws
+        |. keyword "default"
+        |= string
+
+
+lowerName : Parser String
+lowerName =
+    Parser.variable
+        { start = Char.isLower
+        , inner = \c -> Char.isAlphaNum c || c == '_'
+        , reserved = Set.empty
+        }
+
+
+{-| The cell an input reads its options from, if it reads any. This is what
+puts it in the graph behind that cell.
+-}
+optionSource : Spec -> Maybe String
+optionSource widget =
+    case widget of
+        SelectFrom s ->
+            Just s.cell
+
+        _ ->
+            Nothing
 
 
 date : Parser Spec
@@ -157,6 +210,9 @@ validate parsed =
 
             else
                 Ok parsed
+
+        SelectFrom _ ->
+            Ok parsed
 
         Select s ->
             if List.isEmpty s.options then

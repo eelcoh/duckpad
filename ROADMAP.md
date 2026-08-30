@@ -906,12 +906,34 @@ recorded as they were hit, in the order they are worth closing:
    picker's `disabled`, so they are enforced by the control and not only
    by the parser that read them.
 
-   **Options drawn from a query** is still open, and it is a design
-   question rather than a missing case. It would make a widget depend on
-   a cell — which the graph can express, but nothing else does — and it
-   raises what happens to a chosen value when the options beneath it
-   change, and how to keep a cell that filters on the widget from
-   feeding the widget's own options.
+   ~~**Options drawn from a query**~~ — done.
+
+       select from by_state .state default "CA"
+
+   The cell it reads is a dependency like any other, so it runs first
+   and the input re-resolves when it changes. A cell that filtered on
+   the widget while also feeding its options would be a cycle, and the
+   graph already reports those.
+
+   Three decisions, all made the same way — refuse rather than do
+   something unasked:
+
+   - **A choice that is no longer among the options blocks.** Snapping
+     to the default would re-run everything downstream with a value
+     nobody picked. The input goes `Invalid`, its dependents block, and
+     it says what happened — while still drawing its control, since the
+     reader is being asked to choose.
+   - **A truncated upstream is refused**, rather than offering the
+     subset that happened to be fetched. So is a column with more
+     distinct values than anyone would choose between; both say to group
+     the source cell down first.
+   - **No automatic "any" entry.** There is no way to say "do not
+     filter", and adding a value that is not in the column and a filter
+     that quietly rewrites itself is worse than the gap.
+
+   The control is a row of buttons while they fit and a dropdown past
+   twelve — buttons show every choice at once, which is worth having for
+   a handful and unreadable for fifty.
 
 7. **`UNPIVOT`**, which unlike `PIVOT` is statically typeable — the
    columns to fold and the names to fold them into are all written down.
