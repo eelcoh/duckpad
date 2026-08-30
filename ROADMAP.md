@@ -1223,6 +1223,27 @@ draws on, and the custom element wrapping it.
 the *easier* targets rather than the harder ones: WKWebView tracks
 Safari and WebView2 is Chromium.
 
+**What the spike found.** Open, Save and Export were all inert in the
+desktop build, and silently so — clicking them did nothing at all. Every
+one of duckpad's file mechanisms turned out to be browser-specific:
+`showOpenFilePicker` and `showSaveFilePicker` are Chromium-only, the
+`<input type="file">` fallback needs the webview to implement a file
+chooser, and `<a download>` needs it to implement downloads. WebKitGTK
+does none of the three.
+
+File access now goes through `public/files.js`, which knows both hosts:
+under Tauri a native picker chooses the path and a small Rust command
+moves the bytes, and in a browser nothing changed. Two choices there
+worth keeping: the read and write are **custom commands rather than the
+`fs` plugin**, because a path the reader just chose in a dialog is a
+clearer permission story than a filesystem scope; and `withGlobalTauri`
+puts the plugin APIs on `window.__TAURI__`, so the desktop build needs
+no bundler and no npm — the property this project has had throughout.
+
+That is what a spike is for, and it is worth noting how it was missed at
+first: everything *visible* worked, so both of us called it a success
+without touching a button.
+
 Caveats worth keeping:
 
 - CSP was off for the spike. A real build should enumerate what the page

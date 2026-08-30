@@ -12,11 +12,13 @@
 // contents are a property rather than markup, and every control is inert once
 // the scripts are gone and so should not be there at all.
 
+import { saveExport } from './files.js';
+
 export function exportStatic(name) {
   // The DOM has to have caught up with whatever Elm changed on the way here.
   requestAnimationFrame(() => {
     try {
-      download(name, buildPage());
+      saveExport(name, buildPage());
     } catch (err) {
       console.error('[duckpad] export failed', err);
     }
@@ -102,11 +104,3 @@ function removeScripts(clone) {
   clone.querySelectorAll('script').forEach((el) => el.remove());
 }
 
-function download(name, html) {
-  const url = URL.createObjectURL(new Blob([html], { type: 'text/html' }));
-  const link = document.createElement('a');
-  link.href = url;
-  link.download = name;
-  link.click();
-  URL.revokeObjectURL(url);
-}
