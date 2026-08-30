@@ -888,10 +888,23 @@ recorded as they were hit, in the order they are worth closing:
 
    It binds a `Timestamp`, which meant a timestamp literal — inlined as
    `TIMESTAMP '…'`, and not writable from the language itself, only
-   bindable by an input. The control is the browser's own date field:
-   elm-ui has no equivalent and a hand-rolled one would be worse than
-   the native picker. ISO dates sort as text, so the bound checks are
+   bindable by an input. ISO dates sort as text, so the bound checks are
    string comparisons.
+
+   The control is `fabhof/elm-ui-datepicker` rather than the browser's
+   own `input type=date`. The native one was the first thing on the page
+   that did not belong to the rest of it, and the styling is the smaller
+   half of the argument: `input type=date` is three different controls
+   across the three webviews a Tauri build would target, and WebKitGTK's
+   is the thinnest of them. Picking a library here buys the same control
+   everywhere, which is worth two dependencies and a little state.
+
+   The state is per cell — which month is showing, whether it is open,
+   what has been typed — and none of it is the value. Half-typed text
+   is deliberately not bound: it would invalidate everything downstream
+   on each keystroke. The bounds the cell declared are handed to the
+   picker's `disabled`, so they are enforced by the control and not only
+   by the parser that read them.
 
    **Options drawn from a query** is still open, and it is a design
    question rather than a missing case. It would make a widget depend on

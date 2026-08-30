@@ -17,6 +17,8 @@ import Dag exposing (Graph)
 import Dict exposing (Dict)
 import Dsl.Ast exposing (Constructor, Definition(..), Literal(..), TypeDecl)
 import Chart
+import Date exposing (Date)
+import DatePicker
 import Dsl.Check exposing (Cardinality(..), Display(..))
 import Dsl.Compile exposing (Compiled)
 import Dsl.Lexer
@@ -30,7 +32,7 @@ import Element.Border as Border
 import Element.Events
 import Element.Font as Font
 import Element.Input as Input
-import Html exposing (Html, div, input, pre, span, table, tbody, td, textarea, th, thead, tr)
+import Html exposing (Html, div, pre, span, table, tbody, td, textarea, th, thead, tr)
 import Html.Attributes exposing (attribute, class, id, placeholder, rows, spellcheck, value)
 import Html.Attributes
 import Html.Events exposing (onBlur, onInput)
@@ -82,6 +84,16 @@ type alias Model =
     -- Where each input cell currently sits. The cell's source gives the
     -- control and its default; this is what the reader has moved it to.
     , inputs : Dict String Literal
+
+    -- A date picker keeps its own state — which month it is showing, whether
+    -- it is open, what has been typed into it — none of which is the value.
+    , pickers : Dict String Picker
+    }
+
+
+type alias Picker =
+    { model : DatePicker.Model
+    , text : String
     }
 
 
@@ -111,6 +123,7 @@ type Msg
     | KeyEdit String Indent.Edit
     | ToggleArtefacts String
     | InputMoved String Literal
+    | PickerEvent String DatePicker.ChangeEvent
     | Focused (Result Browser.Dom.Error ())
 
 
@@ -130,7 +143,7 @@ init flags =
         ( notebook, notice ) =
             restore flags
     in
-    ( load notebook { title = notebook.title, cells = [], states = Dict.empty, baseSchema = Dict.empty, queue = [], current = Nothing, db = Booting, nextId = 1, notice = notice, resetArmed = False, editing = Nothing, expanded = Set.empty, inputs = Dict.empty }
+    ( load notebook { title = notebook.title, cells = [], states = Dict.empty, baseSchema = Dict.empty, queue = [], current = Nothing, db = Booting, nextId = 1, notice = notice, resetArmed = False, editing = Nothing, expanded = Set.empty, inputs = Dict.empty, pickers = Dict.empty }
     , Cmd.none
     )
 
@@ -442,6 +455,46 @@ step msg model =
                     }
                 )
 
+        PickerEvent id event ->
+            let
+                current =
+                    pickerFor id model
+            in
+            case event of
+                DatePicker.DateChanged picked ->
+                    step (InputMoved id (LTimestamp (Date.toIsoString picked)))
+                        { model
+                            | pickers =
+                                Dict.insert id
+                                    { current | text = Date.toIsoString picked, model = DatePicker.close current.model }
+                                    model.pickers
+                        }
+
+                DatePicker.TextChanged typed ->
+                    let
+                        typedState =
+                            { model | pickers = Dict.insert id { current | text = typed } model.pickers }
+                    in
+                    case Date.fromIsoString typed of
+                        Ok picked ->
+                            step (InputMoved id (LTimestamp (Date.toIsoString picked))) typedState
+
+                        Err _ ->
+                            -- Half-typed text is not yet a date; leave the
+                            -- bound value alone rather than invalidating
+                            -- everything downstream on each keystroke.
+                            ( typedState, Cmd.none )
+
+                DatePicker.PickerChanged inner ->
+                    ( { model
+                        | pickers =
+                            Dict.insert id
+                                { current | model = DatePicker.update inner current.model }
+                                model.pickers
+                      }
+                    , Cmd.none
+                    )
+
         ToggleArtefacts id ->
             ( { model
                 | expanded =
@@ -717,6 +770,12 @@ changes the data as surely as the URI does.
 sourceKey : Dsl.Source.Spec -> String
 sourceKey spec =
     Dsl.Source.formatName spec.format ++ " " ++ spec.uri ++ Dsl.Source.readerOptions spec
+
+
+pickerFor : String -> Model -> Picker
+pickerFor id model =
+    Dict.get id model.pickers
+        |> Maybe.withDefault { model = DatePicker.init, text = "" }
 
 
 valueOf : String -> Dsl.Input.Spec -> Model -> Literal
@@ -1630,7 +1689,7 @@ viewOutput model cell state =
                 message_ Ui.bad message
 
             Ok widget ->
-                viewControl cell.id widget (valueOf cell.id widget model)
+                viewControl cell.id widget (valueOf cell.id widget model) (pickerFor cell.id model)
 
     else
         case state.status of
@@ -1672,8 +1731,8 @@ viewOutput model cell state =
 {-| The control itself. An input's value is the cell's whole output, so this
 sits where a table would.
 -}
-viewControl : String -> Dsl.Input.Spec -> Literal -> Element Msg
-viewControl id widget current =
+viewControl : String -> Dsl.Input.Spec -> Literal -> Picker -> Element Msg
+viewControl id widget current picker =
     el
         [ width fill
         , padding 12
@@ -1720,25 +1779,66 @@ viewControl id widget current =
                     (List.map (viewOption id value) s.options)
 
             ( Dsl.Input.Date d, LTimestamp value ) ->
-                -- The browser's own date field: elm-ui has no equivalent, and
-                -- a hand-rolled one would be worse than the native picker.
-                el [ Font.family Ui.mono, Font.size Ui.monoSize ]
-                    (Element.html
-                        (Html.input
-                            [ Html.Attributes.type_ "date"
-                            , Html.Attributes.class "date-input"
-                            , Html.Attributes.min d.min
-                            , Html.Attributes.max d.max
-                            , Html.Attributes.value value
-                            , Html.Events.onInput (\iso -> InputMoved id (LTimestamp iso))
-                            ]
-                            []
-                        )
-                    )
+                viewDatePicker id d value picker
 
             _ ->
                 message_ Ui.bad "this control does not match its value"
         )
+
+
+{-| A date picker drawn in elm-ui rather than the browser's own control.
+
+The native `input type=date` is three different controls across the webviews
+this could end up in, and WebKitGTK's is the thinnest of them — which matters
+more than the styling, though the styling matters too: it was the one thing on
+the page that did not belong to the rest of it.
+
+-}
+viewDatePicker : String -> { min : String, max : String, default : String } -> String -> Picker -> Element Msg
+viewDatePicker id bounds value picker =
+    let
+        selected =
+            Date.fromIsoString value |> Result.toMaybe
+
+        settings =
+            DatePicker.defaultSettings
+    in
+    el [ width (px 260) ]
+        (DatePicker.input
+            [ Font.family Ui.mono
+            , Font.size Ui.monoSize
+            , Border.width 1
+            , Border.color Ui.line
+            , Border.rounded 5
+            , paddingXY 8 6
+            , Background.color Ui.card
+            ]
+            { onChange = PickerEvent id
+            , selected = selected
+            , text =
+                if String.isEmpty picker.text then
+                    value
+
+                else
+                    picker.text
+            , label = Input.labelHidden id
+            , placeholder = Nothing
+            , model = picker.model
+
+            -- The bounds the cell declared, enforced by the control rather
+            -- than only by the parser that read them.
+            , settings = { settings | disabled = outside bounds }
+            }
+        )
+
+
+outside : { min : String, max : String, default : String } -> Date -> Bool
+outside bounds day =
+    let
+        iso =
+            Date.toIsoString day
+    in
+    iso < bounds.min || iso > bounds.max
 
 
 viewOption : String -> String -> String -> Element Msg
