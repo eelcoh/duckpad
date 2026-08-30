@@ -6,7 +6,7 @@ Two sources, both read straight from the web. `airports` is a small CSV; `flight
 
 A terminator says how a cell is shown: `selectAll` gives a table, and `barChart`, `lineChart` or `scatter` a chart. The channels are checked against the row, so plotting something that is not a number is a compile error rather than an empty picture.
 
-`intersect` pairs two tables rather than merging them, so each side keeps its own column names and a later lambda destructures: `\(f, orig, dest) -> …`. That is what lets `routes` below join `airports` twice — once for the origin and once for the destination — without the two sides colliding.
+`intersect` pairs two tables rather than merging them, so each side keeps its own column names and a later lambda destructures: `\(f, orig, dest) -> …`. Scalar functions work anywhere an expression does — `roundTo 1 (avg g.delay)` below, and `++` to build a label. That is what lets `routes` below join `airports` twice — once for the origin and once for the destination — without the two sides colliding.
 
 ```source airports
 csv "https://cdn.jsdelivr.net/npm/vega-datasets@2/data/airports.csv"
@@ -23,7 +23,7 @@ access flights ()
   |> reduce (\g ->
        { state = g.state
        , departures = count g
-       , avg_delay = avg g.delay
+       , avg_delay = roundTo 1 (avg g.delay)
        })
   |> sortBy (desc .departures)
   |> limit 12
@@ -35,7 +35,7 @@ access flights ()
   |> groupBy .distance
   |> reduce (\g ->
        { distance = g.distance
-       , avg_delay = avg g.delay
+       , avg_delay = roundTo 1 (avg g.delay)
        })
   |> lineChart { x = .distance, y = .avg_delay }
 ```
@@ -55,8 +55,7 @@ access flights ()
   |> intersect .origin airports .iata
   |> intersect .destination airports .iata
   |> map (\(f, orig, dest) ->
-       { from = orig.city
-       , to = dest.city
+       { route = orig.city ++ " → " ++ dest.city
        , miles = f.distance
        , delay = f.delay
        })

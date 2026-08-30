@@ -101,6 +101,7 @@ type TExpr
     | TBin Op TExpr TExpr Type
     | TNot TExpr
     | TAgg String (Maybe ( String, String )) Type
+    | TCall String (List TExpr) Type
     | TCast TExpr String
 
 
@@ -120,6 +121,9 @@ typeOf expr =
             TBool
 
         TAgg _ _ t ->
+            t
+
+        TCall _ _ t ->
             t
 
         TCast _ name ->
@@ -876,6 +880,9 @@ castPayloads env expr =
         TBin _ l r _ ->
             castPayloads env l ++ castPayloads env r
 
+        TCall _ args _ ->
+            List.concatMap (castPayloads env) args
+
         TNot inner ->
             castPayloads env inner
 
@@ -966,6 +973,13 @@ checkExpr env expr =
         Aggregate fn arg ->
             checkAggregate env fn arg
 
+        Call fn args ->
+            args
+                |> List.foldl
+                    (\arg acc -> Result.map2 (\done t -> done ++ [ t ]) acc (checkExpr env arg))
+                    (Ok [])
+                |> Result.andThen (checkCall fn)
+
         Cast inner typeName ->
             checkCast env inner typeName
 
@@ -1027,6 +1041,13 @@ checkBinary op left right =
 
             else
                 mismatch
+
+        Concat ->
+            if lt == TString && rt == TString then
+                Ok (TBin op left right TString)
+
+            else
+                Err ("`++` joins text, but got a " ++ Schema.typeName lt ++ " and a " ++ Schema.typeName rt)
 
         _ ->
             if comparable lt rt then
@@ -1154,6 +1175,106 @@ aggregateResult fn alias column t =
 
             else
                 Ok (TAgg fn (Just ( alias, column )) t)
+
+
+{-| Scalar functions, checked by name and arity.
+
+Each one's result type is fixed here rather than read back from DuckDB, which
+is what lets a `startOfDay` be plotted on a temporal axis and a `round` be
+counted as an integer without anyone annotating either.
+
+-}
+checkCall : String -> List TExpr -> Result String TExpr
+checkCall fn args =
+    case ( fn, args ) of
+        ( "startOfDay", [ a ] ) ->
+            temporal fn a TTimestamp
+
+        ( "startOfMonth", [ a ] ) ->
+            temporal fn a TTimestamp
+
+        ( "startOfYear", [ a ] ) ->
+            temporal fn a TTimestamp
+
+        ( "year", [ a ] ) ->
+            temporal fn a TInt
+
+        ( "month", [ a ] ) ->
+            temporal fn a TInt
+
+        ( "dayOfWeek", [ a ] ) ->
+            temporal fn a TInt
+
+        ( "round", [ a ] ) ->
+            numericCall fn a TInt
+
+        ( "floor", [ a ] ) ->
+            numericCall fn a TInt
+
+        ( "ceiling", [ a ] ) ->
+            numericCall fn a TInt
+
+        ( "abs", [ a ] ) ->
+            numericCall fn a (baseType (typeOf a))
+
+        ( "roundTo", [ digits, a ] ) ->
+            if baseType (typeOf digits) /= TInt then
+                Err "`roundTo` takes the number of digits first, as in `roundTo 1 g.average`"
+
+            else if not (Schema.isNumeric (typeOf a)) then
+                Err ("`roundTo` needs a number, but this is a " ++ Schema.typeName (typeOf a))
+
+            else
+                -- Both arguments have to be carried, which the single-argument
+                -- helper cannot do.
+                Ok (TCall fn [ digits, a ] TFloat)
+
+        ( "lower", [ a ] ) ->
+            textual fn a
+
+        ( "upper", [ a ] ) ->
+            textual fn a
+
+        _ ->
+            Err
+                ("`"
+                    ++ fn
+                    ++ "` does not take "
+                    ++ String.fromInt (List.length args)
+                    ++ (if List.length args == 1 then
+                            " argument"
+
+                        else
+                            " arguments"
+                       )
+                )
+
+
+temporal : String -> TExpr -> Type -> Result String TExpr
+temporal fn arg result =
+    if baseType (typeOf arg) == TTimestamp then
+        Ok (TCall fn [ arg ] result)
+
+    else
+        Err ("`" ++ fn ++ "` needs a timestamp, but this is a " ++ Schema.typeName (typeOf arg))
+
+
+numericCall : String -> TExpr -> Type -> Result String TExpr
+numericCall fn arg result =
+    if Schema.isNumeric (typeOf arg) then
+        Ok (TCall fn [ arg ] result)
+
+    else
+        Err ("`" ++ fn ++ "` needs a number, but this is a " ++ Schema.typeName (typeOf arg))
+
+
+textual : String -> TExpr -> Result String TExpr
+textual fn arg =
+    if baseType (typeOf arg) == TString then
+        Ok (TCall fn [ arg ] TString)
+
+    else
+        Err ("`" ++ fn ++ "` needs text, but this is a " ++ Schema.typeName (typeOf arg))
 
 
 checkCast : Env -> Expr -> String -> Result String TExpr

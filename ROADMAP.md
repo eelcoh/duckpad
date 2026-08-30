@@ -259,12 +259,25 @@ Not built, and each recorded rather than worked around:
 - `scalar`, which wants a single number and cannot be reached until a
   global aggregate with no `groupBy` is expressible. One job, not two.
 - `json` was dropped as not worth a verb.
-- **No scalar functions at all** — no `date_trunc`, no `round`, no
-  string operations. This is the gap that bites first: `flights.date` is
-  a minute-resolution timestamp with 213,834 distinct values, so flights
-  per day cannot be asked for, and the obvious time series in the seeded
-  data is unwritable. The `temporal` channel type is derived and tested
-  but nothing in the notebook reaches it.
+- ~~No scalar functions at all.~~ Added: `startOfDay`, `startOfMonth`,
+  `startOfYear`, `year`, `month`, `dayOfWeek`, `round`, `roundTo`,
+  `abs`, `floor`, `ceiling`, `lower`, `upper`, and `++` for text.
+  Applied by juxtaposition — `round o.total`, `roundTo 1 (avg g.delay)`
+  — which binds tighter than any operator. Recognised by position like
+  the aggregates, so a column or a lambda parameter called `round` or
+  `month` still works.
+
+  Each result type is fixed by the checker rather than read back from
+  DuckDB, which is what lets a truncated timestamp reach a temporal axis
+  and a rounded number count as an integer. The SQL casts `round`,
+  `floor` and `ceiling`, because DuckDB returns a double for all three
+  and the column type would otherwise disagree with the value.
+
+  **This did not unblock the time series**, and that is worth being
+  precise about. Grouping by `startOfDay .date` needs `groupBy` to take
+  an expression and give it a name, and it takes a bare accessor. So the
+  `temporal` channel is still derived, tested, and unreached by anything
+  in the notebook. That is the next gap.
 - The category palette has seven colours, so a `color` channel over more
   than that many values will cycle. Fine for a handful of series, wrong
   for fifty states.

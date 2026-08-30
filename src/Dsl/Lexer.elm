@@ -21,7 +21,7 @@ import Set
 
 type Kind
     = Keyword
-    | Aggregate
+    | Callable
     | TypeName
     | Field
     | Str
@@ -43,8 +43,8 @@ className kind =
         Keyword ->
             "tok-keyword"
 
-        Aggregate ->
-            "tok-aggregate"
+        Callable ->
+            "tok-callable"
 
         TypeName ->
             "tok-type"
@@ -154,8 +154,8 @@ wordKind word =
     if Set.member word Dsl.Keywords.reserved || Set.member word Dsl.Keywords.formats then
         Keyword
 
-    else if Set.member word Dsl.Keywords.aggregates then
-        Aggregate
+    else if Set.member word Dsl.Keywords.aggregates || Set.member word Dsl.Keywords.functions then
+        Callable
 
     else
         Plain

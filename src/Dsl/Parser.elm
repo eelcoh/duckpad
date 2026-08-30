@@ -410,6 +410,9 @@ lookupOp token =
         "/" ->
             Just Div
 
+        "++" ->
+            Just Concat
+
         _ ->
             Nothing
 
@@ -445,6 +448,9 @@ precedence op =
             4
 
         Sub ->
+            4
+
+        Concat ->
             4
 
         Mul ->
@@ -560,22 +566,54 @@ negateLiteral e =
             other
 
 
+{-| A name in expression position.
+
+Field access is tried first, so a lambda parameter may be called `round` or
+`month` without the name being read as a call. Only a bare name is a candidate
+for one.
+
+-}
 identifierExpr : Parser Expr
 identifierExpr =
     lname
         |> Parser.andThen
             (\name ->
-                if isAggregate name then
-                    Parser.map (Aggregate name) argument
+                Parser.oneOf
+                    [ Parser.succeed (Access name) |. Parser.symbol "." |= fieldName
+                    , if isAggregate name then
+                        Parser.map (Aggregate name) argument
 
-                else
-                    fieldOrVar name
+                      else if isFunction name then
+                        Parser.map (Call name) (many argAtom)
+
+                      else
+                        Parser.succeed (Var name)
+                    ]
             )
 
 
 argument : Parser Expr
 argument =
     lname |> Parser.andThen fieldOrVar
+
+
+{-| What may follow a function name without parentheses. Application binds
+tighter than every operator, so `round o.a + 1` is `(round o.a) + 1`.
+-}
+argAtom : Parser Expr
+argAtom =
+    Parser.oneOf
+        [ Parser.map (Lit << LString) quotedString
+        , numberLiteral
+        , Parser.succeed identity |. sym "(" |= Parser.lazy (\_ -> expr) |. sym ")"
+        , Parser.backtrackable
+            (lname
+                |> Parser.andThen
+                    (\name ->
+                        Parser.succeed (Access name) |. Parser.symbol "." |= fieldName
+                    )
+            )
+        ]
 
 
 fieldOrVar : String -> Parser Expr
@@ -589,6 +627,11 @@ fieldOrVar name =
 isAggregate : String -> Bool
 isAggregate name =
     Set.member name Dsl.Keywords.aggregates
+
+
+isFunction : String -> Bool
+isFunction name =
+    Set.member name Dsl.Keywords.functions
 
 
 record : Parser Expr

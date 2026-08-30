@@ -151,7 +151,7 @@ access flights ()
   |> reduce (\\g ->
        { state = g.state
        , departures = count g
-       , avg_delay = avg g.delay
+       , avg_delay = roundTo 1 (avg g.delay)
        })
   |> sortBy (desc .departures)
   |> limit 12
@@ -164,7 +164,7 @@ access flights ()
   |> groupBy .distance
   |> reduce (\\g ->
        { distance = g.distance
-       , avg_delay = avg g.delay
+       , avg_delay = roundTo 1 (avg g.delay)
        })
   |> lineChart { x = .distance, y = .avg_delay }
 """
@@ -186,8 +186,7 @@ access flights ()
   |> intersect .origin airports .iata
   |> intersect .destination airports .iata
   |> map (\\(f, orig, dest) ->
-       { from = orig.city
-       , to = dest.city
+       { route = orig.city ++ " → " ++ dest.city
        , miles = f.distance
        , delay = f.delay
        })
@@ -225,7 +224,7 @@ access flights ()
        { origin = g.origin
        , destination = g.destination
        , flights = count g
-       , avg_delay = avg g.delay
+       , avg_delay = roundTo 1 (avg g.delay)
        })
   |> sortBy (desc .flights)
   |> limit 20

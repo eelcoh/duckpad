@@ -67,7 +67,7 @@ classifyChecks =
         [ ( Keyword, "type" ), ( TypeName, "Status" ) ]
         (kindsOf "type Status")
     , equal "lexer: aggregates are their own kind, since they are not reserved"
-        [ ( Aggregate, "count" ), ( Plain, "g" ) ]
+        [ ( Callable, "count" ), ( Plain, "g" ) ]
         (kindsOf "count g")
     , equal "lexer: a comment runs to the end of the line, not past it"
         [ ( Comment, "-- note" ), ( Keyword, "access" ) ]

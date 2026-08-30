@@ -15,7 +15,7 @@ import Dsl.Schema exposing (Schema, Type(..))
 
 checks : List Check
 checks =
-    parserChecks ++ checkerChecks ++ sqlChecks ++ elmChecks ++ readsChecks ++ joinChecks ++ keywordFieldChecks ++ chartChecks
+    parserChecks ++ checkerChecks ++ sqlChecks ++ elmChecks ++ readsChecks ++ joinChecks ++ keywordFieldChecks ++ chartChecks ++ functionChecks
 
 
 {-| The fixture schema every checker test runs against. `delivered_at` is
@@ -695,4 +695,81 @@ chartChecks =
         (compile "access orders () |> map (\\o -> { a = o.owner, b = o.total }) |> barChart { x = .a, y = .b, y = .b }")
     , isErr "chart: nothing may follow a chart"
         (compile "access orders () |> map (\\o -> { a = o.owner, b = o.total }) |> barChart { x = .a, y = .b } |> limit 5")
+    ]
+
+
+
+-- SCALAR FUNCTIONS
+
+
+functionChecks : List Check
+functionChecks =
+    [ equal "fn: applied by juxtaposition, and binding tighter than any operator"
+        (Ok (Binary Add (Call "round" [ Access "o" "total" ]) (Lit (LInt 1))))
+        (filterExpr "round o.total + 1")
+    , equal "fn: a second argument is taken greedily"
+        (Ok (Call "roundTo" [ Lit (LInt 1), Access "o" "total" ]))
+        (bodyOf "access t () |> map (\\o -> roundTo 1 o.total)")
+    , equal "fn: a parameter may share a function's name"
+        -- Field access is tried first, so `round.x` is not a call.
+        (Ok (Access "round" "x"))
+        (bodyOf "access t () |> map (\\round -> round.x)")
+
+    -- Result types are fixed by the checker, which is what lets a truncated
+    -- timestamp reach a temporal axis and a rounded number count as an integer.
+    , equal "fn: truncating a timestamp keeps it a timestamp"
+        (Ok [ ( "d", "Timestamp" ) ])
+        (rowTypeOf "access orders () |> map (\\o -> { d = startOfDay o.delivered_at }) |> selectAll")
+    , equal "fn: a component of a timestamp is a whole number"
+        (Ok [ ( "y", "Int" ) ])
+        (rowTypeOf "access orders () |> map (\\o -> { y = year o.delivered_at }) |> selectAll")
+    , equal "fn: rounding gives an integer, rounding to digits gives a float"
+        (Ok [ ( "a", "Int" ), ( "b", "Float" ) ])
+        (rowTypeOf "access orders () |> map (\\o -> { a = round o.total, b = roundTo 1 o.total }) |> selectAll")
+    , equal "fn: abs keeps the type it was given"
+        (Ok [ ( "a", "Float" ) ])
+        (rowTypeOf "access orders () |> map (\\o -> { a = abs o.total }) |> selectAll")
+    , equal "fn: ++ joins text"
+        (Ok [ ( "label", "String" ) ])
+        (rowTypeOf "access orders () |> map (\\o -> { label = o.owner ++ \" · \" ++ o.region }) |> selectAll")
+
+    -- Refusals.
+    , isErr "fn: a timestamp function needs a timestamp"
+        (compile "access orders () |> map (\\o -> { y = year o.owner }) |> selectAll")
+    , isErr "fn: a numeric function needs a number"
+        (compile "access orders () |> map (\\o -> { a = round o.owner }) |> selectAll")
+    , isErr "fn: a text function needs text"
+        (compile "access orders () |> map (\\o -> { a = lower o.total }) |> selectAll")
+    , isErr "fn: ++ does not join a number to text"
+        (compile "access orders () |> map (\\o -> { a = o.owner ++ o.total }) |> selectAll")
+    , isErr "fn: the wrong number of arguments is refused"
+        (compile "access orders () |> map (\\o -> { a = round o.total o.total }) |> selectAll")
+    , isErr "fn: roundTo takes the digits first"
+        (compile "access orders () |> map (\\o -> { a = roundTo o.total 1 }) |> selectAll")
+
+    , equal "fn: a function may wrap an aggregate"
+        -- The reason this matters: an average comes back as
+        -- 7.361030984637324, and rounding it is the difference between a
+        -- readable table and a wall of digits.
+        (Ok [ ( "d", "Float" ) ])
+        (rowTypeOf "access orders () |> groupBy .region |> reduce (\\g -> { d = roundTo 1 (avg g.total) }) |> selectAll")
+    , contains "sql: a function wrapping an aggregate nests the same way"
+        "round(avg(\"orders\".\"total\"), 1)"
+        (sqlOf "access orders () |> groupBy .region |> reduce (\\g -> { d = roundTo 1 (avg g.total) }) |> selectAll")
+    , isErr "fn: an aggregate inside a function is still only legal in reduce"
+        (compile "access orders () |> map (\\o -> { d = roundTo 1 (avg o.total) }) |> selectAll")
+
+    -- SQL, where the casts matter: DuckDB's round returns a double.
+    , contains "sql: truncation becomes date_trunc"
+        "date_trunc('day', \"orders\".\"delivered_at\")"
+        (sqlOf "access orders () |> map (\\o -> { d = startOfDay o.delivered_at }) |> selectAll")
+    , contains "sql: round is cast, because the column type says integer"
+        "CAST(round(\"orders\".\"total\") AS BIGINT)"
+        (sqlOf "access orders () |> map (\\o -> { a = round o.total }) |> selectAll")
+    , contains "sql: roundTo puts the digits second, as DuckDB wants them"
+        "round(\"orders\".\"total\", 1)"
+        (sqlOf "access orders () |> map (\\o -> { a = roundTo 1 o.total }) |> selectAll")
+    , contains "sql: ++ becomes the SQL concatenation operator"
+        "||"
+        (sqlOf "access orders () |> map (\\o -> { a = o.owner ++ o.region }) |> selectAll")
     ]

@@ -1,4 +1,4 @@
-module Dsl.Keywords exposing (aggregates, formats, reserved)
+module Dsl.Keywords exposing (aggregates, formats, functions, reserved)
 
 {-| The words the language reserves.
 
@@ -45,6 +45,31 @@ is what makes a `reduce` legible.
 aggregates : Set String
 aggregates =
     Set.fromList [ "count", "sum", "avg", "min", "max" ]
+
+
+{-| Scalar functions, recognised by position like the aggregates, so a column
+called `round` or `month` still works.
+
+There are no user-defined functions, so a fixed set is enough — and it is what
+lets `round o.total` parse as a call rather than as two names in a row.
+-}
+functions : Set String
+functions =
+    Set.fromList
+        [ "startOfDay"
+        , "startOfMonth"
+        , "startOfYear"
+        , "year"
+        , "month"
+        , "dayOfWeek"
+        , "round"
+        , "roundTo"
+        , "abs"
+        , "floor"
+        , "ceiling"
+        , "lower"
+        , "upper"
+        ]
 
 
 {-| The formats a source cell may name.

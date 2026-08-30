@@ -147,6 +147,9 @@ type Expr
     | Var String
       -- `count g`, `sum g.total`. Only legal inside `reduce`.
     | Aggregate String Expr
+      -- `round o.total`, `roundTo 1 g.avg`. Applied by juxtaposition, which
+      -- binds tighter than any operator.
+    | Call String (List Expr)
       -- `o.status as Status`, the bridge from a column to a declared type.
     | Cast Expr String
 
@@ -171,6 +174,7 @@ type Op
     | Sub
     | Mul
     | Div
+    | Concat
 
 
 opSymbol : Op -> String
@@ -211,3 +215,6 @@ opSymbol op =
 
         Div ->
             "/"
+
+        Concat ->
+            "++"

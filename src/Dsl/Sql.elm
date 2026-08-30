@@ -172,10 +172,48 @@ expr e =
         TAgg fn (Just ( alias, column )) _ ->
             fn ++ "(" ++ qualified alias column ++ ")"
 
+        TCall fn args _ ->
+            call fn (List.map expr args)
+
         TCast inner _ ->
             -- A custom type exists only in the Elm output; SQL carries the
             -- underlying tag column through untouched.
             expr inner
+
+
+{-| Each function's DuckDB spelling. The casts are not decoration: `round`
+and `floor` are typed here as returning an integer, and DuckDB returns a
+double, so without them the column type and the value would disagree.
+-}
+call : String -> List String -> String
+call fn args =
+    case ( fn, args ) of
+        ( "startOfDay", [ a ] ) ->
+            "date_trunc('day', " ++ a ++ ")"
+
+        ( "startOfMonth", [ a ] ) ->
+            "date_trunc('month', " ++ a ++ ")"
+
+        ( "startOfYear", [ a ] ) ->
+            "date_trunc('year', " ++ a ++ ")"
+
+        ( "dayOfWeek", [ a ] ) ->
+            "dayofweek(" ++ a ++ ")"
+
+        ( "round", [ a ] ) ->
+            "CAST(round(" ++ a ++ ") AS BIGINT)"
+
+        ( "floor", [ a ] ) ->
+            "CAST(floor(" ++ a ++ ") AS BIGINT)"
+
+        ( "ceiling", [ a ] ) ->
+            "CAST(ceil(" ++ a ++ ") AS BIGINT)"
+
+        ( "roundTo", [ digits, a ] ) ->
+            "round(" ++ a ++ ", " ++ digits ++ ")"
+
+        _ ->
+            fn ++ "(" ++ String.join ", " args ++ ")"
 
 
 sqlOp : Op -> String
@@ -192,6 +230,9 @@ sqlOp op =
 
         Or ->
             "OR"
+
+        Concat ->
+            "||"
 
         _ ->
             Ast.opSymbol op
