@@ -46,12 +46,21 @@ enterChecks =
     , equal "enter: no indent to keep means none is added"
         "access t ()\n‸"
         (pressEnter "access t ()‸")
-    , equal "enter: a line ending in a lambda arrow goes one step deeper"
-        "  |> map (\\o ->\n    ‸"
-        (pressEnter "  |> map (\\o ->‸")
-    , equal "enter: an unclosed bracket goes one step deeper"
-        "  |> reduce (\n    ‸"
-        (pressEnter "  |> reduce (‸")
+    , equal "enter: an unclosed bracket aligns the next line under it"
+        -- Elm puts separators at the start of the line, so a record's `{`, its
+        -- commas and its `}` share a column. Landing there is what makes the
+        -- next line ready for a comma.
+        "       { from = orig.city\n       ‸"
+        (pressEnter "       { from = orig.city‸")
+    , equal "enter: the innermost open bracket wins"
+        "  |> reduce (\\g -> { n = count g\n                   ‸"
+        (pressEnter "  |> reduce (\\g -> { n = count g‸")
+    , equal "enter: a closed bracket does not align anything"
+        "       , to = dest.city\n       ‸"
+        (pressEnter "       , to = dest.city‸")
+    , equal "enter: an arrow with nothing open goes one step deeper"
+        "  x ->\n    ‸"
+        (pressEnter "  x ->‸")
     , equal "enter: a bracket opened and closed on the same line does not"
         "  |> intersect .a b .c\n  ‸"
         (pressEnter "  |> intersect .a b .c‸")

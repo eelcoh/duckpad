@@ -56,13 +56,23 @@ enter original start end =
             currentLine before
 
         indent =
-            leading line
-                + (if opensBlock line then
-                    step
+            case lastOpenColumn line of
+                -- Elm puts the separators at the start of the line, so a
+                -- record's `{`, its `,`s and its `}` all sit in the same
+                -- column. Aligning to the opener is what makes the next line
+                -- ready for a comma; the two characters of `, ` then carry the
+                -- content across on their own.
+                Just column ->
+                    column
 
-                   else
-                    0
-                  )
+                Nothing ->
+                    leading line
+                        + (if endsWithArrow line then
+                            step
+
+                           else
+                            0
+                          )
 
         inserted =
             "\n" ++ String.repeat indent " "
@@ -87,19 +97,9 @@ leading line =
     String.length line - String.length (String.trimLeft line)
 
 
-{-| Whether the next line belongs one step deeper than this one.
-
-Brackets inside string literals do not count, or a URI with a brace in it
-would drag everything after it sideways.
-
--}
-opensBlock : String -> Bool
-opensBlock line =
-    let
-        code =
-            withoutStrings line
-    in
-    String.endsWith "->" (String.trimRight code) || depth code > 0
+endsWithArrow : String -> Bool
+endsWithArrow line =
+    String.endsWith "->" (String.trimRight (withoutStrings line))
 
 
 withoutStrings : String -> String
@@ -120,21 +120,35 @@ withoutStrings line =
         |> Tuple.first
 
 
-depth : String -> Int
-depth code =
-    String.foldl
-        (\c total ->
-            if Set.member c openers then
-                total + 1
+{-| The column of the innermost bracket this line leaves open, if any.
 
-            else if Set.member c closers then
-                total - 1
+Columns rather than a count, because the indent that follows is an alignment
+and not a depth. Brackets inside string literals are skipped, or a URI with a
+brace in it would drag everything after it sideways.
 
-            else
-                total
-        )
-        0
-        code
+-}
+lastOpenColumn : String -> Maybe Int
+lastOpenColumn line =
+    String.toList line
+        |> List.foldl
+            (\c ( column, inString, open ) ->
+                if c == '"' then
+                    ( column + 1, not inString, open )
+
+                else if inString then
+                    ( column + 1, inString, open )
+
+                else if Set.member c openers then
+                    ( column + 1, inString, column :: open )
+
+                else if Set.member c closers then
+                    ( column + 1, inString, List.drop 1 open )
+
+                else
+                    ( column + 1, inString, open )
+            )
+            ( 0, False, [] )
+        |> (\( _, _, open ) -> List.head open)
 
 
 openers : Set.Set Char
