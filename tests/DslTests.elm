@@ -386,7 +386,32 @@ checkerChecks =
         (compile "access orders () |> groupBy .region .region |> reduce (\\g -> { r = g.region }) |> selectAll")
     , isErr "check: groupBy needs at least one key"
         (compile "access orders () |> groupBy |> reduce (\\g -> { n = count g }) |> selectAll")
-    , isErr "check: filter cannot follow groupBy"
+    -- Filtering after a projection: HAVING when there was a grouping, an
+    -- ordinary WHERE when there was not.
+    , contains "sql: filtering a reduced row becomes HAVING"
+        "HAVING (count(*) > 100)"
+        (sqlOf "access orders () |> groupBy .region |> reduce (\\g -> { region = g.region, n = count g }) |> filter (\\r -> r.n > 100) |> selectAll")
+    , contains "sql: HAVING inlines the aggregate, not the alias it is selected under"
+        "HAVING (sum(\"orders\".\"total\") > 500)"
+        (sqlOf "access orders () |> groupBy .region |> reduce (\\g -> { region = g.region, revenue = sum g.total }) |> filter (\\r -> r.revenue > 500) |> selectAll")
+    , contains "sql: filtering a mapped row with no grouping is a WHERE"
+        "WHERE ((\"orders\".\"total\" * 2) > 100)"
+        (sqlOf "access orders () |> map (\\o -> { doubled = o.total * 2 }) |> filter (\\r -> r.doubled > 100) |> selectAll")
+    , equal "check: filtering after a reduce does not change the row type"
+        (Ok [ ( "region", "String" ), ( "n", "Int" ) ])
+        (rowTypeOf "access orders () |> groupBy .region |> reduce (\\g -> { region = g.region, n = count g }) |> filter (\\r -> r.n > 100) |> selectAll")
+    , contains "sql: two filters after a reduce are conjoined into one HAVING"
+        "HAVING ((count(*) > 100) AND (count(*) < 900))"
+        (sqlOf "access orders () |> groupBy .region |> reduce (\\g -> { n = count g }) |> filter (\\r -> r.n > 100) |> filter (\\r -> r.n < 900) |> selectAll")
+    , isErr "check: a filter after a projection can only see the projection"
+        (compile "access orders () |> groupBy .region |> reduce (\\g -> { n = count g }) |> filter (\\r -> r.owner > 1) |> selectAll")
+    , isErr "check: filter still needs a condition"
+        (compile "access orders () |> groupBy .region |> reduce (\\g -> { n = count g }) |> filter (\\r -> r.n) |> selectAll")
+    , isErr "check: filter after limit would be applied before it"
+        (compile "access orders () |> groupBy .region |> reduce (\\g -> { n = count g }) |> limit 5 |> filter (\\r -> r.n > 1) |> selectAll")
+    , isErr "check: filter cannot sit between groupBy and reduce"
+        (compile "access orders () |> groupBy .region |> filter (\\o -> o.total > 1) |> reduce (\\g -> { n = count g }) |> selectAll")
+    , isErr "check: a filter with nothing projected yet has nothing to read"
         (compile "access orders () |> groupBy .region |> filter (\\o -> o.total > 1) |> selectAll")
 
     -- Casts and declarations.

@@ -21,6 +21,7 @@ render checked =
         ++ List.filterMap joinClause checked.combines
         ++ maybeLine "WHERE " (whereClause checked)
         ++ maybeLine "GROUP BY " (groupKeys checked.groupBy)
+        ++ maybeLine "HAVING " (Maybe.map expr checked.having)
         ++ maybeLine "ORDER BY " (Maybe.map sort checked.sort)
         ++ maybeLine "LIMIT " (Maybe.map String.fromInt checked.limit)
     )

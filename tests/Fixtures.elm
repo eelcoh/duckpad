@@ -188,7 +188,9 @@ access flights ()
   |> reduce (\\g ->
        { distance = g.distance
        , avg_delay = roundTo 1 (avg g.delay)
+       , flights = count g
        })
+  |> filter (\\r -> r.flights > 500)
   |> lineChart { x = .distance, y = .avg_delay }
 """
       )

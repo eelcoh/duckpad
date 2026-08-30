@@ -42,6 +42,7 @@ type alias Checked =
       -- What to GROUP BY. A plain column key is just its own column
       -- expression, so both kinds of key render the same way.
     , groupBy : List TExpr
+    , having : Maybe TExpr
     , projection : Projection
     , hidden : List ( String, String, Type )
     , sort : Maybe SortSpec
@@ -186,6 +187,7 @@ type alias Builder =
       -- Name to expression: the name is how `reduce` refers to the key, the
       -- expression is what the database groups by.
     , groupBy : List ( String, TExpr )
+    , having : Maybe TExpr
     , projection : Projection
     , hidden : List ( String, String, Type )
     , sort : Maybe SortSpec
@@ -204,6 +206,7 @@ start source columns =
     , phase = Rows
     , filter = Nothing
     , groupBy = []
+    , having = Nothing
     , projection = All
     , hidden = []
     , sort = Nothing
@@ -240,8 +243,11 @@ applyStage schema params ast stage builder =
                             Err ("`filter` needs a condition, but this expression is a " ++ Schema.typeName (typeOf texpr))
                     )
 
-        ( Filter _, _ ) ->
-            Err "`filter` has to come before `groupBy`, `reduce` or `map` — filtering grouped rows is not supported yet"
+        ( Filter lambda, Projected ) ->
+            filterProjected params ast lambda builder
+
+        ( Filter _, Grouped ) ->
+            Err "`filter` cannot sit between `groupBy` and `reduce` — put it before the `groupBy` to filter rows, or after the `reduce` to filter groups"
 
         ( Combine kind leftKey table rightKey, Rows ) ->
             combine schema kind leftKey table rightKey builder
@@ -490,6 +496,73 @@ computedKeys env body =
             Err "a `groupBy` lambda has to produce a record, like `{ day = startOfDay f.date }`"
 
 
+{-| A filter after a projection.
+
+It reads as filtering what the projection produced, and that is what it does —
+but the reference is to the projection's *expression*, not to the alias it is
+selected under, for the same reason a computed grouping key inlines: an alias
+is not reliably visible to the clause that would need it.
+
+Where the filter lands depends on whether there was a grouping. After a
+`reduce` the expressions contain aggregates and belong in HAVING; after a
+plain `map` there is nothing aggregated and WHERE is correct.
+
+-}
+filterProjected : Params -> Pipeline -> Lambda -> Builder -> Result String Builder
+filterProjected params ast lambda builder =
+    case builder.limit of
+        Just _ ->
+            Err "`filter` after `limit` would be applied before it, not after — put the filter first"
+
+        Nothing ->
+            case builder.projection of
+                All ->
+                    Err "there is nothing to filter here yet"
+
+                Fields fields ->
+                    projectionEnv params ast builder lambda fields
+                        |> Result.andThen (\env -> checkExpr env lambda.body)
+                        |> Result.andThen
+                            (\texpr ->
+                                if Schema.typeName (typeOf texpr) /= "Bool" then
+                                    Err ("`filter` needs a condition, but this expression is a " ++ Schema.typeName (typeOf texpr))
+
+                                else if List.isEmpty builder.groupBy then
+                                    Ok { builder | filter = Just (conjoin builder.filter texpr) }
+
+                                else
+                                    Ok { builder | having = Just (conjoin builder.having texpr) }
+                            )
+
+
+{-| Scope for a lambda that reads a projection rather than a table: one row,
+whose columns are the projected names and whose values are their expressions.
+-}
+projectionEnv : Params -> Pipeline -> Builder -> Lambda -> List ( String, TExpr ) -> Result String Env
+projectionEnv params ast builder lambda fields =
+    case lambda.pattern of
+        Single name ->
+            Ok
+                { bindings =
+                    [ ( name
+                      , { alias = ""
+                        , table = ""
+                        , columns = List.map (\( n, e ) -> ( n, typeOf e )) fields
+                        }
+                      )
+                    ]
+                , declarations = ast.declarations
+                , inReduce = False
+                , groupKeys = []
+                , inlined = fields
+                , sides = builder.sides
+                , params = params
+                }
+
+        Destructure _ ->
+            Err "a projection is one row, so this lambda takes a single name"
+
+
 conjoin : Maybe TExpr -> TExpr -> TExpr
 conjoin existing next =
     case existing of
@@ -620,6 +693,10 @@ type alias Env =
     , declarations : List TypeDecl
     , inReduce : Bool
     , groupKeys : List ( String, TExpr )
+
+    -- Names that stand for an expression rather than a column, so reading one
+    -- substitutes the expression.
+    , inlined : List ( String, TExpr )
     , sides : List Side
     , params : Params
     }
@@ -673,6 +750,7 @@ groupEnv params ast builder lambda =
                 , declarations = ast.declarations
                 , inReduce = True
                 , groupKeys = builder.groupBy
+                , inlined = []
                 , sides = builder.sides
                 , params = params
                 }
@@ -687,6 +765,7 @@ envWith params ast builder bindings =
     , declarations = ast.declarations
     , inReduce = False
     , groupKeys = []
+    , inlined = []
     , sides = builder.sides
     , params = params
     }
@@ -778,6 +857,7 @@ finish builder =
                         , combines = builder.combines
                         , filter = builder.filter
                         , groupBy = List.map Tuple.second builder.groupBy
+                        , having = builder.having
                         , projection = builder.projection
                         , hidden = builder.hidden
                         , sort = builder.sort
@@ -993,7 +1073,15 @@ checkExpr env expr =
                     Err ("`" ++ obj ++ "` is not in scope — this lambda binds " ++ paramNames env)
 
                 Just side ->
-                    if env.inReduce then
+                    if not (List.isEmpty env.inlined) then
+                        case lookupKey column env.inlined of
+                            Just inlinedExpr ->
+                                Ok inlinedExpr
+
+                            Nothing ->
+                                Err (unknownColumn column side.columns)
+
+                    else if env.inReduce then
                         -- A key is referred to by the name `groupBy` gave it,
                         -- and reading it inlines the expression rather than
                         -- relying on the alias existing yet.

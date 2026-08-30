@@ -789,11 +789,22 @@ Standing findings:
 Everything in the original plan is built. What is left are gaps that were
 recorded as they were hit, in the order they are worth closing:
 
-1. **HAVING** — `filter` after `groupBy`. Currently rejected with a
-   message saying to move the filter earlier, which is not always
-   possible: the seeded notebook's slider had to filter flights before
-   the grouping because it could not filter the grouped result. This is
-   the gap that has been felt most.
+1. ~~**HAVING**~~ — done. `filter` after a projection reads as filtering
+   what the projection produced, and does. Where it lands depends on
+   whether there was a grouping: after a `reduce` the expressions
+   contain aggregates and it becomes a HAVING; after a plain `map` there
+   is nothing aggregated and a WHERE is correct. Both inline the
+   projection's expression rather than naming the alias it is selected
+   under, for the same reason a computed grouping key does — an alias is
+   not reliably visible to the clause that would need it.
+
+   A filter after `limit` is refused, because SQL would apply it before
+   the limit rather than after, which is not what the pipeline says.
+
+   The seeded `delay_by_distance` chart uses it to drop distances flown
+   fewer than 500 times: 907 of 1,109 points remain and the y-range
+   tightens from [-14.4, 37.6] to [-13.0, 21.6], so what it removes is
+   genuinely thin buckets rather than signal.
 
 2. **Global aggregates, and `scalar` with them.** `reduce` requires a
    `groupBy`, so "the average delay across everything" cannot be

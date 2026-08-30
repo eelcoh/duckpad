@@ -8,6 +8,8 @@ A terminator says how a cell is shown: `selectAll` gives a table, and `barChart`
 
 `intersect` pairs two tables rather than merging them, so each side keeps its own column names and a later lambda destructures: `\(f, orig, dest) -> …`. Scalar functions work anywhere an expression does — `roundTo 1 (avg g.delay)` below, and `++` to build a label. `groupBy` takes a lambda when a key has to be computed, which is how `daily` turns a minute-resolution timestamp into a day.
 
+A `filter` after a `reduce` becomes a HAVING, which is how `delay_by_distance` drops the distances too rare to average meaningfully.
+
 An input cell binds a control to its name. Drag `min_distance` and only the cells that read it re-run — the value is compiled into their SQL, so the cache does the rest. That is what lets `routes` below join `airports` twice — once for the origin and once for the destination — without the two sides colliding.
 
 ```source airports
@@ -54,7 +56,9 @@ access flights ()
   |> reduce (\g ->
        { distance = g.distance
        , avg_delay = roundTo 1 (avg g.delay)
+       , flights = count g
        })
+  |> filter (\r -> r.flights > 500)
   |> lineChart { x = .distance, y = .avg_delay }
 ```
 
