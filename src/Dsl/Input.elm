@@ -12,6 +12,7 @@ the control re-runs exactly what reads it.
 -}
 
 import Dsl.Ast exposing (Literal(..))
+import Dsl.Parser
 import Dsl.Schema exposing (Type(..))
 import Parser exposing ((|.), (|=), Parser)
 import Set
@@ -68,8 +69,15 @@ parse source =
         Ok parsed ->
             validate parsed
 
-        Err _ ->
-            Err "an input reads `range <min> <max> default <value>` or `select \"a\" \"b\" default \"a\"`"
+        Err deadEnds ->
+            Err
+                (Dsl.Parser.describe source deadEnds
+                    ++ "\n\nAn input is one of:\n"
+                    ++ "    range <min> <max> [step <n>] default <n>\n"
+                    ++ "    select \"a\" \"b\" default \"a\"\n"
+                    ++ "    select from <cell> .<column> default \"a\"\n"
+                    ++ "    date \"YYYY-MM-DD\" \"YYYY-MM-DD\" default \"YYYY-MM-DD\""
+                )
 
 
 widgetSpec : Parser Spec
@@ -282,6 +290,13 @@ ws =
                 ]
 
 
+{-| A non-breaking space counts as whitespace here.
+
+It is not whitespace to a parser and is indistinguishable from a space to a
+reader, which makes it the worst kind of paste artefact: the line looks exactly
+right and does not parse.
+
+-}
 isSpace : Char -> Bool
 isSpace c =
-    c == ' ' || c == '\n' || c == '\r' || c == '\t'
+    c == ' ' || c == '\n' || c == '\r' || c == '\t' || c == '\u{00A0}'

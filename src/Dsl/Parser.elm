@@ -1,4 +1,4 @@
-module Dsl.Parser exposing (parse)
+module Dsl.Parser exposing (describe, parse)
 
 {-| Source text to surface AST.
 
@@ -711,6 +711,13 @@ quotedString =
 -- ERRORS
 
 
+{-| A parse failure with the line, the column, and the text under it.
+
+Shared with the input language, which is a different grammar but has the same
+need: an error that says only what the grammar accepts, without saying where
+it stopped, leaves the author comparing their line against a summary.
+
+-}
 describe : String -> List Parser.DeadEnd -> String
 describe source deadEnds =
     case List.head deadEnds of

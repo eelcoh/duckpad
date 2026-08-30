@@ -5,7 +5,7 @@ value reaches a query as an inlined literal.
 -}
 
 import Cell exposing (Kind(..))
-import Check exposing (Check, equal, isErr)
+import Check exposing (Check, assert, equal, isErr)
 import Dict
 import Dsl.Ast exposing (Literal(..))
 import Dsl.Compile
@@ -70,6 +70,25 @@ specChecks =
     , equal "input: a plain select depends on nothing"
         Nothing
         (Input.parse "select \"a\" \"b\" default \"a\"" |> Result.toMaybe |> Maybe.andThen Input.optionSource)
+    , equal "input: leading and trailing whitespace around a query-driven select"
+        (Ok (Input.SelectFrom { cell = "by_state", column = "state", default = "CA" }))
+        (Input.parse "  select from by_state .state default \"CA\"\n")
+    , equal "input: no space before the accessor"
+        (Ok (Input.SelectFrom { cell = "by_state", column = "state", default = "CA" }))
+        (Input.parse "select from by_state.state default \"CA\"")
+    , equal "input: a non-breaking space is whitespace here"
+        -- Indistinguishable from a space on screen and not whitespace to a
+        -- parser, which makes it the worst kind of paste artefact.
+        (Ok (Input.SelectFrom { cell = "by_state", column = "state", default = "CA" }))
+        (Input.parse "select\u{00A0}from by_state .state default \"CA\"")
+    , assert "input: a failure says where it stopped, not only what is accepted"
+        (case Input.parse "select from by_state .state defualt \"CA\"" of
+            Err message ->
+                String.contains "column" message && String.contains "An input is one of" message
+
+            Ok _ ->
+                False
+        )
     , isErr "input: an unknown control is refused"
         (Input.parse "dial 0 10 default 5")
     ]
