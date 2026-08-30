@@ -1393,6 +1393,7 @@ viewAddRow : Element Msg
 viewAddRow =
     row [ spacing 8, Ui.dropOnExport ]
         [ plainButton "+ source" False (Just (AddCell Source))
+        , plainButton "+ input" False (Just (AddCell Input))
         , plainButton "+ query cell" False (Just (AddCell Query))
         , plainButton "+ prose cell" False (Just (AddCell Prose))
         ]
