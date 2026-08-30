@@ -525,13 +525,20 @@ notebook. Four changes, in the order they should be done:
    textarea, with `autocorrect`, `autocapitalize` and `autocomplete` off
    so mobile keyboards do not rewrite code.
 
-2. **A monospace font with programming ligatures.** Fira Code is the
-   obvious pick and is on Google Fonts; JetBrains Mono, Iosevka or
-   Cascadia Code would do as well. This is worth more here than in most
-   languages because the DSL leans on exactly the sequences ligatures
-   improve: `|>`, `->`, `==`, `/=`, `>=`, `<=`. Give every face a real
-   fallback stack so a blocked font request degrades to the system
-   monospace rather than to a serif.
+2. ~~**A monospace font with programming ligatures.**~~ Done. Fira Code
+   from Google Fonts, with `IBM Plex Mono` and the system monospace
+   behind it. IBM Plex Sans is loaded too — it was named in the stack
+   from the start but never actually fetched. Ligatures are stated
+   explicitly through `calt` rather than left to the face's defaults, so
+   a fallback that also has them behaves the same.
+
+   Also done, and not on the original list: **prose renders as
+   Markdown.** It was shown as its own source, so a heading appeared as
+   `# Notes` and the narrative half of a notebook read like a diff. A
+   prose cell now renders and becomes a textarea when clicked, through
+   `dillonkearns/elm-markdown` with raw HTML left off — a notebook is a
+   thing people pass around. Spell-checking is on for prose and off for
+   code, which is the right way round and was not before.
 
 3. **Colour coding.** The interesting part is that the notebook already
    has a real lexer, so highlighting can be driven by `Dsl.Parser`'s own

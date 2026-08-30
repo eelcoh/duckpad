@@ -10,6 +10,8 @@ materialise in DuckDB only where a cached value cannot be reused.
 -}
 
 import Browser
+import Browser.Dom
+import Task
 import Cell exposing (Cell, Kind(..), Status(..))
 import Dag exposing (Graph)
 import Dict exposing (Dict)
@@ -20,12 +22,13 @@ import Dsl.Schema as Schema exposing (Schema, Type(..))
 import Dsl.Source
 import Engine exposing (CellState, Shape)
 import Html exposing (Html, button, details, div, input, p, pre, section, span, summary, table, tbody, td, text, textarea, th, thead, tr)
-import Html.Attributes exposing (attribute, class, classList, disabled, placeholder, rows, spellcheck, title, value)
+import Html.Attributes exposing (attribute, class, classList, disabled, id, placeholder, rows, spellcheck, title, value)
 import Html.Events exposing (onBlur, onClick, onInput)
 import Json.Decode as D
 import Notebook exposing (Notebook)
 import Seed
 import Ports
+import Prose
 import Query exposing (Outcome(..), Table)
 import Set
 import Time
@@ -53,6 +56,11 @@ type alias Model =
     -- Reset discards unsaved work, so it takes two clicks: the first arms it
     -- and the second does it. Any other action disarms it again.
     , resetArmed : Bool
+
+    -- Which prose cell is being edited, if any. Prose shows as rendered
+    -- Markdown until it is clicked, which is the only way for a heading to
+    -- look like a heading and still be editable in place.
+    , editing : Maybe String
     }
 
 
@@ -77,6 +85,8 @@ type Msg
     | FileOpened D.Value
     | DismissNotice
     | ResetNotebook
+    | EditProse String
+    | Focused (Result Browser.Dom.Error ())
 
 
 main : Program Flags Model Msg
@@ -95,7 +105,7 @@ init flags =
         ( notebook, notice ) =
             restore flags
     in
-    ( load notebook { title = notebook.title, cells = [], states = Dict.empty, baseSchema = Dict.empty, queue = [], current = Nothing, db = Booting, nextId = 1, notice = notice, resetArmed = False }
+    ( load notebook { title = notebook.title, cells = [], states = Dict.empty, baseSchema = Dict.empty, queue = [], current = Nothing, db = Booting, nextId = 1, notice = notice, resetArmed = False, editing = Nothing }
     , Cmd.none
     )
 
@@ -202,6 +212,11 @@ setStatus id status states =
         states
 
 
+domIdFor : String -> String
+domIdFor id =
+    "source-" ++ id
+
+
 moduleNameFor : String -> String
 moduleNameFor id =
     "Cell_" ++ String.toUpper (String.left 1 id) ++ String.dropLeft 1 id
@@ -283,7 +298,7 @@ step msg model =
             renameCell id (sanitiseName newName) model
 
         CommitEdit ->
-            schedule model
+            schedule { model | editing = Nothing }
 
         AddCell kind ->
             let
@@ -371,6 +386,16 @@ step msg model =
 
         DismissNotice ->
             ( { model | notice = Nothing }, Cmd.none )
+
+        EditProse id ->
+            ( { model | editing = Just id }
+            , Task.attempt Focused (Browser.Dom.focus (domIdFor id))
+            )
+
+        Focused _ ->
+            -- Nothing to do either way: if the field could not be focused the
+            -- reader can still click it.
+            ( model, Cmd.none )
 
         ResetNotebook ->
             if model.resetArmed then
@@ -995,33 +1020,7 @@ viewCell model graph cell =
             , viewEdges graph cell
             , button [ class "danger", onClick (DeleteCell cell.id) ] [ text "×" ]
             ]
-        , textarea
-            [ class "cell-source"
-
-            -- Browsers spell-check a textarea by default, which underlines
-            -- source in red as though it were an error. The mobile
-            -- attributes go with it: autocorrect happily rewrites code.
-            , spellcheck False
-            , attribute "autocorrect" "off"
-            , attribute "autocapitalize" "off"
-            , attribute "autocomplete" "off"
-            , value cell.source
-            , rows (max 3 (List.length (String.lines cell.source)))
-            , placeholder
-                (case cell.kind of
-                    Query ->
-                        "access orders () |> selectAll"
-
-                    Source ->
-                        "csv \"https://…\""
-
-                    Prose ->
-                        "Notes…"
-                )
-            , onInput (SourceEdited cell.id)
-            , onBlur CommitEdit
-            ]
-            []
+        , viewBody model cell
         , viewOutput cell state
         , viewArtefacts state
         ]
@@ -1054,6 +1053,52 @@ describeRow row =
     row
         |> List.map (\( name, t ) -> name ++ " : " ++ Schema.typeName t)
         |> String.join "\n"
+
+
+viewBody : Model -> Cell -> Html Msg
+viewBody model cell =
+    if cell.kind == Prose && model.editing /= Just cell.id then
+        div
+            [ class "prose-body"
+            , onClick (EditProse cell.id)
+            , title "Click to edit"
+            ]
+            [ if String.trim cell.source == "" then
+                span [ class "prose-empty" ] [ text "Notes…" ]
+
+              else
+                Prose.view cell.source
+            ]
+
+    else
+        textarea
+            [ class "cell-source"
+            , id (domIdFor cell.id)
+
+            -- Browsers spell-check a textarea by default, which underlines
+            -- source in red as though it were an error. The mobile
+            -- attributes go with it: autocorrect happily rewrites code.
+            , spellcheck (cell.kind == Prose)
+            , attribute "autocorrect" "off"
+            , attribute "autocapitalize" "off"
+            , attribute "autocomplete" "off"
+            , value cell.source
+            , rows (max 3 (List.length (String.lines cell.source)))
+            , placeholder
+                (case cell.kind of
+                    Query ->
+                        "access orders () |> selectAll"
+
+                    Source ->
+                        "csv \"https://…\""
+
+                    Prose ->
+                        "Notes…"
+                )
+            , onInput (SourceEdited cell.id)
+            , onBlur CommitEdit
+            ]
+            []
 
 
 viewEdges : Graph -> Cell -> Html Msg
