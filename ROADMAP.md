@@ -1102,9 +1102,11 @@ half-read by a parser that no longer knows its fences. The three
 remaining mentions of Acadia in the source are references to *their*
 language and are correct.
 
-**Not done**: the repository directory is still `~/Code/ideas/acadia`,
-and the distrobox container is still `acadia-tauri`. Both are the
-author's to rename, and neither affects anything that ships.
+The repository directory is `~/Code/ideas/duckpad` and the build
+container is `duckpad-tauri`; both were renamed with the project. The
+only thing that needed care there was the editor's per-project memory,
+which is keyed on the directory path and would have been orphaned by the
+move.
 
 ## A tutorial
 
@@ -1206,16 +1208,16 @@ dependencies cannot simply be installed. They live in a distrobox
 container instead of being layered onto the host image: no reboot, and
 the host stays as it was.
 
-    distrobox create --name acadia-tauri \
+    distrobox create --name duckpad-tauri \
       --image registry.fedoraproject.org/fedora-toolbox:latest
-    distrobox enter acadia-tauri -- sudo dnf install -y \
+    distrobox enter duckpad-tauri -- sudo dnf install -y \
       webkit2gtk4.1-devel openssl-devel curl wget file \
       libappindicator-gtk3-devel librsvg2-devel \
       gcc gcc-c++ make rust cargo
-    distrobox enter acadia-tauri -- cargo install tauri-cli --version "^2" --locked
+    distrobox enter duckpad-tauri -- cargo install tauri-cli --version "^2" --locked
 
-What that gives: Rust 1.98 (Tauri 2 wants 1.77 or later), webkit2gtk
-4.1 at 2.52.5, gtk3 3.24 and libsoup3 3.6.
+What that gives, all verified: Rust 1.98 (Tauri 2 wants 1.77 or later),
+tauri-cli 2.11.4, webkit2gtk 4.1 at 2.52.5, gtk3 3.24 and libsoup3 3.6.
 
 The container shares `$HOME`, so the repository is the same files inside
 and out. That suggests the division of labour for the spike: the
