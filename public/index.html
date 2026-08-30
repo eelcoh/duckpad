@@ -87,8 +87,52 @@
 
   .cell-source { width: 100%; border: none; padding: 12px; font-family: var(--mono); font-size: 12.5px;
                  line-height: 1.55; resize: vertical; background: transparent; color: var(--ink); }
-  .cell-source:focus { outline: none; background: #fcfdff; }
+  .cell-source:focus { outline: none; }
   .cell-prose .cell-source { font-family: var(--sans); font-size: 13.5px; color: var(--muted); }
+
+  /* A code cell is a coloured <pre> with a transparent textarea exactly on top
+     of it. The two layers must agree on every property that affects where a
+     glyph lands, or the caret drifts away from the text under it — hence one
+     rule for both rather than two that happen to match today. */
+  .editor { position: relative; }
+  .editor > .highlight,
+  .editor > .cell-source {
+    margin: 0;
+    padding: 12px;
+    font-family: var(--mono);
+    font-size: 12.5px;
+    line-height: 1.55;
+    letter-spacing: normal;
+    tab-size: 2;
+    white-space: pre-wrap;
+    overflow-wrap: break-word;
+    word-break: break-word;
+    border: 0;
+  }
+  .editor > .highlight { color: var(--ink); pointer-events: none; }
+  .editor > .cell-source {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    resize: none;
+    overflow: hidden;
+    background: transparent;
+    color: transparent;
+    caret-color: var(--ink);
+  }
+  .editor > .cell-source::selection { background: #cfe3f5; }
+  .cell:focus-within .editor > .highlight { background: #fcfdff; }
+
+  .tok-keyword  { color: #2f5d8a; font-weight: 500; }
+  .tok-aggregate{ color: #7a4ea8; }
+  .tok-type     { color: #7a4ea8; font-weight: 500; }
+  .tok-field    { color: #17706e; }
+  .tok-string   { color: #a3543a; }
+  .tok-number   { color: #a3543a; }
+  .tok-operator { color: #8a919a; }
+  .tok-comment  { color: #9aa3ac; font-style: italic; }
+  .tok-plain    { color: var(--ink); }
 
   .out { padding: 10px 12px; font-size: 12px; border-top: 1px solid var(--line); font-family: var(--mono); }
   .out-idle { color: var(--muted); }

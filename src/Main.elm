@@ -18,6 +18,7 @@ import Dict exposing (Dict)
 import Dsl.Ast exposing (Constructor, TypeDecl)
 import Dsl.Check exposing (Cardinality(..))
 import Dsl.Compile exposing (Compiled)
+import Dsl.Lexer
 import Dsl.Schema as Schema exposing (Schema, Type(..))
 import Dsl.Source
 import Engine exposing (CellState, Shape)
@@ -1081,36 +1082,61 @@ viewBody model cell =
                 Prose.view cell.source
             ]
 
+    else if cell.kind == Prose then
+        editor cell
+
     else
-        textarea
-            [ class "cell-source"
-            , id (domIdFor cell.id)
-
-            -- Browsers spell-check a textarea by default, which underlines
-            -- source in red as though it were an error. The mobile
-            -- attributes go with it: autocorrect happily rewrites code.
-            , spellcheck (cell.kind == Prose)
-            , attribute "autocorrect" "off"
-            , attribute "autocapitalize" "off"
-            , attribute "autocomplete" "off"
-            , value cell.source
-            , rows (max 3 (List.length (String.lines cell.source)))
-            , placeholder
-                (case cell.kind of
-                    Query ->
-                        "access orders () |> selectAll"
-
-                    Source ->
-                        "csv \"https://…\""
-
-                    Prose ->
-                        "Notes…"
+        -- Code cells get the coloured layer underneath; prose does not, since
+        -- prose is Markdown and has its own rendering.
+        div [ class "editor" ]
+            [ pre
+                [ class "highlight", attribute "aria-hidden" "true" ]
+                (List.map viewToken (Dsl.Lexer.tokenize cell.source)
+                    -- A zero-width space guarantees a final line box, so the
+                    -- two layers agree on their height whether or not the
+                    -- source ends in a newline.
+                    ++ [ text "\u{200B}" ]
                 )
-            , onInput (SourceEdited cell.id)
-            , onBlur CommitEdit
-            , onKeyDown cell.id
+            , editor cell
             ]
-            []
+
+
+viewToken : Dsl.Lexer.Token -> Html Msg
+viewToken token =
+    span [ class (Dsl.Lexer.className token.kind) ] [ text token.text ]
+
+
+editor : Cell -> Html Msg
+editor cell =
+    textarea
+        [ class "cell-source"
+        , id (domIdFor cell.id)
+
+        -- Browsers spell-check a textarea by default, which underlines
+        -- source in red as though it were an error. The mobile
+        -- attributes go with it: autocorrect happily rewrites code.
+        , spellcheck (cell.kind == Prose)
+        , attribute "autocorrect" "off"
+        , attribute "autocapitalize" "off"
+        , attribute "autocomplete" "off"
+        , value cell.source
+        , rows (max 3 (List.length (String.lines cell.source)))
+        , placeholder
+            (case cell.kind of
+                Query ->
+                    "access orders () |> selectAll"
+
+                Source ->
+                    "csv \"https://…\""
+
+                Prose ->
+                    "Notes…"
+            )
+        , onInput (SourceEdited cell.id)
+        , onBlur CommitEdit
+        , onKeyDown cell.id
+        ]
+        []
 
 
 {-| Enter and Tab, handled here rather than left to the browser.

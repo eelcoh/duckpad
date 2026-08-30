@@ -49,6 +49,8 @@ spec =
 
 format : Parser Format
 format =
+    -- The names here and in `Dsl.Keywords.formats` are the same set; the lexer
+    -- reads that one to colour them.
     Parser.oneOf
         [ Parser.succeed Csv |. Parser.keyword "csv"
         , Parser.succeed Parquet |. Parser.keyword "parquet"

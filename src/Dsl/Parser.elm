@@ -10,6 +10,7 @@ free of the backtracking that `/` versus `/=` would otherwise force.
 -}
 
 import Dsl.Ast exposing (..)
+import Dsl.Keywords
 import Parser exposing ((|.), (|=), Parser)
 import Set exposing (Set)
 
@@ -66,11 +67,7 @@ kw s =
 
 reserved : Set String
 reserved =
-    Set.fromList
-        [ "access", "filter", "map", "groupBy", "reduce", "sortBy", "limit"
-        , "intersect", "diff", "exclude", "select", "selectAll", "type"
-        , "from", "as", "asc", "desc", "not", "true", "false"
-        ]
+    Dsl.Keywords.reserved
 
 
 {-| A field name, which may be a keyword.
@@ -547,7 +544,7 @@ fieldOrVar name =
 
 isAggregate : String -> Bool
 isAggregate name =
-    List.member name [ "count", "sum", "avg", "min", "max" ]
+    Set.member name Dsl.Keywords.aggregates
 
 
 record : Parser Expr

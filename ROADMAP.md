@@ -561,20 +561,26 @@ notebook. Four changes, in the order they should be done:
    edit moves the caret to the end; a port puts it back on the next
    frame.
 
-4. **Colour coding.** The interesting part is that the notebook already
-   has a real lexer, so highlighting can be driven by `Dsl.Parser`'s own
-   tokens rather than by a regex approximation. Highlighting would then
-   agree with the compiler by construction — the same property the SQL
-   and Elm outputs already have — and the same pass could underline the
-   exact span of a type error instead of printing a line and column.
+4. ~~**Colour coding.**~~ Done, as an overlay: a coloured `<pre>` with a
+   transparent textarea exactly on top of it. No dependency, and the
+   editing model stays in Elm, which CodeMirror would have taken out of
+   it.
 
-   The mechanism is the awkward part. A `<textarea>` cannot style its
-   own contents, so the usual approach is a transparent textarea over a
-   highlighted `<pre>`, with scroll position and metrics kept in sync.
-   That is fiddly but has no dependency. The alternative is CodeMirror 6
-   through a custom element, which is a large dependency and puts the
-   editing model outside Elm. Prefer the overlay; reconsider only if
-   selection or IME handling turns out badly.
+   `Dsl.Lexer` is separate from `Dsl.Parser` because the two want
+   different things — a parser discards whitespace and comments and
+   stops at the first error, a highlighter must account for every
+   character and keep going — but they share `Dsl.Keywords`, so a word
+   added to the grammar is coloured without anyone remembering to.
+
+   The lexer is lossless, and that is mechanical rather than tidy: the
+   coloured text sits under the textarea, so tokens that did not
+   reconstruct the source exactly would drift the two layers apart and
+   put the caret in the wrong place. Ten samples pin it. The same is
+   true of the CSS — one rule serves both layers rather than two that
+   happen to match today.
+
+   Still available from this: the lexer could underline the exact span
+   of a type error instead of the compiler printing a line and column.
 
 5. **Rebuild the view on elm-ui** (`mdgriffith/elm-ui`, pin 1.1.8 for
    Elm 0.19; version 2 is not released). Layout becomes Elm values
