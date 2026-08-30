@@ -10,7 +10,7 @@ A terminator says how a cell is shown: `selectAll` gives a table, and `barChart`
 
 `countWhere` and its relatives count only the rows matching a condition, which is what a pivot is for — with the cases named rather than discovered in the data, so the row still has a type. A `filter` after a `reduce` becomes a HAVING, which is how `delay_by_distance` drops the distances too rare to average meaningfully.
 
-An input cell binds a control to its name. Drag `min_distance` and only the cells that read it re-run — `total_flights` and `by_state` both do, and `since` trims the time series — the value is compiled into their SQL, so the cache does the rest. That is what lets `routes` below join `airports` twice — once for the origin and once for the destination — without the two sides colliding.
+An input cell binds a control to its name. Drag `min_distance` and only the cells that read it re-run — `total_flights` and `by_state` both do, and `since` trims the time series. `focus_state` takes its options from a column of `by_state`, so the states you can choose are the ones that chart is showing — the value is compiled into their SQL, so the cache does the rest. That is what lets `routes` below join `airports` twice — once for the origin and once for the destination — without the two sides colliding.
 
 ```source airports
 csv "https://cdn.jsdelivr.net/npm/vega-datasets@2/data/airports.csv"
@@ -58,6 +58,21 @@ access flights ()
        })
   |> filter (\r -> r.late > 2000)
   |> sortBy (desc .late)
+  |> selectAll
+```
+
+```input focus_state
+select from by_state .state default "CA"
+```
+
+```acadia state_airports
+access airports ()
+  |> filter (\a -> a.state == focus_state)
+  |> map (\a ->
+       { code = a.iata
+       , city = a.city
+       })
+  |> sortBy .code
   |> selectAll
 ```
 

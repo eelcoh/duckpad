@@ -78,6 +78,7 @@ params =
     Dict.fromList
         [ ( "min_distance", ( TFloat, LFloat 0 ) )
         , ( "since", ( TTimestamp, LTimestamp "2001-01-01" ) )
+        , ( "focus_state", ( TString, LString "CA" ) )
         ]
 
 
@@ -246,6 +247,18 @@ access airports ()
        , lat = a.latitude
        })
   |> scatter { x = .lon, y = .lat }
+"""
+      )
+    , ( "seeded_state_airports"
+      , """
+access airports ()
+  |> filter (\\a -> a.state == focus_state)
+  |> map (\\a ->
+       { code = a.iata
+       , city = a.city
+       })
+  |> sortBy .code
+  |> selectAll
 """
       )
     , ( "seeded_routes"
