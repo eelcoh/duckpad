@@ -88,6 +88,10 @@ type alias Model =
     -- A date picker keeps its own state — which month it is showing, whether
     -- it is open, what has been typed into it — none of which is the value.
     , pickers : Dict String Picker
+
+    -- Today, once the runtime has been asked. A date picker with no notion of
+    -- it opens on year one.
+    , today : Maybe Date
     }
 
 
@@ -124,6 +128,7 @@ type Msg
     | ToggleArtefacts String
     | InputMoved String Literal
     | PickerEvent String DatePicker.ChangeEvent
+    | GotToday Date
     | Focused (Result Browser.Dom.Error ())
 
 
@@ -143,8 +148,8 @@ init flags =
         ( notebook, notice ) =
             restore flags
     in
-    ( load notebook { title = notebook.title, cells = [], states = Dict.empty, baseSchema = Dict.empty, queue = [], current = Nothing, db = Booting, nextId = 1, notice = notice, resetArmed = False, editing = Nothing, expanded = Set.empty, inputs = Dict.empty, pickers = Dict.empty }
-    , Cmd.none
+    ( load notebook { title = notebook.title, cells = [], states = Dict.empty, baseSchema = Dict.empty, queue = [], current = Nothing, db = Booting, nextId = 1, notice = notice, resetArmed = False, editing = Nothing, expanded = Set.empty, inputs = Dict.empty, pickers = Dict.empty, today = Nothing }
+    , Task.perform GotToday Date.today
     )
 
 
@@ -454,6 +459,9 @@ step msg model =
                         | states = Engine.markStale (Set.singleton id) (graphOf updated) updated.states
                     }
                 )
+
+        GotToday day ->
+            ( { model | today = Just day }, Cmd.none )
 
         PickerEvent id event ->
             let
@@ -772,10 +780,52 @@ sourceKey spec =
     Dsl.Source.formatName spec.format ++ " " ++ spec.uri ++ Dsl.Source.readerOptions spec
 
 
+{-| A cell's picker, created on first use showing the month it is already set
+to. Without that it opens on year one, which is what `DatePicker.init` means
+by "no opinion".
+-}
 pickerFor : String -> Model -> Picker
 pickerFor id model =
-    Dict.get id model.pickers
-        |> Maybe.withDefault { model = DatePicker.init, text = "" }
+    case Dict.get id model.pickers of
+        Just existing ->
+            existing
+
+        Nothing ->
+            { model =
+                DatePicker.init
+                    |> applyMaybe DatePicker.setToday model.today
+                    |> applyMaybe DatePicker.setVisibleMonth (selectedDate id model)
+            , text = ""
+            }
+
+
+applyMaybe : (a -> b -> b) -> Maybe a -> b -> b
+applyMaybe f value target =
+    case value of
+        Just v ->
+            f v target
+
+        Nothing ->
+            target
+
+
+{-| The date a cell is currently bound to, whether the reader chose it or it
+came from the cell's own default.
+-}
+selectedDate : String -> Model -> Maybe Date
+selectedDate id model =
+    findCell id model
+        |> Maybe.andThen (\cell -> Dsl.Input.parse cell.source |> Result.toMaybe)
+        |> Maybe.map (\widget -> valueOf id widget model)
+        |> Maybe.andThen
+            (\literal ->
+                case literal of
+                    LTimestamp iso ->
+                        Date.fromIsoString iso |> Result.toMaybe
+
+                    _ ->
+                        Nothing
+            )
 
 
 valueOf : String -> Dsl.Input.Spec -> Model -> Literal
@@ -1827,9 +1877,78 @@ viewDatePicker id bounds value picker =
 
             -- The bounds the cell declared, enforced by the control rather
             -- than only by the parser that read them.
-            , settings = { settings | disabled = outside bounds }
+            , settings = calendar { settings | disabled = outside bounds }
             }
         )
+
+
+{-| The picker, dressed in the notebook's own tokens.
+
+Every surface it draws is styled explicitly. Left alone it renders raised,
+bordered buttons that belong to no part of this page — the package leaves the
+choice open, and the whole reason for building the view on elm-ui was to make
+choices like this in one vocabulary.
+
+-}
+calendar : DatePicker.Settings -> DatePicker.Settings
+calendar settings =
+    let
+        cell =
+            [ paddingXY 7 5
+            , Border.rounded 4
+            , Font.center
+            , Font.family Ui.mono
+            , Font.size 11
+            ]
+    in
+    { settings
+        | pickerAttributes =
+            [ Background.color Ui.card
+            , Border.width 1
+            , Border.color Ui.line
+            , Border.rounded 6
+            , padding 10
+            , spacing 6
+            , Element.moveDown 4
+            ]
+        , headerAttributes =
+            [ width fill
+            , paddingXY 2 4
+            , Font.family Ui.sans
+            , Font.size 12
+            , Font.semiBold
+            , Font.color Ui.ink
+            ]
+        , headerButtonsAttributes =
+            [ paddingXY 6 2
+            , Border.rounded 4
+            , Font.color Ui.muted
+            , Element.mouseOver [ Font.color Ui.accent ]
+            ]
+        , monthYearAttribute =
+            [ Font.family Ui.sans
+            , Font.size 12
+            , Font.color Ui.ink
+            , Element.pointer
+            ]
+        , tableAttributes = [ spacing 2 ]
+        , monthsTableAttributes = [ spacing 4 ]
+        , yearsTableAttributes = [ spacing 4 ]
+        , weekdayAttributes =
+            [ Font.family Ui.sans
+            , Font.size 9
+            , Font.color Ui.muted
+            , Font.center
+            , paddingXY 0 4
+            ]
+        , dayAttributes = cell ++ [ Element.mouseOver [ Background.color Ui.bg ] ]
+        , wrongMonthDayAttributes = cell ++ [ Font.color Ui.line ]
+        , todayDayAttributes = cell ++ [ Border.width 1, Border.color Ui.accent ]
+        , selectedDayAttributes = cell ++ [ Background.color Ui.accent, Font.color Ui.card ]
+        , disabledDayAttributes = cell ++ [ Font.color Ui.line ]
+        , previousMonthElement = text "‹"
+        , nextMonthElement = text "›"
+    }
 
 
 outside : { min : String, max : String, default : String } -> Date -> Bool
