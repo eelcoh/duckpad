@@ -115,6 +115,10 @@ type Stage
     | Chart ChartKind (List ( String, String ))
       -- A single number, shown as itself rather than as a table of one cell.
     | Scalar
+      -- `summarize` — DuckDB's SUMMARIZE, one row per column of the input.
+      -- Statically typeable where `PIVOT` is not: its output schema is fixed
+      -- whatever it is pointed at.
+    | Summarize
       -- `partitionBy .origin (asc .date)` — the OVER clause, named for what
       -- it does to the rows rather than for the SQL. Both halves are optional
       -- but not both at once: no keys means the whole table is one partition.

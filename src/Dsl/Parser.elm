@@ -224,6 +224,7 @@ stage =
             , Parser.succeed GroupBy |. kw "groupBy" |= groupKeys
             , Parser.succeed SortBy |. kw "sortBy" |= sortSpec
             , unpivotStage
+            , Parser.succeed Summarize |. kw "summarize"
             , partitionByStage
             , Parser.map Extend (lambdaStage "extend")
             , Parser.succeed Limit |. kw "limit" |= (Parser.int |. ws)

@@ -15,7 +15,7 @@ import Dsl.Schema exposing (Schema, Type(..))
 
 checks : List Check
 checks =
-    parserChecks ++ checkerChecks ++ sqlChecks ++ elmChecks ++ readsChecks ++ joinChecks ++ keywordFieldChecks ++ chartChecks ++ functionChecks ++ unpivotChecks ++ inheritedTypeChecks ++ windowChecks ++ statisticsChecks
+    parserChecks ++ checkerChecks ++ sqlChecks ++ elmChecks ++ readsChecks ++ joinChecks ++ keywordFieldChecks ++ chartChecks ++ functionChecks ++ unpivotChecks ++ inheritedTypeChecks ++ windowChecks ++ statisticsChecks ++ summarizeChecks
 
 
 {-| The fixture schema every checker test runs against. `delivered_at` is
@@ -360,6 +360,33 @@ inheritedTypeChecks =
         )
     , isErr "inherited: redeclaring it differently is refused"
         (inheriting "type Status\n  = Submitted \"submitted\"\n\naccess upstream () |> selectAll")
+    ]
+
+
+summarizeChecks : List Check
+summarizeChecks =
+    [ contains "summarize: renders in the FROM, because SUMMARIZE produces a table"
+        "FROM (SUMMARIZE \"orders\")"
+        (sqlOf "access orders () |> summarize |> selectAll")
+
+    -- The claim that makes it expressible at all: the schema is the same
+    -- whatever it is pointed at, so the row type is a constant.
+    , equal "summarize: the row type is fixed, not derived from the input"
+        (rowTypeOf "access people () |> summarize |> selectAll")
+        (rowTypeOf "access orders () |> summarize |> selectAll")
+    , contains "summarize: the statistics are text, because DuckDB widens them"
+        "avg : Maybe String"
+        (elmOf "access orders () |> summarize |> selectAll")
+    , contains "summarize: and the counts are not"
+        "count : Int"
+        (elmOf "access orders () |> summarize |> selectAll")
+    , contains "summarize: what it produces is an ordinary row"
+        "WHERE"
+        (sqlOf "access orders ()\n  |> summarize\n  |> filter (\\c -> c.count > 0)\n  |> selectAll")
+    , isErr "summarize: it has to be the first stage"
+        (compile "access orders ()\n  |> filter (\\o -> o.total > 1.0)\n  |> summarize\n  |> selectAll")
+    , isErr "summarize: it cannot stack with unpivot"
+        (compile "access quarterly ()\n  |> unpivot { name = k, value = v } .q1 .q2\n  |> summarize\n  |> selectAll")
     ]
 
 

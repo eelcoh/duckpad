@@ -107,6 +107,24 @@ access orders ()
   |> selectAll
 """
       )
+    , ( "summarized"
+      , """
+access orders ()
+  |> summarize
+  |> selectAll
+"""
+      )
+      -- What it produces is an ordinary row, so the rest of the language
+      -- works over it.
+    , ( "summarized_filtered"
+      , """
+access orders ()
+  |> summarize
+  |> filter (\\c -> c.null_percentage > 0.0)
+  |> map (\\c -> { column = c.column_name, missing = c.null_percentage })
+  |> selectAll
+"""
+      )
     , ( "statistics"
       , """
 access orders ()

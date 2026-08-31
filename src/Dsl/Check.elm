@@ -6,6 +6,7 @@ module Dsl.Check exposing
     , CheckedCombine
     , CheckedUnpivot
     , CheckedWindow
+    , Reading(..)
     , Display(..)
     , Projection(..)
     , Side
@@ -39,7 +40,7 @@ import Set
 type alias Checked =
     { source : String
     , sourceAlias : String
-    , unpivot : Maybe CheckedUnpivot
+    , reading : Reading
       -- A `filter` over what an `extend` computed. Its own clause because a
       -- window function is evaluated after WHERE and after GROUP BY, so
       -- neither of those can see it.
@@ -77,12 +78,22 @@ type alias CheckedWindow =
     }
 
 
+{-| How the source table is read.
+
+Both of the interesting cases are DuckDB constructs that produce a table
+rather than clauses that modify one, so they render in the FROM and have to be
+the first stage: everything else in a `Checked` is one flat SELECT over
+whatever this yields. Holding them in one field rather than two flags is what
+makes "unpivoted and summarized at once" unrepresentable.
+
+-}
+type Reading
+    = Whole
+    | Unpivoted CheckedUnpivot
+    | Summarized
+
+
 {-| A `unpivot`, resolved against the source's columns.
-
-It renders as part of the FROM rather than as a clause, because DuckDB's
-UNPIVOT produces a table. That is also why it has to be the first stage:
-everything else in a `Checked` is one flat SELECT over this.
-
 -}
 type alias CheckedUnpivot =
     { name : String
@@ -272,7 +283,7 @@ type Phase
 type alias Builder =
     { source : String
     , sides : List Side
-    , unpivot : Maybe CheckedUnpivot
+    , reading : Reading
     , window : Maybe CheckedWindow
     , qualify : Maybe TExpr
     , combines : List CheckedCombine
@@ -296,7 +307,7 @@ start : String -> List ( String, Type ) -> Builder
 start source columns =
     { source = source
     , sides = [ { alias = source, table = source, columns = columns } ]
-    , unpivot = Nothing
+    , reading = Whole
     , window = Nothing
     , qualify = Nothing
     , combines = []
@@ -366,6 +377,12 @@ applyStage schema params ast stage builder =
 
         ( Filter lambda, Windowed ) ->
             qualify params ast lambda builder
+
+        ( Summarize, Rows ) ->
+            summarize builder
+
+        ( Summarize, _ ) ->
+            Err "`summarize` describes the rows a source has, so nothing may come between it and the `access`"
 
         ( Unpivot spec columns, Rows ) ->
             unpivot spec columns builder
@@ -1071,7 +1088,7 @@ finish builder =
                 |> Result.map
                     (\rowType ->
                         { source = builder.source
-                        , unpivot = builder.unpivot
+                        , reading = builder.reading
                         , qualify = builder.qualify
                         , sourceAlias =
                             List.head builder.sides |> Maybe.map .alias |> Maybe.withDefault builder.source
@@ -1269,6 +1286,58 @@ qualify params ast lambda builder =
             Err "there is nothing to filter here yet"
 
 
+-- SUMMARIZE
+
+
+{-| DuckDB's SUMMARIZE: one row per column of the input.
+
+The `describe()` a reader coming from pandas reaches for, and the reason it
+can exist here where `pivot` cannot: its output schema is **fixed**. A pivot
+invents columns out of values only the data knows; this returns the same
+twelve columns whatever it is pointed at, so the row type is a constant rather
+than something only the query could tell us.
+
+-}
+summarize : Builder -> Result String Builder
+summarize builder =
+    case ( ( builder.sides, builder.reading ), builder.combines, builder.filter ) of
+        ( ( [ side ], Whole ), [], Nothing ) ->
+            Ok
+                { builder
+                    | sides = [ { side | columns = summarySchema } ]
+                    , reading = Summarized
+                }
+
+        _ ->
+            Err "`summarize` has to be the first stage — it describes a source, so nothing may come between it and the `access`"
+
+
+{-| What SUMMARIZE returns, in DuckDB's own order and spelling.
+
+The statistics are text, not numbers, and that is DuckDB's doing rather than
+ours: the columns being summarised have different types, so everything that
+has to hold a value from any of them is widened to VARCHAR. They are also
+null for a column the statistic means nothing for — a text column has no
+mean — which is why they are optional here.
+
+-}
+summarySchema : List ( String, Type )
+summarySchema =
+    [ ( "column_name", TString )
+    , ( "column_type", TString )
+    , ( "min", TMaybe TString )
+    , ( "max", TMaybe TString )
+    , ( "approx_unique", TInt )
+    , ( "avg", TMaybe TString )
+    , ( "std", TMaybe TString )
+    , ( "q25", TMaybe TString )
+    , ( "q50", TMaybe TString )
+    , ( "q75", TMaybe TString )
+    , ( "count", TInt )
+    , ( "null_percentage", TFloat )
+    ]
+
+
 -- UNPIVOT
 
 
@@ -1283,8 +1352,8 @@ column, and that is what makes the result's type derivable rather than guessed.
 -}
 unpivot : Ast.UnpivotSpec -> List String -> Builder -> Result String Builder
 unpivot spec columns builder =
-    case ( builder.sides, builder.combines, builder.filter ) of
-        ( [ side ], [], Nothing ) ->
+    case ( ( builder.sides, builder.reading ), builder.combines, builder.filter ) of
+        ( ( [ side ], Whole ), [], Nothing ) ->
             foldedType side columns
                 |> Result.andThen
                     (\valueType ->
@@ -1314,7 +1383,7 @@ unpivot spec columns builder =
                                     Ok
                                         { builder
                                             | sides = [ { side | columns = survivors ++ produced } ]
-                                            , unpivot = Just { name = spec.name, value = spec.value, columns = columns }
+                                            , reading = Unpivoted { name = spec.name, value = spec.value, columns = columns }
                                         }
                     )
 

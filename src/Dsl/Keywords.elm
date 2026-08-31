@@ -22,6 +22,7 @@ reserved =
         , "reduce"
         , "sortBy"
         , "unpivot"
+        , "summarize"
         , "partitionBy"
         , "extend"
         , "limit"

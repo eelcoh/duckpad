@@ -1057,22 +1057,42 @@ had a name table of its own, so `correlation` over a window rendered as
 passed only because DuckDB matched it case-insensitively. Window calls
 now go through `aggregate` for everything but the ranking functions.
 
-### Still open
+### `summarize` — done
 
-`summarize` is the next one worth doing, and it is **statically
-typeable**, which `PIVOT` is not: DuckDB's `SUMMARIZE` returns a fixed
-twelve-column schema — `column_name, column_type, min, max,
+    access orders ()
+      |> summarize
+      |> filter (\c -> c.null_percentage > 0.0)
+      |> map (\c -> { column = c.column_name, missing = c.null_percentage })
+      |> selectAll
+
+The `describe()` a reader coming from pandas reaches for, and it is
+**statically typeable** where `PIVOT` is not: `SUMMARIZE` returns the
+same twelve columns — `column_name, column_type, min, max,
 approx_unique, avg, std, q25, q50, q75, count, null_percentage` — one
-row per input column, whatever it is pointed at. So it would work like
-`unpivot`: a table-producing construct rendering into the FROM, with a
-constant row type.
+row per input column, whatever it is pointed at. So the row type is a
+constant rather than something only the query could tell us, which is
+the whole difference.
 
-The caveat is real. `min`, `max`, `avg`, `std` and the quartiles come
-back as VARCHAR, because the columns being summarised have different
-types and DuckDB has to put them in one column. They would type as
-`String`, so charting the mean would need a cast. Staying close to
-DuckDB means accepting that; a numeric-only variant would be inventing
-something DuckDB does not have.
+Like `unpivot` it renders in the FROM and has to be the first stage,
+because DuckDB's SUMMARIZE produces a table rather than modifying one.
+Everything after it is ordinary: the row it yields filters, maps, sorts
+and charts like any other.
+
+The caveat stands as predicted. `min`, `max`, `avg`, `std` and the
+quartiles come back as VARCHAR, because the columns being summarised
+have different types and DuckDB widens anything holding a value from
+several of them. They are also null where the statistic means nothing —
+a text column has no mean — so they type as `Maybe String`, and charting
+the mean needs a cast. That is DuckDB's shape and we keep it; a
+numeric-only variant would be inventing something it does not have.
+
+One thing the change tidied on the way past: `Checked` held `unpivot :
+Maybe CheckedUnpivot`, and a second table-producing construct would have
+meant a second flag and a state where both were set. It is now one
+`Reading` field — `Whole`, `Unpivoted` or `Summarized` — so stacking the
+two is unrepresentable rather than merely refused.
+
+### Still open
 
 Out of scope, and staying there: hypothesis tests, distributions, model
 fitting beyond linear regression. DuckDB has none of them, so having

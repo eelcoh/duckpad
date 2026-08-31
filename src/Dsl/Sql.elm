@@ -9,7 +9,7 @@ what keeps it in step with the generated Elm.
 -}
 
 import Dsl.Ast as Ast exposing (CombineKind(..), Literal(..), Op(..), SortDir(..))
-import Dsl.Check exposing (Checked, CheckedCombine, CheckedUnpivot, CheckedWindow, Projection(..), TExpr(..))
+import Dsl.Check exposing (Checked, CheckedCombine, CheckedUnpivot, CheckedWindow, Projection(..), Reading(..), TExpr(..))
 import Dsl.Schema exposing (Type(..))
 
 
@@ -39,11 +39,14 @@ states as "unpivot has to be the first stage".
 -}
 from : Checked -> String
 from checked =
-    case checked.unpivot of
-        Nothing ->
+    case checked.reading of
+        Whole ->
             ident checked.source
 
-        Just spec ->
+        Summarized ->
+            "(SUMMARIZE " ++ ident checked.source ++ ")"
+
+        Unpivoted spec ->
             "(UNPIVOT "
                 ++ ident checked.source
                 ++ " ON "
