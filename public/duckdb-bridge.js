@@ -82,6 +82,21 @@ app.ports.requestOpen.subscribe(async () => {
   }
 });
 
+// Everything DuckDB needs is beside the page, so the worker is an ordinary
+// same-origin script rather than a blob wrapping importScripts of a CDN URL.
+// selectBundle still chooses between them: it tests for exception handling
+// support and picks the build the browser can actually run.
+const BUNDLES = {
+  mvp: {
+    mainModule: new URL('./vendor/duckdb-mvp.wasm', import.meta.url).href,
+    mainWorker: new URL('./vendor/duckdb-browser-mvp.worker.js', import.meta.url).href,
+  },
+  eh: {
+    mainModule: new URL('./vendor/duckdb-eh.wasm', import.meta.url).href,
+    mainWorker: new URL('./vendor/duckdb-browser-eh.worker.js', import.meta.url).href,
+  },
+};
+
 // A boot that fails is reported; a boot that hangs has to be reported too.
 // The desktop build loads DuckDB from a CDN and spawns its worker from a blob
 // URL, and either can sit there forever rather than reject, which leaves the
@@ -99,21 +114,6 @@ Promise.race([
 ])
   .then(() => app.ports.dbReady.send({ ok: true, schema: [] }))
   .catch((err) => app.ports.dbReady.send({ ok: false, error: String(err && err.message || err) }));
-
-// Everything DuckDB needs is beside the page, so the worker is an ordinary
-// same-origin script rather than a blob wrapping importScripts of a CDN URL.
-// selectBundle still chooses between them: it tests for exception handling
-// support and picks the build the browser can actually run.
-const BUNDLES = {
-  mvp: {
-    mainModule: new URL('./vendor/duckdb-mvp.wasm', import.meta.url).href,
-    mainWorker: new URL('./vendor/duckdb-browser-mvp.worker.js', import.meta.url).href,
-  },
-  eh: {
-    mainModule: new URL('./vendor/duckdb-eh.wasm', import.meta.url).href,
-    mainWorker: new URL('./vendor/duckdb-browser-eh.worker.js', import.meta.url).href,
-  },
-};
 
 async function boot() {
   const bundle = await duckdb.selectBundle(BUNDLES);
