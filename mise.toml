@@ -3,9 +3,13 @@ duckdb = "latest"
 elm = { version = "0.19.2", bin = "elm" }
 node = "26"
 
+[tasks.vendor]
+description = "Download duckdb-wasm and Vega into public/vendor/ so the app runs offline"
+run = "node tools/vendor.js"
+
 [tasks.build]
 description = "Compile the Elm notebook shell"
-depends = ["seed"]
+depends = ["seed", "vendored"]
 run = "elm make src/Main.elm --output=public/elm.js"
 
 [tasks.serve]
@@ -38,3 +42,8 @@ node tools/emit-seed.js
 description = "Run duckpad as a desktop app (the Rust side builds in the duckpad-tauri container)"
 depends = ["build"]
 run = "distrobox enter duckpad-tauri -- bash -lc 'cd ~/Code/ideas/duckpad/src-tauri && cargo tauri dev'"
+
+[tasks.vendored]
+description = "Vendor the third-party JavaScript if it is not already there"
+hide = true
+run = "test -f public/vendor/duckdb.mjs || node tools/vendor.js"

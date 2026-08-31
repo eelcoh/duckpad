@@ -13,9 +13,15 @@ import sys
 
 class NoCache(http.server.SimpleHTTPRequestHandler):
     def end_headers(self):
-        self.send_header("Cache-Control", "no-store, must-revalidate")
-        self.send_header("Pragma", "no-cache")
-        self.send_header("Expires", "0")
+        # Vendored libraries are exempt: they only change when `mise run
+        # vendor` runs, and re-fetching 38 MB of WebAssembly on every reload
+        # would make the thing this server exists to speed up slower.
+        if self.path.startswith("/vendor/"):
+            self.send_header("Cache-Control", "public, max-age=3600")
+        else:
+            self.send_header("Cache-Control", "no-store, must-revalidate")
+            self.send_header("Pragma", "no-cache")
+            self.send_header("Expires", "0")
         super().end_headers()
 
     def log_message(self, fmt, *args):

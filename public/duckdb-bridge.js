@@ -6,7 +6,7 @@
 // something to check against, materialises a query, and reports a content hash
 // so the value cache can decide whether downstream work is needed.
 
-import * as duckdb from 'https://cdn.jsdelivr.net/npm/@duckdb/duckdb-wasm@1.32.0/+esm';
+import * as duckdb from './vendor/duckdb.mjs';
 import { exportStatic } from './export.js';
 import { openNotebook, saveNotebook } from './files.js';
 
@@ -100,18 +100,28 @@ Promise.race([
   .then(() => app.ports.dbReady.send({ ok: true, schema: [] }))
   .catch((err) => app.ports.dbReady.send({ ok: false, error: String(err && err.message || err) }));
 
+// Everything DuckDB needs is beside the page, so the worker is an ordinary
+// same-origin script rather than a blob wrapping importScripts of a CDN URL.
+// selectBundle still chooses between them: it tests for exception handling
+// support and picks the build the browser can actually run.
+const BUNDLES = {
+  mvp: {
+    mainModule: new URL('./vendor/duckdb-mvp.wasm', import.meta.url).href,
+    mainWorker: new URL('./vendor/duckdb-browser-mvp.worker.js', import.meta.url).href,
+  },
+  eh: {
+    mainModule: new URL('./vendor/duckdb-eh.wasm', import.meta.url).href,
+    mainWorker: new URL('./vendor/duckdb-browser-eh.worker.js', import.meta.url).href,
+  },
+};
+
 async function boot() {
-  const bundle = await duckdb.selectBundle(duckdb.getJsDelivrBundles());
-  const workerUrl = URL.createObjectURL(
-    new Blob([`importScripts("${bundle.mainWorker}");`], { type: 'text/javascript' })
-  );
-  const worker = new Worker(workerUrl);
+  const bundle = await duckdb.selectBundle(BUNDLES);
   db = new duckdb.AsyncDuckDB(
     new duckdb.ConsoleLogger(duckdb.LogLevel.WARNING),
-    worker
+    new Worker(bundle.mainWorker)
   );
   await db.instantiate(bundle.mainModule, bundle.pthreadWorker);
-  URL.revokeObjectURL(workerUrl);
 
   conn = await db.connect();
 

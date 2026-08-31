@@ -3,6 +3,9 @@ node_modules/
 
 # Compiled Elm output — rebuilt by `mise run build` / `mise run test`.
 public/elm.js
+
+# Third-party JavaScript and WebAssembly — fetched by `mise run vendor`.
+public/vendor/
 tests/tests.js
 
 tests/.roundtrip/

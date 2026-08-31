@@ -12,7 +12,7 @@ let vega = null;
 
 function loadVega() {
   if (!vega) {
-    vega = import('https://cdn.jsdelivr.net/npm/vega-embed@6/+esm');
+    vega = import('./vendor/vega-embed.mjs');
   }
   return vega;
 }
