@@ -168,16 +168,54 @@ type alias Params =
     Dict.Dict String ( Type, Literal )
 
 
-check : Schema -> Params -> Pipeline -> Result String Checked
-check schema params ast =
+check : Schema -> Params -> List TypeDecl -> Pipeline -> Result String Checked
+check schema params inherited ast =
     case Schema.columnsOf ast.source schema of
         Nothing ->
             Err ("`" ++ ast.source ++ "` is not a table or an earlier cell. Known: " ++ knownTables schema)
 
         Just columns ->
-            validateDeclarations columns ast.declarations
-                |> Result.andThen (\_ -> foldStages schema params ast (start ast.source columns))
-                |> Result.andThen finish
+            inherit inherited ast.declarations
+                |> Result.andThen
+                    (\declarations ->
+                        validateDeclarations columns ast.declarations
+                            |> Result.andThen (\_ -> foldStages schema params { ast | declarations = declarations } (start ast.source columns))
+                            |> Result.andThen finish
+                    )
+
+
+{-| A cell's own declarations, plus the ones its dependencies declared.
+
+A type describes columns and columns flow down the graph, so the declaration
+travels with them: a cell reading a column of type `Status` needs `Status`'s
+constructors to decode it, and before this it inherited the type without the
+declaration and generated a module referring to a type it never defined.
+
+Redeclaring an inherited type identically is allowed, because that is what
+anyone had to write before this and there is nothing wrong with it. Declaring
+a *different* type under a name already in scope is refused: the column's
+values were produced upstream, so a local definition that disagrees would
+generate a decoder for tags the data does not contain.
+
+-}
+inherit : List TypeDecl -> List TypeDecl -> Result String (List TypeDecl)
+inherit inherited own =
+    let
+        clash decl =
+            own
+                |> List.filter (\o -> o.name == decl.name && o.definition /= decl.definition)
+                |> List.head
+    in
+    case List.filterMap clash inherited of
+        conflicting :: _ ->
+            Err
+                ("`"
+                    ++ conflicting.name
+                    ++ "` is already declared by a cell this one reads, and this declaration is different. Remove it to use the one upstream, or rename this one"
+                )
+
+        [] ->
+            Ok (own ++ List.filter (\d -> not (List.any (\o -> o.name == d.name) own)) inherited)
 
 
 knownTables : Schema -> String
@@ -948,6 +986,7 @@ finish builder =
 
         Just cardinality ->
             outputColumns builder
+                |> Result.andThen (declared builder.declarations)
                 |> Result.map
                     (\rowType ->
                         { source = builder.source
@@ -975,6 +1014,42 @@ finish builder =
                         }
                     )
 
+
+
+{-| Every custom type in the output row has to be declared somewhere in scope.
+
+Without this the failure is silent and lands in the generated Elm rather than
+here: a column typed `Status` with no declaration produces a module annotating
+a type it never defines and calling a decoder it never writes. That is the
+co-derivation guarantee — one IR, two renderings, no drift — failing quietly,
+so it is worth a check of its own.
+
+-}
+declared : List TypeDecl -> List ( String, Type ) -> Result String (List ( String, Type ))
+declared declarations rowType =
+    let
+        missing =
+            rowType
+                |> List.filterMap
+                    (\( column, t ) ->
+                        case stripMaybe t of
+                            TCustom name ->
+                                if List.any (\d -> d.name == name) declarations then
+                                    Nothing
+
+                                else
+                                    Just ( column, name )
+
+                            _ ->
+                                Nothing
+                    )
+    in
+    case missing of
+        ( column, name ) :: _ ->
+            Err ("`" ++ column ++ "` has type `" ++ name ++ "`, but nothing in scope declares it. Declare it here, or in a cell this one reads")
+
+        [] ->
+            Ok rowType
 
 
 -- UNPIVOT

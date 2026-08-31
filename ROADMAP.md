@@ -971,6 +971,60 @@ recorded as they were hit, in the order they are worth closing:
 8. **Window functions**, the one item left that needs real design rather
    than a name and a type rule. See the note in the pandas section.
 
+## Types across cells
+
+A type could only be declared in the cell that used it, and the error
+said so: *"`Status` is not declared in this cell."* Two separate things
+were wrong.
+
+**A bug, now fixed.** A custom type already crossed cell boundaries
+halfway. `schemaFor` handed a downstream cell the upstream row type,
+`TCustom "Status"` included, but not the declaration — so the cell
+compiled happily and emitted a module annotating a type it never defined
+and calling a decoder it never wrote. The SQL was right; only the
+co-derived Elm was broken, which is the one-IR-two-renderings guarantee
+failing quietly. Every fixture is a single cell, so nothing caught it.
+
+Declarations now travel with the data: a cell's effective declarations
+are its own plus its dependencies', and it passes on both, so a type
+reaches as far as the columns it describes. Three details worth keeping:
+
+- **Redeclaring is allowed when it agrees.** Writing the type out again
+  is what everyone had to do before, and there is nothing wrong with it.
+  A declaration that *differs* from one in scope is refused: the values
+  were produced upstream, so a local definition disagreeing about them
+  generates a decoder for tags the data does not contain.
+- **The compile-cache key grew.** It was source plus upstream row types.
+  A column stays `Status` when a constructor is added to `Status`, so
+  downstream would have kept its cached compilation and gone on
+  generating a decoder missing the new tag. The key now includes the
+  declarations a dependency passes down.
+- **A custom column with nothing declaring it is now an error** rather
+  than a module that does not compile. After the change this should be
+  unreachable, which is the point of checking it.
+
+**A type cell is still open.** What propagation cannot do is let two
+cells with no data path share a type — and `type OrderId = OrderId Int`
+is a domain fact, not a property of one table. As a node it would be
+unusual, since every cell today produces rows or a scalar and this one
+produces neither, but it fits otherwise: cells mentioning the type
+depend on it, editing it marks them stale, deleting it turns them red
+exactly like a missing table. It is a smaller job now that declarations
+already flow, because the machinery is the same — a declaration
+environment threaded into `Check` rather than parsed from the cell.
+
+Two wrinkles it would have to answer:
+
+- **An enum is not always table-independent.** `Delivered "delivered"
+  from .delivered_at` names a column, and `validateEnum` checks it
+  against the source's columns. A shared declaration has no source, so
+  that check has to move to the cell applying the type — meaning a type
+  cell can be well-formed on its own and still fail somewhere else.
+- **Edges would come from `as T`.** `readsOf` finds table names; it
+  would need type references too, which is a second namespace in the
+  graph, with duplicate definitions needing what duplicate cell names
+  get.
+
 ## What a pandas user would miss
 
 Worth separating, because "add pandas" is three different asks:

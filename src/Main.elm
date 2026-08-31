@@ -1135,6 +1135,7 @@ compileCell graph model cell =
     Dsl.Compile.compile
         (Engine.schemaFor model.baseSchema graph model.states cell.id)
         (paramsFor graph model cell.id)
+        (Engine.declarationsFor graph model.states cell.id)
         (moduleNameFor cell.id)
         cell.source
 

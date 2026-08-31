@@ -482,7 +482,7 @@ compileFixture index ( name, source ) =
         moduleName =
             "Gen" ++ String.fromInt index
     in
-    case Dsl.Compile.compile schema params moduleName source of
+    case Dsl.Compile.compile schema params [] moduleName source of
         Ok compiled ->
             E.object
                 [ ( "name", E.string name )

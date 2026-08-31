@@ -38,12 +38,12 @@ type alias Compiled =
     }
 
 
-compile : Schema -> Check.Params -> String -> String -> Result String Compiled
-compile schema params moduleName source =
+compile : Schema -> Check.Params -> List TypeDecl -> String -> String -> Result String Compiled
+compile schema params inherited moduleName source =
     Dsl.Parser.parse source
         |> Result.andThen
             (\ast ->
-                Check.check schema params ast
+                Check.check schema params inherited ast
                     |> Result.map (assemble moduleName ast)
             )
 

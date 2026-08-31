@@ -106,7 +106,7 @@ schema =
 
 compileWith : List ( String, ( Type, Literal ) ) -> String -> Result String Dsl.Compile.Compiled
 compileWith params =
-    Dsl.Compile.compile schema (Dict.fromList params) "Generated"
+    Dsl.Compile.compile schema (Dict.fromList params) [] "Generated"
 
 
 bindingChecks : List Check

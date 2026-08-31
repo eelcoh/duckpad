@@ -8,6 +8,7 @@ module Engine exposing
     , initialState
     , markStale
     , schemaFor
+    , declarationsFor
     , valueKeyFor
     )
 
@@ -24,7 +25,7 @@ invalidates the second and not the first.
 -}
 
 import Cell exposing (Cell, Status(..))
-import Dsl.Ast exposing (TypeDecl)
+import Dsl.Ast exposing (Definition(..), TypeDecl)
 import Dag exposing (Graph)
 import Dict exposing (Dict)
 import Dsl.Check exposing (ChartSpec, Display(..))
@@ -95,8 +96,32 @@ schemaFor base graph states id =
             base
 
 
-{-| Keyed on the source and on the shape of the inputs, because those are the
-only things the generated SQL can depend on.
+{-| The type declarations in scope for a cell: those its dependencies declared.
+
+The same rule as `schemaFor`, and for the same reason — only direct
+dependencies, so a type cannot resolve against a cell this one never said it
+reads. A declaration reaches further than one hop because each cell passes on
+what it inherited along with what it declared.
+
+-}
+declarationsFor : Graph -> Dict String CellState -> String -> List TypeDecl
+declarationsFor graph states id =
+    Dag.dependenciesOf id graph
+        |> Set.foldl
+            (\dep acc ->
+                case Dict.get dep states |> Maybe.andThen .compiled of
+                    Just compiled ->
+                        acc ++ List.filter (\d -> not (List.any (\seen -> seen.name == d.name) acc)) compiled.declarations
+
+                    Nothing ->
+                        acc
+            )
+            []
+
+
+{-| Keyed on the source and on the shape of the inputs: their row types, and
+the type declarations they pass down, which the generated module depends on
+even where the SQL does not.
 -}
 compileKeyFor : Graph -> Dict String CellState -> Cell -> String
 compileKeyFor graph states cell =
@@ -146,12 +171,36 @@ signatureOf : CellState -> String
 signatureOf state =
     case state.rowType of
         Just rowType ->
-            rowType
-                |> List.map (\( name, t ) -> name ++ ":" ++ Schema.typeName t)
+            ((rowType |> List.map (\( name, t ) -> name ++ ":" ++ Schema.typeName t))
+                ++ (state.compiled |> Maybe.map .declarations |> Maybe.withDefault [] |> List.map declarationSignature)
+            )
                 |> String.join ","
 
         Nothing ->
             Maybe.withDefault "?" state.valueHash
+
+
+{-| A declaration, flattened enough that any change to it changes the key.
+
+The row type alone is not sufficient now that declarations are inherited: a
+column stays `Status` when a constructor is added to `Status`, so a downstream
+cell would keep its cached compilation and go on generating a decoder missing
+the new tag.
+
+-}
+declarationSignature : TypeDecl -> String
+declarationSignature decl =
+    decl.name
+        ++ "="
+        ++ (case decl.definition of
+                Enum constructors ->
+                    constructors
+                        |> List.map (\c -> c.name ++ "/" ++ c.tag ++ "/" ++ Maybe.withDefault "" c.payloadColumn)
+                        |> String.join "|"
+
+                Wraps constructor wrapped ->
+                    constructor ++ " " ++ wrapped
+           )
 
 
 valueHashOf : CellState -> String

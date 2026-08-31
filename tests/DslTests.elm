@@ -15,7 +15,7 @@ import Dsl.Schema exposing (Schema, Type(..))
 
 checks : List Check
 checks =
-    parserChecks ++ checkerChecks ++ sqlChecks ++ elmChecks ++ readsChecks ++ joinChecks ++ keywordFieldChecks ++ chartChecks ++ functionChecks ++ unpivotChecks
+    parserChecks ++ checkerChecks ++ sqlChecks ++ elmChecks ++ readsChecks ++ joinChecks ++ keywordFieldChecks ++ chartChecks ++ functionChecks ++ unpivotChecks ++ inheritedTypeChecks
 
 
 {-| The fixture schema every checker test runs against. `delivered_at` is
@@ -57,12 +57,34 @@ schema =
             , ( "note", TString )
             ]
           )
+
+        -- What an upstream cell that declared `Status` hands downstream: the
+        -- column carries the type, and the declaration has to arrive with it.
+        , ( "upstream", [ ( "owner", TString ), ( "status", TCustom "Status" ) ] )
         ]
+
+
+statusDecl : TypeDecl
+statusDecl =
+    { name = "Status"
+    , definition =
+        Enum
+            [ { name = "Submitted", tag = "submitted", payloadColumn = Nothing }
+            , { name = "Delivered", tag = "delivered", payloadColumn = Nothing }
+            ]
+    }
+
+
+{-| Compiling as a cell downstream of one that declared `Status`.
+-}
+inheriting : String -> Result String Dsl.Compile.Compiled
+inheriting =
+    Dsl.Compile.compile schema Dict.empty [ statusDecl ] "Generated"
 
 
 compile : String -> Result String Dsl.Compile.Compiled
 compile =
-    Dsl.Compile.compile schema Dict.empty "Generated"
+    Dsl.Compile.compile schema Dict.empty [] "Generated"
 
 
 rowTypeOf : String -> Result String (List ( String, String ))
@@ -311,6 +333,34 @@ parserChecks =
 
 
 -- CHECKER
+
+
+inheritedTypeChecks : List Check
+inheritedTypeChecks =
+    [ contains "inherited: a type declared upstream is defined in the module downstream"
+        "type Status"
+        (inheriting "access upstream () |> selectAll" |> Result.map .elmModule)
+    , contains "inherited: and its decoder is written, not just referenced"
+        "Submitted"
+        (inheriting "access upstream () |> selectAll" |> Result.map .elmModule)
+
+    -- The bug this fixes: without the declaration the module annotated a type
+    -- it never defined, and compiled anyway.
+    , isErr "inherited: a custom column with nothing declaring it is rejected"
+        (compile "access upstream () |> selectAll")
+
+    -- So a declaration reaches further than one hop.
+    , equal "inherited: what a cell passes on includes what it inherited"
+        (Ok [ "Status" ])
+        (inheriting "access upstream () |> selectAll" |> Result.map (.declarations >> List.map .name))
+    , contains "inherited: redeclaring it identically is allowed"
+        "type Status"
+        (inheriting "type Status\n  = Submitted \"submitted\"\n  | Delivered \"delivered\"\n\naccess upstream () |> selectAll"
+            |> Result.map .elmModule
+        )
+    , isErr "inherited: redeclaring it differently is refused"
+        (inheriting "type Status\n  = Submitted \"submitted\"\n\naccess upstream () |> selectAll")
+    ]
 
 
 unpivotChecks : List Check
