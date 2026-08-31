@@ -15,7 +15,7 @@ import Dsl.Schema exposing (Schema, Type(..))
 
 checks : List Check
 checks =
-    parserChecks ++ checkerChecks ++ sqlChecks ++ elmChecks ++ readsChecks ++ joinChecks ++ keywordFieldChecks ++ chartChecks ++ functionChecks ++ unpivotChecks ++ inheritedTypeChecks
+    parserChecks ++ checkerChecks ++ sqlChecks ++ elmChecks ++ readsChecks ++ joinChecks ++ keywordFieldChecks ++ chartChecks ++ functionChecks ++ unpivotChecks ++ inheritedTypeChecks ++ windowChecks
 
 
 {-| The fixture schema every checker test runs against. `delivered_at` is
@@ -361,6 +361,74 @@ inheritedTypeChecks =
     , isErr "inherited: redeclaring it differently is refused"
         (inheriting "type Status\n  = Submitted \"submitted\"\n\naccess upstream () |> selectAll")
     ]
+
+
+windowChecks : List Check
+windowChecks =
+    [ equal "parse: partitionBy takes keys and an order, either of which may be left out"
+        (Ok [ PartitionBy [ "region" ] (Just { column = "total", direction = Desc }), SelectAll ])
+        (stagesOf "access orders ()\n  |> partitionBy .region (desc .total)\n  |> selectAll")
+    , isErr "parse: partitionBy with neither keys nor an order does nothing"
+        (ok "access orders () |> partitionBy |> selectAll")
+    , contains "window: the OVER carries the partition and the order"
+        "OVER (PARTITION BY \"orders\".\"region\" ORDER BY \"total\" DESC)"
+        (sqlOf ranked)
+    , contains "window: no keys means the whole table is one partition"
+        "OVER (ORDER BY \"id\")"
+        (sqlOf "access orders ()\n  |> partitionBy (asc .id)\n  |> extend (\\w -> { running = sum w.total })\n  |> selectAll")
+    , contains "window: the row is kept and added to, so the projection starts at *"
+        "SELECT *, "
+        (sqlOf ranked)
+
+    -- The same move as `filter` after `reduce` becoming a HAVING: a window
+    -- function is evaluated after WHERE and after GROUP BY, so DuckDB's
+    -- QUALIFY is the only clause that can see it.
+    , contains "window: a filter over what extend computed becomes a QUALIFY"
+        "QUALIFY"
+        (sqlOf ranked)
+    , equal "window: the row grows rather than being replaced"
+        (Ok
+            [ ( "id", "Int" )
+            , ( "owner", "String" )
+            , ( "region", "String" )
+            , ( "status", "String" )
+            , ( "delivered_at", "Maybe Timestamp" )
+            , ( "total", "Float" )
+            , ( "n", "Int" )
+            ]
+        )
+        (rowTypeOf "access orders ()\n  |> partitionBy .region (desc .total)\n  |> extend (\\w -> { n = rowNumber w })\n  |> selectAll")
+
+    -- The first row of a partition has nothing before it, and saying so here
+    -- is what stops the decoder insisting on a value that is not there.
+    , equal "window: lag and lead are nullable however the column is declared"
+        (Ok [ ( "prev", "Maybe Float" ) ])
+        (rowTypeOf "access orders ()\n  |> partitionBy .region (asc .id)\n  |> extend (\\w -> { prev = lag w.total })\n  |> selectAll"
+            |> Result.map (List.filter (\( n, _ ) -> n == "prev"))
+        )
+    , contains "window: an ordinary aggregate over a window is the running kind"
+        "sum(\"orders\".\"total\") OVER"
+        (sqlOf "access orders ()\n  |> partitionBy .region (asc .id)\n  |> extend (\\w -> { running = sum w.total })\n  |> selectAll")
+    , isErr "window: a ranking function outside extend is rejected"
+        (compile "access orders ()\n  |> groupBy .region\n  |> reduce (\\g -> { r = g.region, n = rowNumber g })\n  |> selectAll")
+    , isErr "window: extend without a partitionBy is rejected"
+        (compile "access orders ()\n  |> extend (\\w -> { n = rowNumber w })\n  |> selectAll")
+    , isErr "window: partitionBy has to be followed by extend"
+        (compile "access orders ()\n  |> partitionBy .region\n  |> selectAll")
+    , isErr "window: extend cannot follow a map, which already replaced the row"
+        (compile "access orders ()\n  |> map (\\o -> { t = o.total })\n  |> extend (\\w -> { n = rowNumber w })\n  |> selectAll")
+    , isErr "window: extend cannot shadow a column the row already has"
+        (compile "access orders ()\n  |> partitionBy .region\n  |> extend (\\w -> { total = sum w.total })\n  |> selectAll")
+    , isErr "window: partitioning by a column the table does not have is rejected"
+        (compile "access orders ()\n  |> partitionBy .nope\n  |> extend (\\w -> { n = rowNumber w })\n  |> selectAll")
+    , isErr "window: ordering by a column the table does not have is rejected"
+        (compile "access orders ()\n  |> partitionBy (asc .nope)\n  |> extend (\\w -> { n = rowNumber w })\n  |> selectAll")
+    ]
+
+
+ranked : String
+ranked =
+    "access orders ()\n  |> partitionBy .region (desc .total)\n  |> extend (\\w -> { n = rowNumber w })\n  |> filter (\\r -> r.n <= 2)\n  |> selectAll"
 
 
 unpivotChecks : List Check

@@ -9,7 +9,7 @@ what keeps it in step with the generated Elm.
 -}
 
 import Dsl.Ast as Ast exposing (CombineKind(..), Literal(..), Op(..), SortDir(..))
-import Dsl.Check exposing (Checked, CheckedCombine, CheckedUnpivot, Projection(..), TExpr(..))
+import Dsl.Check exposing (Checked, CheckedCombine, CheckedUnpivot, CheckedWindow, Projection(..), TExpr(..))
 import Dsl.Schema exposing (Type(..))
 
 
@@ -22,6 +22,7 @@ render checked =
         ++ maybeLine "WHERE " (whereClause checked)
         ++ maybeLine "GROUP BY " (groupKeys checked.groupBy)
         ++ maybeLine "HAVING " (Maybe.map expr checked.having)
+        ++ maybeLine "QUALIFY " (Maybe.map expr checked.qualify)
         ++ maybeLine "ORDER BY " (Maybe.map sort checked.sort)
         ++ maybeLine "LIMIT " (Maybe.map String.fromInt checked.limit)
     )
@@ -189,6 +190,13 @@ projection checked =
         All ->
             "*"
 
+        Extended fields ->
+            -- The row as it was, plus what the window computed. `*` rather
+            -- than the columns spelled out, because an extend does not know
+            -- or care what they are.
+            String.join ", "
+                ("*" :: List.map (\( name, e ) -> expr e ++ " AS " ++ ident name) fields)
+
         Fields fields ->
             let
                 visible =
@@ -200,6 +208,45 @@ projection checked =
                     List.map (\( alias, name, _ ) -> qualified alias name ++ " AS " ++ ident name) checked.hidden
             in
             String.join ", " (visible ++ hidden)
+
+
+{-| A window function, without its OVER clause, which `over` supplies.
+-}
+windowCall : String -> List String -> String
+windowCall fn args =
+    duckName fn ++ "(" ++ String.join ", " args ++ ")"
+
+
+duckName : String -> String
+duckName fn =
+    case fn of
+        "rowNumber" ->
+            "row_number"
+
+        "denseRank" ->
+            "dense_rank"
+
+        "countDistinct" ->
+            "count"
+
+        _ ->
+            fn
+
+
+over : CheckedWindow -> String
+over window =
+    let
+        parts =
+            (case window.partition of
+                [] ->
+                    []
+
+                keys ->
+                    [ "PARTITION BY " ++ (keys |> List.map expr |> String.join ", ") ]
+            )
+                ++ (window.order |> Maybe.map (\spec -> "ORDER BY " ++ sort spec) |> maybeToList)
+    in
+    " OVER (" ++ String.join " " parts ++ ")"
 
 
 expr : TExpr -> String
@@ -219,6 +266,9 @@ expr e =
 
         TAgg fn args _ ->
             aggregate fn (List.map expr args)
+
+        TWin fn args window _ ->
+            windowCall fn (List.map expr args) ++ over window
 
         TCall fn args _ ->
             call fn (List.map expr args)

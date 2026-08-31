@@ -107,6 +107,29 @@ access orders ()
   |> selectAll
 """
       )
+    , ( "window_ranked"
+      , """
+access orders ()
+  |> partitionBy .region (desc .total)
+  |> extend (\\w ->
+       { n = rowNumber w
+       , running = sum w.total
+       , prev = lag w.total
+       })
+  |> filter (\\r -> r.n <= 2)
+  |> selectAll
+"""
+      )
+      -- No keys, so the whole table is one partition: a running total in the
+      -- order the rows were asked for.
+    , ( "window_running"
+      , """
+access orders ()
+  |> partitionBy (asc .id)
+  |> extend (\\w -> { running = sum w.total })
+  |> selectAll
+"""
+      )
     , ( "unpivot_wide"
       , """
 access quarterly ()

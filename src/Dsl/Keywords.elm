@@ -1,4 +1,4 @@
-module Dsl.Keywords exposing (aggregates, formats, functions, reserved)
+module Dsl.Keywords exposing (aggregates, formats, functions, reserved, windows)
 
 {-| The words the language reserves.
 
@@ -22,6 +22,8 @@ reserved =
         , "reduce"
         , "sortBy"
         , "unpivot"
+        , "partitionBy"
+        , "extend"
         , "limit"
         , "intersect"
         , "diff"
@@ -36,6 +38,25 @@ reserved =
         , "not"
         , "true"
         , "false"
+        ]
+
+
+{-| The functions that only mean anything over a window.
+
+Kept apart from the aggregates because the two are legal in different places:
+an aggregate works in a `reduce` and, over a partition, in an `extend`; these
+work only in an `extend`. Both are highlighted, and both are recognised by
+position, so a column may still be called `rank`.
+
+-}
+windows : Set String
+windows =
+    Set.fromList
+        [ "rowNumber"
+        , "rank"
+        , "denseRank"
+        , "lag"
+        , "lead"
         ]
 
 

@@ -115,6 +115,14 @@ type Stage
     | Chart ChartKind (List ( String, String ))
       -- A single number, shown as itself rather than as a table of one cell.
     | Scalar
+      -- `partitionBy .origin (asc .date)` — the OVER clause, named for what
+      -- it does to the rows rather than for the SQL. Both halves are optional
+      -- but not both at once: no keys means the whole table is one partition.
+    | PartitionBy (List String) (Maybe SortSpec)
+      -- `extend (\w -> { n = rowNumber w })` — the partner to `reduce`. Where
+      -- a reduce collapses each group to one row, an extend keeps every row
+      -- and adds what the window computed.
+    | Extend Lambda
       -- `unpivot { name = month, value = sales } .jan .feb .mar` — fold a set
       -- of columns into two, one holding the old column's name and one its
       -- value. Unlike a pivot this is statically typeable, because both the

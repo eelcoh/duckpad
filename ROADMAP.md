@@ -968,8 +968,53 @@ recorded as they were hit, in the order they are worth closing:
    lives in the fixtures — `quarterly`, built wide on purpose — rather
    than in the seeded notebook.
 
-8. **Window functions**, the one item left that needs real design rather
-   than a name and a type rule. See the note in the pandas section.
+8. ~~**Window functions**~~ — done, as `partitionBy` and `extend`.
+
+       access flights ()
+         |> partitionBy .origin (asc .date)
+         |> extend (\w ->
+              { n = rowNumber w
+              , running = sum w.delay
+              , prev = lag w.delay
+              })
+         |> filter (\f -> f.n <= 3)
+         |> selectAll
+
+   The pair reads against the one beside it, which is the whole reason
+   for the spelling: `groupBy` then `reduce` collapses each group to a
+   row; `partitionBy` then `extend` keeps every row and adds what the
+   window computed. Both halves of `partitionBy` are optional — no keys
+   makes the whole table one partition, which is what a running total
+   over everything wants — but not both at once, which the grammar
+   refuses rather than the checker.
+
+   **`filter` becomes QUALIFY**, exactly as a `filter` after a `reduce`
+   becomes a HAVING, and for the same reason: a window function is
+   evaluated after WHERE and after GROUP BY, so neither can see the
+   column being filtered on. DuckDB has QUALIFY for precisely this,
+   which is why exposing it costs nothing — the alternative would be
+   wrapping the query in a subquery this IR cannot express.
+
+   **`lag` and `lead` are nullable** however the column is declared: the
+   first row of a partition has nothing before it. Saying so in the type
+   is what stops the generated decoder insisting on a value that is not
+   there.
+
+   **One window per stage.** SQL allows a different OVER on every
+   function, but a stage ranking over one partition while totalling over
+   another is two thoughts wearing one lambda — and a second window is a
+   second cell, which in a notebook is where it belongs.
+
+   That last point is also the answer to the obvious gap: **ranking the
+   groups**. `partitionBy` has to come before `groupBy`, so ranking the
+   output of a `reduce` means a cell that reads the cell that reduced.
+   In SQL that would be a subquery; here the notebook already has a name
+   for that intermediate result, which is arguably where it should have
+   been anyway.
+
+   Not done: **custom frames**. `ROWS BETWEEN` would buy moving averages,
+   where the default frame gives running totals. It needs its own
+   spelling and has not been designed.
 
 ## Types across cells
 

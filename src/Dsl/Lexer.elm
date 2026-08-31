@@ -154,7 +154,7 @@ wordKind word =
     if Set.member word Dsl.Keywords.reserved || Set.member word Dsl.Keywords.formats then
         Keyword
 
-    else if Set.member word Dsl.Keywords.aggregates || Set.member word Dsl.Keywords.functions then
+    else if Set.member word Dsl.Keywords.aggregates || Set.member word Dsl.Keywords.functions || Set.member word Dsl.Keywords.windows then
         Callable
 
     else

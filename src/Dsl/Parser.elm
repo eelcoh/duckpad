@@ -224,6 +224,8 @@ stage =
             , Parser.succeed GroupBy |. kw "groupBy" |= groupKeys
             , Parser.succeed SortBy |. kw "sortBy" |= sortSpec
             , unpivotStage
+            , partitionByStage
+            , Parser.map Extend (lambdaStage "extend")
             , Parser.succeed Limit |. kw "limit" |= (Parser.int |. ws)
 
             , Parser.succeed Scalar |. kw "scalar"
@@ -250,6 +252,34 @@ combineStage name kind =
         |= accessor
         |= lname
         |= accessor
+
+
+{-| `partitionBy .origin (asc .date)`, and either half may be left out.
+
+No keys makes the whole table one partition, which is what a running total
+over everything wants; no order leaves the window unordered, which is what a
+partition-wide `max` wants. Both omitted would be a stage that does nothing,
+so it is refused by the grammar rather than by the checker.
+
+-}
+partitionByStage : Parser Stage
+partitionByStage =
+    Parser.succeed PartitionBy
+        |. kw "partitionBy"
+        |= many accessor
+        |= Parser.oneOf
+            [ Parser.map Just sortSpec
+            , Parser.succeed Nothing
+            ]
+        |> Parser.andThen
+            (\parsed ->
+                case parsed of
+                    PartitionBy [] Nothing ->
+                        Parser.problem "`partitionBy` needs keys, an order, or both"
+
+                    _ ->
+                        Parser.succeed parsed
+            )
 
 
 {-| `unpivot { name = month, value = sales } .jan .feb .mar`
@@ -693,7 +723,7 @@ fieldOrVar name =
 
 isAggregate : String -> Bool
 isAggregate name =
-    Set.member name Dsl.Keywords.aggregates
+    Set.member name Dsl.Keywords.aggregates || Set.member name Dsl.Keywords.windows
 
 
 isFunction : String -> Bool

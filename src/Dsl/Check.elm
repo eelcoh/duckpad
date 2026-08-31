@@ -5,6 +5,7 @@ module Dsl.Check exposing
     , Checked
     , CheckedCombine
     , CheckedUnpivot
+    , CheckedWindow
     , Display(..)
     , Projection(..)
     , Side
@@ -39,6 +40,10 @@ type alias Checked =
     { source : String
     , sourceAlias : String
     , unpivot : Maybe CheckedUnpivot
+      -- A `filter` over what an `extend` computed. Its own clause because a
+      -- window function is evaluated after WHERE and after GROUP BY, so
+      -- neither of those can see it.
+    , qualify : Maybe TExpr
     , reads : List String
     , combines : List CheckedCombine
     , filter : Maybe TExpr
@@ -55,6 +60,20 @@ type alias Checked =
     , rowType : List ( String, Type )
     , declarations : List TypeDecl
     , display : Display
+    }
+
+
+{-| The OVER clause every window function in an `extend` shares.
+
+One per stage rather than one per function. SQL allows a different window on
+each, but a stage that computed a rank over one partition and a running total
+over another would be two thoughts wearing one lambda — and a second window is
+a second cell, which in a notebook is the natural place for it.
+
+-}
+type alias CheckedWindow =
+    { partition : List TExpr
+    , order : Maybe SortSpec
     }
 
 
@@ -110,6 +129,10 @@ type alias CheckedCombine =
 type Projection
     = All
     | Fields (List ( String, TExpr ))
+      -- Everything the row already had, plus what an `extend` computed. The
+      -- row grows rather than being replaced, which is the difference between
+      -- an extend and a map.
+    | Extended (List ( String, TExpr ))
 
 
 type Cardinality
@@ -123,6 +146,10 @@ type TExpr
     | TBin Op TExpr TExpr Type
     | TNot TExpr
     | TAgg String (List TExpr) Type
+      -- The same call, but over a window. A separate constructor because the
+      -- renderer has to append the OVER clause and the checker has to allow it
+      -- where a bare aggregate would be wrong.
+    | TWin String (List TExpr) CheckedWindow Type
     | TCall String (List TExpr) Type
     | TCast TExpr String
 
@@ -143,6 +170,9 @@ typeOf expr =
             TBool
 
         TAgg _ _ t ->
+            t
+
+        TWin _ _ _ t ->
             t
 
         TCall _ _ t ->
@@ -230,6 +260,11 @@ knownTables schema =
 type Phase
     = Rows
     | Grouped
+      -- `partitionBy` has named a window and `extend` has not consumed it yet.
+    | Partitioned
+      -- An `extend` has added its columns. Distinct from `Projected` because a
+      -- `filter` here becomes a QUALIFY rather than a WHERE or a HAVING.
+    | Windowed
     | Projected
     | Done
 
@@ -238,6 +273,8 @@ type alias Builder =
     { source : String
     , sides : List Side
     , unpivot : Maybe CheckedUnpivot
+    , window : Maybe CheckedWindow
+    , qualify : Maybe TExpr
     , combines : List CheckedCombine
     , phase : Phase
     , filter : Maybe TExpr
@@ -260,6 +297,8 @@ start source columns =
     { source = source
     , sides = [ { alias = source, table = source, columns = columns } ]
     , unpivot = Nothing
+    , window = Nothing
+    , qualify = Nothing
     , combines = []
     , phase = Rows
     , filter = Nothing
@@ -306,6 +345,27 @@ applyStage schema params ast stage builder =
 
         ( Filter _, Grouped ) ->
             Err "`filter` cannot sit between `groupBy` and `reduce` — put it before the `groupBy` to filter rows, or after the `reduce` to filter groups"
+
+        ( PartitionBy keys order, Rows ) ->
+            partitionBy keys order builder
+
+        ( PartitionBy _ _, _ ) ->
+            Err "`partitionBy` has to come before `groupBy`, `reduce` or `map` — rank the groups in a cell that reads this one"
+
+        ( Extend lambda, Partitioned ) ->
+            extend params ast lambda builder
+
+        ( Extend _, Rows ) ->
+            Err "`extend` needs a window — put `partitionBy` before it"
+
+        ( Extend _, _ ) ->
+            Err "`extend` adds to a row, so it cannot follow `reduce` or `map`"
+
+        ( _, Partitioned ) ->
+            Err "`partitionBy` names a window, so `extend` has to come next"
+
+        ( Filter lambda, Windowed ) ->
+            qualify params ast lambda builder
 
         ( Unpivot spec columns, Rows ) ->
             unpivot spec columns builder
@@ -601,6 +661,9 @@ filterProjected params ast lambda builder =
                 All ->
                     Err "there is nothing to filter here yet"
 
+                Extended _ ->
+                    Err "there is nothing to filter here yet"
+
                 Fields fields ->
                     projectionEnv params ast builder lambda fields
                         |> Result.andThen (\env -> checkExpr env lambda.body)
@@ -635,6 +698,7 @@ projectionEnv params ast builder lambda fields =
                     ]
                 , declarations = ast.declarations
                 , inReduce = False
+                , window = Nothing
                 , groupKeys = []
                 , inlined = fields
                 , sides = builder.sides
@@ -830,6 +894,11 @@ type alias Env =
     { bindings : List ( String, Side )
     , declarations : List TypeDecl
     , inReduce : Bool
+      -- Set inside an `extend`, where the window functions are legal and an
+      -- ordinary aggregate means the running kind rather than the collapsing
+      -- kind. Its presence is the fact; the window itself is what the calls
+      -- need, so there is no separate flag to keep in step with it.
+    , window : Maybe CheckedWindow
     , groupKeys : List ( String, TExpr )
 
     -- Names that stand for an expression rather than a column, so reading one
@@ -887,6 +956,7 @@ groupEnv params ast builder lambda =
                 { bindings = List.map (\side -> ( name, side )) builder.sides
                 , declarations = ast.declarations
                 , inReduce = True
+                , window = Nothing
                 , groupKeys = builder.groupBy
                 , inlined = []
                 , sides = builder.sides
@@ -902,6 +972,7 @@ envWith params ast builder bindings =
     { bindings = bindings
     , declarations = ast.declarations
     , inReduce = False
+    , window = Nothing
     , groupKeys = []
     , inlined = []
     , sides = builder.sides
@@ -977,6 +1048,16 @@ outputColumns builder =
         ( Fields fields, _ ) ->
             Ok (List.map (\( name, expr ) -> ( name, typeOf expr )) fields)
 
+        ( Extended fields, [ only ] ) ->
+            Ok (only.columns ++ List.map (\( name, expr ) -> ( name, typeOf expr )) fields)
+
+        ( Extended _, sides ) ->
+            Err
+                ("this pipeline combines "
+                    ++ String.fromInt (List.length sides)
+                    ++ " tables, so it has to say what the row should be with `map` before `extend` can add to it"
+                )
+
 
 finish : Builder -> Result String Checked
 finish builder =
@@ -991,6 +1072,7 @@ finish builder =
                     (\rowType ->
                         { source = builder.source
                         , unpivot = builder.unpivot
+                        , qualify = builder.qualify
                         , sourceAlias =
                             List.head builder.sides |> Maybe.map .alias |> Maybe.withDefault builder.source
                         , reads = builder.source :: List.map .table builder.combines
@@ -1050,6 +1132,141 @@ declared declarations rowType =
 
         [] ->
             Ok rowType
+
+
+-- WINDOWS
+
+
+{-| Name the window the next `extend` computes over.
+
+The keys are plain columns, not expressions: a computed partition key would
+need a name to be referred to by, and unlike `groupBy` nothing downstream
+refers to it — the extend's lambda reads the row, not the key.
+
+-}
+partitionBy : List String -> Maybe SortSpec -> Builder -> Result String Builder
+partitionBy keys order builder =
+    case builder.sides of
+        [ only ] ->
+            let
+                key name =
+                    only.columns
+                        |> List.filter (\( c, _ ) -> c == name)
+                        |> List.head
+                        |> Maybe.map (\( c, t ) -> TCol only.alias c t)
+                        |> Result.fromMaybe ("`partitionBy` names `" ++ name ++ "`, which " ++ only.table ++ " does not have. It has: " ++ (only.columns |> List.map Tuple.first |> String.join ", "))
+
+                ordered =
+                    case order of
+                        Nothing ->
+                            Ok Nothing
+
+                        Just spec ->
+                            if List.any (\( c, _ ) -> c == spec.column) only.columns then
+                                Ok (Just spec)
+
+                            else
+                                Err ("`partitionBy` orders by `" ++ spec.column ++ "`, which " ++ only.table ++ " does not have")
+            in
+            Result.map2
+                (\partition sorted ->
+                    { builder
+                        | phase = Partitioned
+                        , window = Just { partition = partition, order = sorted }
+                    }
+                )
+                (collect (List.map key keys))
+                ordered
+
+        sides ->
+            Err
+                ("this pipeline combines "
+                    ++ String.fromInt (List.length sides)
+                    ++ " tables, so it has to say what the row should be with `map` before a window can be taken over it"
+                )
+
+
+{-| Add what the window computed, keeping every row.
+
+The partner to `reduce`, and the difference is the whole point: a reduce
+collapses each group to one row, so its record *is* the row; an extend leaves
+the rows alone, so its record is added to what was already there.
+
+-}
+extend : Params -> Pipeline -> Lambda -> Builder -> Result String Builder
+extend params ast lambda builder =
+    bind params ast builder lambda
+        |> Result.andThen (\env -> checkProjection { env | window = builder.window } lambda.body)
+        |> Result.andThen
+            (\( fields, hidden ) ->
+                let
+                    existing =
+                        builder.sides |> List.concatMap .columns |> List.map Tuple.first
+
+                    clashes =
+                        fields |> List.map Tuple.first |> List.filter (\name -> List.member name existing)
+                in
+                case clashes of
+                    clash :: _ ->
+                        Err ("`extend` adds a column called `" ++ clash ++ "`, but the row already has one")
+
+                    [] ->
+                        Ok
+                            { builder
+                                | phase = Windowed
+                                , projection = Extended fields
+                                , hidden = builder.hidden ++ hidden
+                            }
+            )
+
+
+{-| A `filter` over what an `extend` computed.
+
+The same move as a `filter` after a `reduce` becoming a HAVING, for the same
+reason: a window function is evaluated after WHERE and after GROUP BY, so
+neither clause can see the column being filtered on. DuckDB has QUALIFY for
+exactly this, which is why it costs nothing to expose — the alternative would
+be wrapping the query in a subquery the rest of this IR cannot express.
+
+-}
+qualify : Params -> Pipeline -> Lambda -> Builder -> Result String Builder
+qualify params ast lambda builder =
+    case ( builder.projection, builder.sides, lambda.pattern ) of
+        ( Extended fields, [ only ], Single name ) ->
+            let
+                -- Both halves of the row are readable: the columns that were
+                -- always there, and what the extend just added. Reading either
+                -- substitutes its expression, so the clause never depends on
+                -- an alias being visible to it.
+                row =
+                    List.map (\( c, t ) -> ( c, TCol only.alias c t )) only.columns
+                        ++ fields
+            in
+            checkExpr
+                { bindings = [ ( name, { only | columns = List.map (\( n, e ) -> ( n, typeOf e )) row } ) ]
+                , declarations = builder.declarations
+                , inReduce = False
+                , window = Nothing
+                , groupKeys = []
+                , inlined = row
+                , sides = builder.sides
+                , params = params
+                }
+                lambda.body
+                |> Result.andThen
+                    (\texpr ->
+                        if Schema.typeName (typeOf texpr) /= "Bool" then
+                            Err ("`filter` needs a condition, but this expression is a " ++ Schema.typeName (typeOf texpr))
+
+                        else
+                            Ok { builder | qualify = Just (conjoin builder.qualify texpr) }
+                    )
+
+        ( _, _, Destructure _ ) ->
+            Err "a row is one thing here, so this lambda takes a single name"
+
+        _ ->
+            Err "there is nothing to filter here yet"
 
 
 -- UNPIVOT
@@ -1638,7 +1855,13 @@ baseType t =
 
 checkAggregate : Env -> String -> List Expr -> Result String TExpr
 checkAggregate env fn args =
-    if not env.inReduce then
+    if env.window /= Nothing then
+        checkWindow env fn args
+
+    else if Set.member fn windowOnly then
+        Err ("`" ++ fn ++ "` only works inside `extend`, over a window named by `partitionBy`")
+
+    else if not env.inReduce then
         Err ("`" ++ fn ++ "` is an aggregate, so it only works inside `reduce`")
 
     else if List.member fn conditional then
@@ -1650,6 +1873,80 @@ checkAggregate env fn args =
                 (\arg acc -> Result.map2 (\done t -> done ++ [ t ]) acc (aggArgument env fn arg))
                 (Ok [])
             |> Result.andThen (aggregateResult fn)
+
+
+{-| The functions that mean nothing outside a window.
+-}
+windowOnly : Set.Set String
+windowOnly =
+    Set.fromList [ "rowNumber", "rank", "denseRank", "lag", "lead" ]
+
+
+{-| A call inside `extend`, over the window `partitionBy` named.
+
+Two kinds arrive here. The ranking and offset functions exist only over a
+window. The ordinary aggregates are the same functions as in a `reduce` and
+keep the same result types — over a window they accumulate down the partition
+instead of collapsing it, which is what makes `sum` a running total here and a
+grand total there.
+
+-}
+checkWindow : Env -> String -> List Expr -> Result String TExpr
+checkWindow env fn args =
+    case env.window of
+        Nothing ->
+            Err "`extend` needs a window — put `partitionBy` before it"
+
+        Just window ->
+            args
+                |> List.foldl
+                    (\arg acc -> Result.map2 (\done t -> done ++ [ t ]) acc (aggArgument env fn arg))
+                    (Ok [])
+                |> Result.andThen (windowResult fn)
+                |> Result.map (\( name, resolved, t ) -> TWin name resolved window t)
+
+
+{-| Arity and result type for each window function.
+
+`lag` and `lead` are nullable however the column is declared: the first row of
+a partition has nothing before it, and the last nothing after. Saying so here
+is what stops the generated decoder from insisting on a value that is not
+there.
+
+-}
+windowResult : String -> List (Maybe TExpr) -> Result String ( String, List TExpr, Type )
+windowResult fn args =
+    case ( fn, args ) of
+        ( "rowNumber", [ Nothing ] ) ->
+            Ok ( "rowNumber", [], TInt )
+
+        ( "rank", [ Nothing ] ) ->
+            Ok ( "rank", [], TInt )
+
+        ( "denseRank", [ Nothing ] ) ->
+            Ok ( "denseRank", [], TInt )
+
+        ( "lag", [ Just column ] ) ->
+            Ok ( "lag", [ column ], TMaybe (baseType (typeOf column)) )
+
+        ( "lead", [ Just column ] ) ->
+            Ok ( "lead", [ column ], TMaybe (baseType (typeOf column)) )
+
+        ( _, _ ) ->
+            if Set.member fn windowOnly then
+                Err ("`" ++ fn ++ "` does not take those arguments — `rowNumber`, `rank` and `denseRank` take the window, `lag` and `lead` take a column")
+
+            else
+                aggregateResult fn args
+                    |> Result.map
+                        (\aggregated ->
+                            case aggregated of
+                                TAgg name resolved t ->
+                                    ( name, resolved, t )
+
+                                other ->
+                                    ( fn, [], typeOf other )
+                        )
 
 
 {-| Aggregates that count or total only the rows matching a condition.
