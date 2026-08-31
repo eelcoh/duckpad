@@ -1244,6 +1244,23 @@ That is what a spike is for, and it is worth noting how it was missed at
 first: everything *visible* worked, so both of us called it a success
 without touching a button.
 
+**And the fix for it broke something worse.** The edit that routed file
+access through `files.js` replaced a span of `duckdb-bridge.js` that
+reached past the two handlers it meant to change, taking `boot()`,
+`loadSource`, `materialize` and `describe` with it. The result was still
+valid JavaScript, so `node --check` passed; the notebook still loaded,
+so it looked fine; and DuckDB simply never started. The only symptom was
+a status pill stuck on "booting" and a greyed Run all.
+
+Two things follow. `tests/wiring.js` now reads the port declarations out
+of `Ports.elm` and checks each one is subscribed or sent to somewhere in
+`public/` — against the truncated file it names all four missing
+handlers, and it runs as part of `mise test`. The bridge was the one
+part of duckpad with no types holding it together and no test looking at
+it. And `boot()` now races a thirty second timeout, so a boot that hangs
+rather than rejects reports itself instead of leaving the notebook
+waiting for ever.
+
 Caveats worth keeping:
 
 - CSP was off for the spike. A real build should enumerate what the page
