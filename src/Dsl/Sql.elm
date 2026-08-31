@@ -211,26 +211,24 @@ projection checked =
 
 
 {-| A window function, without its OVER clause, which `over` supplies.
+
+Only the ranking and offset functions are spelled out here. Everything else in
+an `extend` is an ordinary aggregate and goes through `aggregate`, so it keeps
+the one spelling — `correlation` became `correlation(...)` rather than
+`corr(...)` while this had a name table of its own.
+
 -}
 windowCall : String -> List String -> String
 windowCall fn args =
-    duckName fn ++ "(" ++ String.join ", " args ++ ")"
+    case ( fn, args ) of
+        ( "rowNumber", [] ) ->
+            "row_number()"
 
-
-duckName : String -> String
-duckName fn =
-    case fn of
-        "rowNumber" ->
-            "row_number"
-
-        "denseRank" ->
-            "dense_rank"
-
-        "countDistinct" ->
-            "count"
+        ( "denseRank", [] ) ->
+            "dense_rank()"
 
         _ ->
-            fn
+            aggregate fn args
 
 
 over : CheckedWindow -> String
@@ -300,6 +298,26 @@ aggregate fn args =
 
         ( "correlation", [ a, b ] ) ->
             "corr(" ++ a ++ ", " ++ b ++ ")"
+
+        ( "covarPop", [ a, b ] ) ->
+            "covar_pop(" ++ a ++ ", " ++ b ++ ")"
+
+        ( "covarSamp", [ a, b ] ) ->
+            "covar_samp(" ++ a ++ ", " ++ b ++ ")"
+
+        ( "regrSlope", [ a, b ] ) ->
+            "regr_slope(" ++ a ++ ", " ++ b ++ ")"
+
+        ( "regrIntercept", [ a, b ] ) ->
+            "regr_intercept(" ++ a ++ ", " ++ b ++ ")"
+
+        ( "regrR2", [ a, b ] ) ->
+            "regr_r2(" ++ a ++ ", " ++ b ++ ")"
+
+        ( "regrCount", [ a, b ] ) ->
+            -- DuckDB returns UINTEGER, which the row type calls Int; the cast
+            -- keeps the value and the type agreeing across the port.
+            "CAST(regr_count(" ++ a ++ ", " ++ b ++ ") AS BIGINT)"
 
         ( "countWhere", [ predicate ] ) ->
             "count(*) FILTER (WHERE " ++ predicate ++ ")"

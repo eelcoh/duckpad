@@ -1016,6 +1016,69 @@ recorded as they were hit, in the order they are worth closing:
    where the default frame gives running totals. It needs its own
    spelling and has not been designed.
 
+## Statistical functions
+
+Tier one is done, and it needed no new machinery: each aggregate is a
+name in `Keywords.aggregates`, an arity and result type in
+`aggregateResult`, and a DuckDB spelling in `Sql.aggregate`.
+
+- One column, `Float`: `skewness`, `kurtosis`, `mad`, `entropy`.
+  `entropy` is not restricted to numbers — the entropy of a text column
+  is the spread of its values, which is a fair question to ask of one.
+- Two columns: `covarPop`, `covarSamp`, `regrSlope`, `regrIntercept`,
+  `regrR2`, all `Float`, and `regrCount`, which DuckDB returns as
+  UINTEGER and which is cast so the value and the `Int` in the row type
+  agree across the port.
+
+DuckDB takes the **dependent variable first**, so `regrSlope g.total
+g.id` is the slope of total against id. That is its order and the order
+the maths is written in, and following it is cheaper than explaining a
+divergence.
+
+**They cost nothing over a window.** An `extend` routes ordinary
+aggregates through the same typing, so every one of these already works
+over a partition — a rolling correlation is `partitionBy` plus
+`correlation`, with no further work.
+
+**What that shook out.** Adding `entropy` failed to parse, and the cause
+had nothing to do with statistics: Elm's number parser accepts exponent
+notation and looks for the `e` at the offset it starts from, so given a
+name beginning with `e` it consumed the letter, found no digits behind
+it, and failed as a *malformed number* rather than as "not a number". A
+branch of `oneOf` that fails having consumed input stops the whole
+`oneOf`, so `identifierExpr` never got a turn. **Every name starting
+with `e` was unparseable in expression position** — lambda parameters
+and input names included. `\e -> e.x > 1` did not compile, and nothing
+had ever tried it. `numberLiteral` is now backtrackable.
+
+A second bug came out of a test rather than a screenshot: `windowCall`
+had a name table of its own, so `correlation` over a window rendered as
+`correlation(...)` instead of `corr(...)`. The `stdDev` fixture had
+passed only because DuckDB matched it case-insensitively. Window calls
+now go through `aggregate` for everything but the ranking functions.
+
+### Still open
+
+`summarize` is the next one worth doing, and it is **statically
+typeable**, which `PIVOT` is not: DuckDB's `SUMMARIZE` returns a fixed
+twelve-column schema — `column_name, column_type, min, max,
+approx_unique, avg, std, q25, q50, q75, count, null_percentage` — one
+row per input column, whatever it is pointed at. So it would work like
+`unpivot`: a table-producing construct rendering into the FROM, with a
+constant row type.
+
+The caveat is real. `min`, `max`, `avg`, `std` and the quartiles come
+back as VARCHAR, because the columns being summarised have different
+types and DuckDB has to put them in one column. They would type as
+`String`, so charting the mean would need a cast. Staying close to
+DuckDB means accepting that; a numeric-only variant would be inventing
+something DuckDB does not have.
+
+Out of scope, and staying there: hypothesis tests, distributions, model
+fitting beyond linear regression. DuckDB has none of them, so having
+them would mean either inventing semantics or adding the escape hatch
+that costs the totality guarantee.
+
 ## Types across cells
 
 A type could only be declared in the cell that used it, and the error

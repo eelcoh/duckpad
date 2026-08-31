@@ -622,12 +622,25 @@ atom =
         ]
 
 
+{-| Backtrackable, and it has to be.
+
+Elm's number parser accepts exponent notation, and it looks for the `e` at the
+offset it starts from — so given a name beginning with `e` it consumes that
+letter, finds no digits behind it, and fails as a malformed number rather than
+as "not a number". A branch of `oneOf` that fails having consumed input stops
+the whole `oneOf`, so `identifierExpr` never got a turn: every name starting
+with `e` was unparseable in expression position, lambda parameters and input
+names included. `\e -> e.x > 1` did not compile.
+
+-}
 numberLiteral : Parser Expr
 numberLiteral =
-    Parser.oneOf
-        [ Parser.succeed negateLiteral |. Parser.symbol "-" |= numberCore
-        , numberCore
-        ]
+    Parser.backtrackable
+        (Parser.oneOf
+            [ Parser.succeed negateLiteral |. Parser.symbol "-" |= numberCore
+            , numberCore
+            ]
+        )
 
 
 numberCore : Parser Expr

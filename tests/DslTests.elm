@@ -15,7 +15,7 @@ import Dsl.Schema exposing (Schema, Type(..))
 
 checks : List Check
 checks =
-    parserChecks ++ checkerChecks ++ sqlChecks ++ elmChecks ++ readsChecks ++ joinChecks ++ keywordFieldChecks ++ chartChecks ++ functionChecks ++ unpivotChecks ++ inheritedTypeChecks ++ windowChecks
+    parserChecks ++ checkerChecks ++ sqlChecks ++ elmChecks ++ readsChecks ++ joinChecks ++ keywordFieldChecks ++ chartChecks ++ functionChecks ++ unpivotChecks ++ inheritedTypeChecks ++ windowChecks ++ statisticsChecks
 
 
 {-| The fixture schema every checker test runs against. `delivered_at` is
@@ -361,6 +361,54 @@ inheritedTypeChecks =
     , isErr "inherited: redeclaring it differently is refused"
         (inheriting "type Status\n  = Submitted \"submitted\"\n\naccess upstream () |> selectAll")
     ]
+
+
+statisticsChecks : List Check
+statisticsChecks =
+    [ contains "stats: skewness, kurtosis and mad keep DuckDB's own spelling"
+        "skewness(\"orders\".\"total\")"
+        (sqlOf (reduced "skew = skewness g.total"))
+    , contains "stats: entropy is not restricted to numbers"
+        "entropy(\"orders\".\"status\")"
+        (sqlOf (reduced "e = entropy g.status"))
+    , contains "stats: the regression family takes the dependent variable first"
+        "regr_slope(\"orders\".\"total\", \"orders\".\"id\")"
+        (sqlOf (reduced "slope = regrSlope g.total g.id"))
+
+    -- DuckDB returns UINTEGER and the row type says Int, so without the cast
+    -- the value and the type would disagree across the port.
+    , contains "stats: regrCount is cast to match the Int it is typed as"
+        "CAST(regr_count("
+        (sqlOf (reduced "n = regrCount g.total g.id"))
+    , equal "stats: the results are DuckDB's own types"
+        (Ok [ ( "skew", "Float" ), ( "n", "Int" ) ])
+        (rowTypeOf (reduced "skew = skewness g.total, n = regrCount g.total g.id"))
+    , isErr "stats: a pairwise aggregate over text is rejected"
+        (compile (reduced "slope = regrSlope g.owner g.id"))
+    , isErr "stats: and so is one given a single column"
+        (compile (reduced "slope = regrSlope g.total"))
+
+    -- They cost nothing over a window, because an extend routes ordinary
+    -- aggregates through the same typing.
+    , contains "stats: they work over a window too"
+        "corr(\"orders\".\"total\", \"orders\".\"id\") OVER"
+        (sqlOf "access orders ()\n  |> partitionBy .region (asc .id)\n  |> extend (\\w -> { r = correlation w.total w.id })\n  |> selectAll")
+
+    -- Elm's number parser reads a leading `e` as an exponent and fails having
+    -- consumed it, which stopped the whole atom. Every name starting with `e`
+    -- was unparseable, and `entropy` is only how it was noticed.
+    , contains "parse: a lambda parameter may be called `e`"
+        "WHERE"
+        (sqlOf "access orders () |> filter (\\e -> e.total > 1.0) |> selectAll")
+    , contains "parse: exponent notation still parses"
+        "100000"
+        (sqlOf "access orders () |> filter (\\o -> o.total > 1e5) |> selectAll")
+    ]
+
+
+reduced : String -> String
+reduced fields =
+    "access orders ()\n  |> groupBy .region\n  |> reduce (\\g -> { " ++ fields ++ " })\n  |> selectAll"
 
 
 windowChecks : List Check

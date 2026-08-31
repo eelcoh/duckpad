@@ -107,6 +107,47 @@ access orders ()
   |> selectAll
 """
       )
+    , ( "statistics"
+      , """
+access orders ()
+  |> groupBy .region
+  |> reduce (\\g ->
+       { region = g.region
+       , skew = skewness g.total
+       , kurt = kurtosis g.total
+       , spread = mad g.total
+       , ent = entropy g.status
+       })
+  |> selectAll
+"""
+      )
+      -- DuckDB takes the dependent variable first, so this is the slope of
+      -- total against id.
+    , ( "regression"
+      , """
+access orders ()
+  |> groupBy .region
+  |> reduce (\\g ->
+       { region = g.region
+       , slope = regrSlope g.total g.id
+       , intercept = regrIntercept g.total g.id
+       , fit = regrR2 g.total g.id
+       , pairs = regrCount g.total g.id
+       , covar = covarSamp g.total g.id
+       })
+  |> selectAll
+"""
+      )
+      -- Every one of these works over a window too, because an extend routes
+      -- ordinary aggregates through the same typing.
+    , ( "windowed_statistics"
+      , """
+access orders ()
+  |> partitionBy .region (asc .id)
+  |> extend (\\w -> { spread = stdDev w.total, fit = correlation w.total w.id })
+  |> selectAll
+"""
+      )
     , ( "window_ranked"
       , """
 access orders ()

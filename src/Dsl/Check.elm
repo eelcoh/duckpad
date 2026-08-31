@@ -2100,12 +2100,26 @@ aggregateResult fn args =
                 overNumber fn column TFloat
                     |> Result.map (\_ -> TAgg fn [ fraction, column ] TFloat)
 
-        ( "correlation", [ Just left, Just right ] ) ->
-            if Schema.isNumeric (typeOf left) && Schema.isNumeric (typeOf right) then
-                Ok (TAgg fn [ left, right ] TFloat)
+        ( "skewness", [ Just column ] ) ->
+            overNumber fn column TFloat
+
+        ( "kurtosis", [ Just column ] ) ->
+            overNumber fn column TFloat
+
+        ( "mad", [ Just column ] ) ->
+            overNumber fn column TFloat
+
+        ( "entropy", [ Just column ] ) ->
+            -- Not restricted to numbers: the entropy of a text column is the
+            -- spread of its values, which is a fair question to ask of one.
+            Ok (TAgg fn [ column ] TFloat)
+
+        ( _, [ Just left, Just right ] ) ->
+            if List.member fn pairwise then
+                overPair fn left right
 
             else
-                Err "`correlation` needs two numeric columns"
+                Err ("`" ++ fn ++ "` does not take two arguments")
 
         ( _, [ Nothing ] ) ->
             Err ("`" ++ fn ++ "` needs a column, not the whole group")
@@ -2123,6 +2137,44 @@ aggregateResult fn args =
                             " arguments"
                        )
                 )
+
+
+{-| The aggregates that read two columns at once.
+
+`correlation` was the first; the regression family and the covariances have
+the same shape. DuckDB takes the dependent variable first — `regrSlope
+g.revenue g.spend` is the slope of revenue against spend — which is both its
+order and the order the maths is written in.
+
+-}
+pairwise : List String
+pairwise =
+    [ "correlation"
+    , "covarPop"
+    , "covarSamp"
+    , "regrSlope"
+    , "regrIntercept"
+    , "regrR2"
+    , "regrCount"
+    ]
+
+
+overPair : String -> TExpr -> TExpr -> Result String TExpr
+overPair fn left right =
+    if Schema.isNumeric (typeOf left) && Schema.isNumeric (typeOf right) then
+        Ok
+            (TAgg fn
+                [ left, right ]
+                (if fn == "regrCount" then
+                    TInt
+
+                 else
+                    TFloat
+                )
+            )
+
+    else
+        Err ("`" ++ fn ++ "` needs two numeric columns")
 
 
 overNumber : String -> TExpr -> Type -> Result String TExpr
