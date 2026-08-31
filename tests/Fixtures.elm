@@ -49,6 +49,16 @@ schema =
         , ( "people", [ ( "person", TString ), ( "rank", TInt ) ] )
         , ( "by_region", [ ( "region", TString ), ( "orders", TInt ), ( "revenue", TFloat ) ] )
 
+        -- Wide, which nothing else here is, so `unpivot` has something to fold.
+        , ( "quarterly"
+          , [ ( "region", TString )
+            , ( "q1", TFloat )
+            , ( "q2", TFloat )
+            , ( "q3", TFloat )
+            , ( "q4", TFloat )
+            ]
+          )
+
         -- The two sources the seeded notebook ships with.
         , ( "airports"
           , [ ( "iata", TString )
@@ -94,6 +104,25 @@ fixtures =
 access orders ()
   |> filter (\\o -> o.total > 100.0 && o.owner /= "ada")
   |> map (\\o -> { who = o.owner, amount = o.total, big = o.total > 500.0 })
+  |> selectAll
+"""
+      )
+    , ( "unpivot_wide"
+      , """
+access quarterly ()
+  |> unpivot { name = quarter, value = revenue } .q1 .q2 .q3 .q4
+  |> selectAll
+"""
+      )
+      -- The point of folding: once the quarters are rows rather than columns,
+      -- an ordinary groupBy can total them.
+    , ( "unpivot_then_group"
+      , """
+access quarterly ()
+  |> unpivot { name = quarter, value = revenue } .q1 .q2 .q3 .q4
+  |> groupBy .quarter
+  |> reduce (\\g -> { quarter = g.quarter, total = sum g.revenue })
+  |> sortBy (asc .quarter)
   |> selectAll
 """
       )

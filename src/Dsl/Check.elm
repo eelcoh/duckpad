@@ -4,6 +4,7 @@ module Dsl.Check exposing
     , Params
     , Checked
     , CheckedCombine
+    , CheckedUnpivot
     , Display(..)
     , Projection(..)
     , Side
@@ -31,11 +32,13 @@ tables and qualifies every column, which is what makes that work.
 import Dict
 import Dsl.Ast as Ast exposing (..)
 import Dsl.Schema as Schema exposing (Schema, Type(..))
+import Set
 
 
 type alias Checked =
     { source : String
     , sourceAlias : String
+    , unpivot : Maybe CheckedUnpivot
     , reads : List String
     , combines : List CheckedCombine
     , filter : Maybe TExpr
@@ -52,6 +55,20 @@ type alias Checked =
     , rowType : List ( String, Type )
     , declarations : List TypeDecl
     , display : Display
+    }
+
+
+{-| A `unpivot`, resolved against the source's columns.
+
+It renders as part of the FROM rather than as a clause, because DuckDB's
+UNPIVOT produces a table. That is also why it has to be the first stage:
+everything else in a `Checked` is one flat SELECT over this.
+
+-}
+type alias CheckedUnpivot =
+    { name : String
+    , value : String
+    , columns : List String
     }
 
 
@@ -182,6 +199,7 @@ type Phase
 type alias Builder =
     { source : String
     , sides : List Side
+    , unpivot : Maybe CheckedUnpivot
     , combines : List CheckedCombine
     , phase : Phase
     , filter : Maybe TExpr
@@ -203,6 +221,7 @@ start : String -> List ( String, Type ) -> Builder
 start source columns =
     { source = source
     , sides = [ { alias = source, table = source, columns = columns } ]
+    , unpivot = Nothing
     , combines = []
     , phase = Rows
     , filter = Nothing
@@ -249,6 +268,12 @@ applyStage schema params ast stage builder =
 
         ( Filter _, Grouped ) ->
             Err "`filter` cannot sit between `groupBy` and `reduce` — put it before the `groupBy` to filter rows, or after the `reduce` to filter groups"
+
+        ( Unpivot spec columns, Rows ) ->
+            unpivot spec columns builder
+
+        ( Unpivot _ _, _ ) ->
+            Err "`unpivot` has to come before `groupBy`, `reduce` or `map` — it changes what a row is"
 
         ( Combine kind leftKey table rightKey, Rows ) ->
             combine schema kind leftKey table rightKey builder
@@ -926,6 +951,7 @@ finish builder =
                 |> Result.map
                     (\rowType ->
                         { source = builder.source
+                        , unpivot = builder.unpivot
                         , sourceAlias =
                             List.head builder.sides |> Maybe.map .alias |> Maybe.withDefault builder.source
                         , reads = builder.source :: List.map .table builder.combines
@@ -949,6 +975,160 @@ finish builder =
                         }
                     )
 
+
+
+-- UNPIVOT
+
+
+{-| Fold a set of columns into a name column and a value column.
+
+The static-typeability argument, and the reason this exists where `pivot` does
+not: a pivot invents columns from values only the data knows, so its row type
+cannot be written down before the query runs. An unpivot's are all on the page.
+Every folded column must share one type, because they all end up in the same
+column, and that is what makes the result's type derivable rather than guessed.
+
+-}
+unpivot : Ast.UnpivotSpec -> List String -> Builder -> Result String Builder
+unpivot spec columns builder =
+    case ( builder.sides, builder.combines, builder.filter ) of
+        ( [ side ], [], Nothing ) ->
+            foldedType side columns
+                |> Result.andThen
+                    (\valueType ->
+                        let
+                            folded =
+                                Set.fromList columns
+
+                            survivors =
+                                side.columns |> List.filter (\( name, _ ) -> not (Set.member name folded))
+
+                            produced =
+                                [ ( spec.name, TString ), ( spec.value, valueType ) ]
+
+                            clashes =
+                                [ spec.name, spec.value ]
+                                    |> List.filter (\name -> List.any (\( c, _ ) -> c == name) survivors)
+                        in
+                        case clashes of
+                            clash :: _ ->
+                                Err ("`unpivot` would produce a column called `" ++ clash ++ "`, but one of the columns it keeps is already called that")
+
+                            [] ->
+                                if spec.name == spec.value then
+                                    Err "`unpivot` needs two different names for the two columns it produces"
+
+                                else
+                                    Ok
+                                        { builder
+                                            | sides = [ { side | columns = survivors ++ produced } ]
+                                            , unpivot = Just { name = spec.name, value = spec.value, columns = columns }
+                                        }
+                    )
+
+        _ ->
+            Err "`unpivot` has to be the first stage — it produces the rows everything after it works on, so nothing may come between it and the `access`"
+
+
+{-| The one type every folded column has to share.
+
+Nullability is the exception: folding a nullable column in with non-nullable
+ones gives a nullable value column, which is right — some rows will have come
+from the column that had nulls.
+
+-}
+foldedType : Side -> List String -> Result String Type
+foldedType side columns =
+    let
+        lookup name =
+            side.columns
+                |> List.filter (\( c, _ ) -> c == name)
+                |> List.head
+                |> Maybe.map Tuple.second
+                |> Result.fromMaybe ("`unpivot` names a column `" ++ name ++ "`, which " ++ side.table ++ " does not have. It has: " ++ (side.columns |> List.map Tuple.first |> String.join ", "))
+    in
+    case duplicated columns of
+        Just name ->
+            Err ("`unpivot` names `" ++ name ++ "` twice")
+
+        Nothing ->
+            columns
+                |> List.map lookup
+                |> collect
+                |> Result.andThen
+                    (\types ->
+                        let
+                            nullable =
+                                List.any isNullable types
+
+                            bases =
+                                types |> List.map stripMaybe |> unique
+                        in
+                        case bases of
+                            [ base ] ->
+                                Ok
+                                    (if nullable then
+                                        TMaybe base
+
+                                     else
+                                        base
+                                    )
+
+                            _ ->
+                                Err ("`unpivot` folds columns into one, so they all have to be the same type, but these are " ++ (bases |> List.map Schema.typeName |> String.join " and "))
+                    )
+
+
+isNullable : Type -> Bool
+isNullable t =
+    case t of
+        TMaybe _ ->
+            True
+
+        _ ->
+            False
+
+
+stripMaybe : Type -> Type
+stripMaybe t =
+    case t of
+        TMaybe inner ->
+            inner
+
+        _ ->
+            t
+
+
+unique : List Type -> List Type
+unique =
+    List.foldl
+        (\t acc ->
+            if List.member t acc then
+                acc
+
+            else
+                acc ++ [ t ]
+        )
+        []
+
+
+duplicated : List String -> Maybe String
+duplicated names =
+    case names of
+        [] ->
+            Nothing
+
+        first :: rest ->
+            if List.member first rest then
+                Just first
+
+            else
+                duplicated rest
+
+
+collect : List (Result String a) -> Result String (List a)
+collect =
+    List.foldr (\r acc -> Result.map2 (::) r acc) (Ok [])
 
 
 -- DECLARATIONS

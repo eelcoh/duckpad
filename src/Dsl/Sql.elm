@@ -9,14 +9,14 @@ what keeps it in step with the generated Elm.
 -}
 
 import Dsl.Ast as Ast exposing (CombineKind(..), Literal(..), Op(..), SortDir(..))
-import Dsl.Check exposing (Checked, CheckedCombine, Projection(..), TExpr(..))
+import Dsl.Check exposing (Checked, CheckedCombine, CheckedUnpivot, Projection(..), TExpr(..))
 import Dsl.Schema exposing (Type(..))
 
 
 render : Checked -> String
 render checked =
     ([ "SELECT " ++ projection checked
-     , "FROM " ++ ident checked.source ++ " AS " ++ ident checked.sourceAlias
+     , "FROM " ++ from checked ++ " AS " ++ ident checked.sourceAlias
      ]
         ++ List.filterMap joinClause checked.combines
         ++ maybeLine "WHERE " (whereClause checked)
@@ -26,6 +26,32 @@ render checked =
         ++ maybeLine "LIMIT " (Maybe.map String.fromInt checked.limit)
     )
         |> String.join "\n"
+
+
+
+{-| The table the pipeline reads, which an `unpivot` replaces.
+
+DuckDB's UNPIVOT is a table-producing construct rather than a clause, so it
+belongs here. That it can only appear in the FROM is the same fact the checker
+states as "unpivot has to be the first stage".
+
+-}
+from : Checked -> String
+from checked =
+    case checked.unpivot of
+        Nothing ->
+            ident checked.source
+
+        Just spec ->
+            "(UNPIVOT "
+                ++ ident checked.source
+                ++ " ON "
+                ++ (spec.columns |> List.map ident |> String.join ", ")
+                ++ " INTO NAME "
+                ++ ident spec.name
+                ++ " VALUE "
+                ++ ident spec.value
+                ++ ")"
 
 
 groupKeys : List TExpr -> Maybe String

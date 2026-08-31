@@ -21,6 +21,7 @@ reserved =
         , "groupBy"
         , "reduce"
         , "sortBy"
+        , "unpivot"
         , "limit"
         , "intersect"
         , "diff"

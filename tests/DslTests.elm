@@ -15,7 +15,7 @@ import Dsl.Schema exposing (Schema, Type(..))
 
 checks : List Check
 checks =
-    parserChecks ++ checkerChecks ++ sqlChecks ++ elmChecks ++ readsChecks ++ joinChecks ++ keywordFieldChecks ++ chartChecks ++ functionChecks
+    parserChecks ++ checkerChecks ++ sqlChecks ++ elmChecks ++ readsChecks ++ joinChecks ++ keywordFieldChecks ++ chartChecks ++ functionChecks ++ unpivotChecks
 
 
 {-| The fixture schema every checker test runs against. `delivered_at` is
@@ -45,6 +45,18 @@ schema =
 
         -- Shares `region` as well as `owner`, which no join can merge.
         , ( "owners", [ ( "owner", TString ), ( "region", TString ) ] )
+
+        -- Wide, so `unpivot` has something to fold, with `note` the odd type
+        -- out and `q4` the nullable one.
+        , ( "quarterly"
+          , [ ( "region", TString )
+            , ( "q1", TFloat )
+            , ( "q2", TFloat )
+            , ( "q3", TFloat )
+            , ( "q4", TMaybe TFloat )
+            , ( "note", TString )
+            ]
+          )
         ]
 
 
@@ -299,6 +311,52 @@ parserChecks =
 
 
 -- CHECKER
+
+
+unpivotChecks : List Check
+unpivotChecks =
+    [ equal "parse: unpivot takes a record of names and some accessors"
+        (Ok [ Unpivot { name = "quarter", value = "revenue" } [ "q1", "q2" ], SelectAll ])
+        (stagesOf "access quarterly ()\n  |> unpivot { name = quarter, value = revenue } .q1 .q2\n  |> selectAll")
+    , contains "unpivot: renders as the FROM, because DuckDB's UNPIVOT produces a table"
+        "FROM (UNPIVOT \"quarterly\" ON \"q1\", \"q2\" INTO NAME \"quarter\" VALUE \"revenue\")"
+        (sqlOf "access quarterly ()\n  |> unpivot { name = quarter, value = revenue } .q1 .q2\n  |> selectAll")
+
+    -- The static-typeability claim: the folded columns' shared type becomes
+    -- the value column's, and it is in the generated Elm rather than guessed.
+    , contains "unpivot: the value column takes the folded columns' type"
+        "revenue : Float"
+        (elmOf "access quarterly ()\n  |> unpivot { name = quarter, value = revenue } .q1 .q2\n  |> selectAll")
+    , contains "unpivot: the name column is text"
+        "quarter : String"
+        (elmOf "access quarterly ()\n  |> unpivot { name = quarter, value = revenue } .q1 .q2\n  |> selectAll")
+    , contains "unpivot: folding in a nullable column makes the value nullable"
+        "revenue : Maybe Float"
+        (elmOf "access quarterly ()\n  |> unpivot { name = quarter, value = revenue } .q1 .q4\n  |> selectAll")
+    , contains "unpivot: the columns not folded survive"
+        "region : String"
+        (elmOf "access quarterly ()\n  |> unpivot { name = quarter, value = revenue } .q1 .q2\n  |> selectAll")
+    , contains "unpivot: what it produces can be grouped like any other row"
+        "GROUP BY"
+        (sqlOf "access quarterly ()\n  |> unpivot { name = quarter, value = revenue } .q1 .q2\n  |> groupBy .quarter\n  |> reduce (\\g -> { quarter = g.quarter, total = sum g.revenue })\n  |> selectAll")
+    , isErr "unpivot: columns of different types cannot fold into one"
+        (compile "access quarterly ()\n  |> unpivot { name = k, value = v } .q1 .note\n  |> selectAll")
+    , isErr "unpivot: a column the table does not have is rejected"
+        (compile "access quarterly ()\n  |> unpivot { name = k, value = v } .q1 .q9\n  |> selectAll")
+    , isErr "unpivot: naming the same column twice is rejected"
+        (compile "access quarterly ()\n  |> unpivot { name = k, value = v } .q1 .q1\n  |> selectAll")
+    , isErr "unpivot: the two names it produces have to differ"
+        (compile "access quarterly ()\n  |> unpivot { name = k, value = k } .q1 .q2\n  |> selectAll")
+    , isErr "unpivot: it cannot produce a name a surviving column already has"
+        (compile "access quarterly ()\n  |> unpivot { name = region, value = v } .q1 .q2\n  |> selectAll")
+
+    -- Everything before it would otherwise be applied after it, because the
+    -- rest of a Checked is one flat SELECT over what the unpivot produced.
+    , isErr "unpivot: it has to be the first stage"
+        (compile "access quarterly ()\n  |> filter (\\q -> q.q1 > 1.0)\n  |> unpivot { name = k, value = v } .q1 .q2\n  |> selectAll")
+    , isErr "unpivot: it cannot follow a map"
+        (compile "access quarterly ()\n  |> map (\\q -> { a = q.q1, b = q.q2 })\n  |> unpivot { name = k, value = v } .a .b\n  |> selectAll")
+    ]
 
 
 checkerChecks : List Check

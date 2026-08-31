@@ -15,6 +15,7 @@ module Dsl.Ast exposing
     , SortSpec
     , Stage(..)
     , TypeDecl
+    , UnpivotSpec
     , opSymbol
     )
 
@@ -114,6 +115,11 @@ type Stage
     | Chart ChartKind (List ( String, String ))
       -- A single number, shown as itself rather than as a table of one cell.
     | Scalar
+      -- `unpivot { name = month, value = sales } .jan .feb .mar` — fold a set
+      -- of columns into two, one holding the old column's name and one its
+      -- value. Unlike a pivot this is statically typeable, because both the
+      -- columns folded and the columns produced are written down.
+    | Unpivot UnpivotSpec (List String)
 
 
 {-| How a `groupBy` names its keys.
@@ -127,6 +133,19 @@ already writes one.
 type GroupKeys
     = ByColumns (List String)
     | ByExpressions Lambda
+
+
+{-| What `unpivot` calls the two columns it produces.
+
+A record rather than two positional names, for the reason `barChart` takes
+one: both are bare identifiers, so positionally there would be nothing to
+tell the reader which was which.
+
+-}
+type alias UnpivotSpec =
+    { name : String
+    , value : String
+    }
 
 
 type alias SortSpec =

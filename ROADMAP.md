@@ -936,10 +936,37 @@ recorded as they were hit, in the order they are worth closing:
    twelve — buttons show every choice at once, which is worth having for
    a handful and unreadable for fifty.
 
-7. **`UNPIVOT`**, which unlike `PIVOT` is statically typeable — the
-   columns to fold and the names to fold them into are all written down.
-   No demonstration data here has the wide shape it is for, which is why
-   it has not been done.
+7. ~~**`UNPIVOT`**~~ — done.
+
+       access quarterly ()
+         |> unpivot { name = quarter, value = revenue } .q1 .q2 .q3 .q4
+         |> groupBy .quarter
+         |> reduce (\g -> { quarter = g.quarter, total = sum g.revenue })
+         |> selectAll
+
+   The record for the two names it produces, for the reason `barChart`
+   takes one: both are bare identifiers, so positionally there would be
+   nothing telling the reader which was which. The record first, so a
+   variadic list of accessors has a clear end.
+
+   Why this and not `PIVOT`: a pivot invents columns out of values only
+   the data knows, so its row type cannot be written before the query
+   runs. An unpivot's is all on the page. Every folded column must share
+   one type — they end up in the same column — and that is exactly what
+   makes the result derivable rather than guessed. Nullability is the
+   one thing that merges rather than has to match: folding a nullable
+   column in with non-nullable ones gives `Maybe`, because some rows
+   will have come from the column that had nulls.
+
+   It renders in the FROM rather than as a clause, because DuckDB's
+   UNPIVOT produces a table, and it has to be the **first stage** for
+   the same reason: the rest of a `Checked` is one flat SELECT over what
+   it produced, so anything written before it would be applied after it.
+   Both are refused with that explanation rather than silently reordered.
+
+   Still no demonstration data here with the wide shape it is for, so it
+   lives in the fixtures — `quarterly`, built wide on purpose — rather
+   than in the seeded notebook.
 
 8. **Window functions**, the one item left that needs real design rather
    than a name and a type rule. See the note in the pandas section.

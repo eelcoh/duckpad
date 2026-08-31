@@ -223,6 +223,7 @@ stage =
             , Parser.map Reduce (lambdaStage "reduce")
             , Parser.succeed GroupBy |. kw "groupBy" |= groupKeys
             , Parser.succeed SortBy |. kw "sortBy" |= sortSpec
+            , unpivotStage
             , Parser.succeed Limit |. kw "limit" |= (Parser.int |. ws)
 
             , Parser.succeed Scalar |. kw "scalar"
@@ -249,6 +250,34 @@ combineStage name kind =
         |= accessor
         |= lname
         |= accessor
+
+
+{-| `unpivot { name = month, value = sales } .jan .feb .mar`
+
+The record first, then the columns to fold. The other order would leave the
+reader working out where a variadic list of accessors ended.
+
+-}
+unpivotStage : Parser Stage
+unpivotStage =
+    Parser.succeed Unpivot
+        |. kw "unpivot"
+        |. sym "{"
+        |= unpivotSpec
+        |. sym "}"
+        |= some accessor
+
+
+unpivotSpec : Parser UnpivotSpec
+unpivotSpec =
+    Parser.succeed UnpivotSpec
+        |. kw "name"
+        |. sym "="
+        |= fieldName
+        |. sym ","
+        |. kw "value"
+        |. sym "="
+        |= fieldName
 
 
 groupKeys : Parser GroupKeys

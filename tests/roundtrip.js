@@ -30,6 +30,15 @@ CREATE TABLE people AS SELECT DISTINCT owner AS person, length(owner) AS rank FR
 CREATE TABLE by_region AS
   SELECT region, count(*) AS orders, round(sum(total), 2) AS revenue FROM orders GROUP BY region;
 
+-- Wide on purpose: the shape unpivot exists for, which nothing else here has.
+CREATE TABLE quarterly AS
+  SELECT region,
+         round(sum(total) * 0.20, 2) AS q1,
+         round(sum(total) * 0.30, 2) AS q2,
+         round(sum(total) * 0.25, 2) AS q3,
+         round(sum(total) * 0.25, 2) AS q4
+  FROM orders GROUP BY region;
+
 -- Stand-ins for the two remote sources the seeded notebook ships with. The
 -- schemas match what DuckDB infers from the real files, so the seeded cells
 -- are checked for real without the tests needing a network.
