@@ -40,7 +40,7 @@ globally.
 
     mise run build     # compile the notebook shell
     mise run serve     # http://localhost:8080
-    mise run test      # 433 checks
+    mise run test      # 436 checks
     mise run roundtrip # every fixture's SQL run against a real DuckDB
 
 `public/notebooks/tutorial.duckpad.md` is ten worked queries with prose between

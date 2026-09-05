@@ -32,6 +32,9 @@ specChecks =
     , equal "source: Excel errors may become nulls"
         (Ok { format = Xlsx, uri = "data/players.xlsx", options = [ Sheet "Player xG", IgnoreErrors True ] })
         (Source.parse "xlsx \"data/players.xlsx\" sheet \"Player xG\" ignoreErrors true")
+    , equal "source: Excel headings may become field names"
+        (Ok { format = Xlsx, uri = "data/players.xlsx", options = [ NormalizeNames True ] })
+        (Source.parse "xlsx \"data/players.xlsx\" normalizeNames true")
     , equal "source: a path relative to the notebook"
         (Ok { format = Csv, uri = "data/orders.csv", options = [] })
         (Source.parse "csv \"data/orders.csv\"")
@@ -88,12 +91,17 @@ specChecks =
         (Source.parse "csv \"a.csv\" sheet \"Sheet1\"")
     , isErr "source: ignoreErrors does not apply to csv"
         (Source.parse "csv \"a.csv\" ignoreErrors true")
+    , isErr "source: normalizeNames does not apply to csv"
+        (Source.parse "csv \"a.csv\" normalizeNames true")
     , equal "source: xlsx options render as DuckDB wants them"
-        ", sheet='Forecast', range='A2:H200', header=true, ignore_errors=true"
-        (Source.readerOptions { format = Xlsx, uri = "a.xlsx", options = [ Sheet "Forecast", CellRange "A2:H200", Header True, IgnoreErrors True ] })
+        ", sheet='Forecast', range='A2:H200', header=true, ignore_errors=true, normalize_names=true"
+        (Source.readerOptions { format = Xlsx, uri = "a.xlsx", options = [ Sheet "Forecast", CellRange "A2:H200", Header True, IgnoreErrors True, NormalizeNames True ] })
     , equal "source: strict Excel errors remain available explicitly"
         ", ignore_errors=false"
         (Source.readerOptions { format = Xlsx, uri = "a.xlsx", options = [ IgnoreErrors False ] })
+    , equal "source: original Excel headings remain available explicitly"
+        ", normalize_names=false"
+        (Source.readerOptions { format = Xlsx, uri = "a.xlsx", options = [ NormalizeNames False ] })
     , isErr "source: an unknown option is refused"
         (Source.parse "csv \"a.csv\" wobble \"NA\"")
     , equal "source: each format names the DuckDB reader for it"

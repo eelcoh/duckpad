@@ -44,6 +44,7 @@ type Option
     | Sheet String
     | CellRange String
     | IgnoreErrors Bool
+    | NormalizeNames Bool
 
 
 parse : String -> Result String Spec
@@ -79,6 +80,7 @@ option =
         , Parser.succeed Sheet |. keyword "sheet" |= quoted
         , Parser.succeed CellRange |. keyword "range" |= quoted
         , Parser.succeed IgnoreErrors |. keyword "ignoreErrors" |= boolean
+        , Parser.succeed NormalizeNames |. keyword "normalizeNames" |= boolean
         ]
         |. ws
 
@@ -153,6 +155,12 @@ renderOption o =
         IgnoreErrors False ->
             "ignore_errors=false"
 
+        NormalizeNames True ->
+            "normalize_names=true"
+
+        NormalizeNames False ->
+            "normalize_names=false"
+
 
 quote : String -> String
 quote value =
@@ -219,7 +227,7 @@ validate parsed =
                     "a csv source accepts only `nulls`, `delimiter`, `header` and `skip` options"
 
                 Xlsx ->
-                    "an xlsx source accepts only `sheet`, `range`, `header` and `ignoreErrors` options"
+                    "an xlsx source accepts only `sheet`, `range`, `header`, `ignoreErrors` and `normalizeNames` options"
 
                 _ ->
                     "reader options do not apply to this format"
@@ -343,6 +351,9 @@ optionAllowed sourceFormat sourceOption =
             True
 
         ( Xlsx, IgnoreErrors _ ) ->
+            True
+
+        ( Xlsx, NormalizeNames _ ) ->
             True
 
         _ ->
