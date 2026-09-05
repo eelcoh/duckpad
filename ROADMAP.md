@@ -1553,13 +1553,14 @@ The safety rule tying the three together: `New`, Open and Reset are document
 boundaries; they must not silently destroy the last recoverable state, and an
 autosave failure must leave both undo history and the recovery mirror intact.
 
-### Desktop distribution — native backend in progress
+### Desktop distribution — native backend done
 
-1. **In progress:** replace duckdb-wasm behind the existing port seam with
-   native DuckDB in the Tauri backend. Queries and local CSV, JSON and Parquet
-   sources already use the Rust-owned connection; the platform-specific Excel
-   extension still needs to be bundled so `.xlsx` remains offline in packaged
-   applications.
+1. **Done:** replace duckdb-wasm behind the existing port seam with native
+   DuckDB in the Tauri backend. Queries and local CSV, JSON, Parquet and Excel
+   sources use the Rust-owned connection. `tools/vendor-native.js` downloads
+   DuckDB's signed Excel extension for the build host's version and platform;
+   Tauri packages it and the backend loads its explicit resource path, so an
+   `.xlsx` source never triggers a runtime download or depends on `~/.duckdb`.
 2. Make and measure a release build.
 3. Exercise Windows and macOS, then add signing/notarisation only for platforms
    that will actually be distributed.
@@ -1587,7 +1588,8 @@ It follows four boundaries recorded up front:
 - The bridge loads the official `excel` extension explicitly and vendors matching
   [DuckDB-Wasm extension](https://duckdb.org/docs/current/clients/wasm/extensions)
   for the offline desktop build; relying on autoload would quietly reintroduce
-  a network dependency.
+  a network dependency. The native Tauri backend likewise packages DuckDB's
+  signed, ABI-specific extension for each build host and loads it by path.
 - Treat column inference as DuckDB's. Excel columns are not intrinsically
   typed, so mixed cells will commonly become `String`; duckpad should report
   the inferred schema rather than invent coercion rules.

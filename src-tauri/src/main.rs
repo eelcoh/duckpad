@@ -12,6 +12,7 @@ struct Database {
     connection: Mutex<Connection>,
     notebook_dir: Mutex<Option<PathBuf>>,
     bundled_resource_dir: PathBuf,
+    excel_extension: PathBuf,
 }
 
 #[derive(Deserialize)]
@@ -82,7 +83,7 @@ fn db_load_source(request: Source, state: tauri::State<'_, Database>) -> Result<
     let name = quote_ident(&request.cell_id);
     let connection = state.connection.lock().map_err(err)?;
     if request.format == "xlsx" {
-        connection.execute_batch("LOAD excel").map_err(err)?;
+        load_excel(&connection, &state.excel_extension)?;
     }
     connection
         .execute_batch(&format!(
@@ -190,6 +191,15 @@ fn quote_ident(value: &str) -> String { format!("\"{}\"", value.replace('"', "\"
 fn quote_literal(value: &str) -> String { format!("'{}'", value.replace('\'', "''")) }
 fn err(error: impl std::fmt::Display) -> String { error.to_string() }
 
+fn load_excel(connection: &Connection, extension: &Path) -> Result<(), String> {
+    connection
+        .execute_batch(&format!(
+            "LOAD {}",
+            quote_literal(&extension.to_string_lossy())
+        ))
+        .map_err(err)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -233,6 +243,33 @@ mod tests {
             Path::new("/work/report/data/orders.csv")
         );
     }
+
+    #[test]
+    fn packaged_excel_extension_reads_the_fixture_offline() {
+        let connection = Connection::open_in_memory().unwrap();
+        let platform: String = connection
+            .query_row("SELECT platform FROM pragma_platform()", [], |row| row.get(0))
+            .unwrap();
+        let manifest = Path::new(env!("CARGO_MANIFEST_DIR"));
+        let extension = manifest
+            .join("resources/extensions/v1.5.5")
+            .join(platform)
+            .join("excel.duckdb_extension");
+        load_excel(&connection, &extension).unwrap();
+
+        let workbook = manifest.join("../public/data/workbook.xlsx");
+        let count: i64 = connection
+            .query_row(
+                &format!(
+                    "SELECT count(*) FROM read_xlsx({}, sheet='Forecast', range='A1:C4', header=true)",
+                    quote_literal(&workbook.to_string_lossy())
+                ),
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(count, 3);
+    }
 }
 
 fn main() {
@@ -243,10 +280,23 @@ fn main() {
                 .resolve(".", BaseDirectory::Resource)
                 .map_err(err)?;
             let connection = Connection::open_in_memory().map_err(err)?;
+            let (version, platform): (String, String) = connection
+                .query_row(
+                    "SELECT library_version, (SELECT platform FROM pragma_platform()) FROM pragma_version()",
+                    [],
+                    |row| Ok((row.get(0)?, row.get(1)?)),
+                )
+                .map_err(err)?;
+            let excel_extension = bundled_resource_dir
+                .join("extensions")
+                .join(version)
+                .join(platform)
+                .join("excel.duckdb_extension");
             app.manage(Database {
                 connection: Mutex::new(connection),
                 notebook_dir: Mutex::new(None),
                 bundled_resource_dir,
+                excel_extension,
             });
             Ok(())
         })

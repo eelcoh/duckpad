@@ -4,8 +4,11 @@ elm = { version = "0.19.2", bin = "elm" }
 node = "26"
 
 [tasks.vendor]
-description = "Download duckdb-wasm and Vega into public/vendor/ so the app runs offline"
-run = "node tools/vendor.js"
+description = "Download DuckDB, its Excel extensions and Vega so the app runs offline"
+run = """
+node tools/vendor.js
+node tools/vendor-native.js
+"""
 
 [tasks.build]
 description = "Compile the Elm notebook shell"
@@ -46,4 +49,7 @@ run = "distrobox enter duckpad-tauri -- bash -lc 'cd ~/Code/ideas/duckpad/src-ta
 [tasks.vendored]
 description = "Vendor the third-party JavaScript if it is not already there"
 hide = true
-run = "test -f public/vendor/duckdb.mjs && test -f public/vendor/extensions/v1.4.3/wasm_eh/excel.duckdb_extension.wasm || node tools/vendor.js"
+run = """
+test -f public/vendor/duckdb.mjs && test -f public/vendor/extensions/v1.4.3/wasm_eh/excel.duckdb_extension.wasm || node tools/vendor.js
+node tools/vendor-native.js --check || node tools/vendor-native.js
+"""
