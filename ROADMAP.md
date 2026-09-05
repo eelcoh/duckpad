@@ -1523,12 +1523,43 @@ deleting that directory.
 
 ## Next up
 
-The original roadmap, custom window frames and Excel sources are complete. The
-next recommended increment is desktop distribution as a separate product
-milestone:
+The original roadmap, custom window frames and Excel sources are complete. A
+native DuckDB desktop backend is now in progress. The next recommended product
+increment is document lifecycle; the remaining desktop distribution work then
+follows as a release milestone.
 
-1. Replace duckdb-wasm behind the existing port seam with native DuckDB in the
-   Tauri backend.
+### Document lifecycle — next
+
+1. **New notebook.** Add a `New` button that starts from `Notebook.blank`,
+   clears the current file association and runtime tables, and asks before
+   discarding edits that have not reached a file. This is distinct from
+   `Reset`, which deliberately restores the shipped example.
+2. **Autosave.** The existing `localStorage` mirror is crash recovery, not
+   saving: it cannot update the document the reader opened. Track a document's
+   file handle/path after Open or Save and write committed edits automatically.
+   Tauri can keep writing its chosen path; a browser can retain a File System
+   Access handle where supported and must keep the recovery-only behavior where
+   it is not. Show `saving`, `saved` and `save failed` rather than making file
+   writes invisible.
+3. **Undo and redo.** Start with document-level source history, including cell
+   creation, deletion, rename and reordering as single operations. Native
+   textarea undo is insufficient because Elm owns the values and because it
+   cannot restore structural edits. Use bounded snapshots or inverse edits,
+   expose Undo/Redo buttons, and add the conventional `Ctrl/Cmd-Z` and
+   `Ctrl/Cmd-Shift-Z` shortcuts. Loading or creating a notebook starts a new
+   history; autosaving does not.
+
+The safety rule tying the three together: `New`, Open and Reset are document
+boundaries; they must not silently destroy the last recoverable state, and an
+autosave failure must leave both undo history and the recovery mirror intact.
+
+### Desktop distribution — native backend in progress
+
+1. **In progress:** replace duckdb-wasm behind the existing port seam with
+   native DuckDB in the Tauri backend. Queries and local CSV, JSON and Parquet
+   sources already use the Rust-owned connection; the platform-specific Excel
+   extension still needs to be bundled so `.xlsx` remains offline in packaged
+   applications.
 2. Make and measure a release build.
 3. Exercise Windows and macOS, then add signing/notarisation only for platforms
    that will actually be distributed.

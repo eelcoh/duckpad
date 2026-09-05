@@ -11,6 +11,7 @@ import { exportStatic } from './export.js';
 import { openNotebook, saveNotebook } from './files.js';
 
 const PREVIEW_ROWS = 200;
+const native = () => window.__TAURI__ && window.__TAURI__.core;
 
 // How many rows are sampled to learn which columns contain nulls, for formats
 // that cannot say. Parquet can, and is handled separately.
@@ -118,6 +119,11 @@ Promise.race([
   .catch((err) => app.ports.dbReady.send({ ok: false, error: String(err && err.message || err) }));
 
 async function boot() {
+  if (native()) {
+    const ready = await native().invoke('db_boot');
+    if (!ready.ok) throw new Error(ready.error || 'native DuckDB did not start');
+    return;
+  }
   const bundle = await duckdb.selectBundle(BUNDLES);
   db = new duckdb.AsyncDuckDB(
     new duckdb.ConsoleLogger(duckdb.LogLevel.WARNING),
@@ -163,6 +169,16 @@ function stopwatch(label) {
 // byte ranges it needs instead of the whole thing. Materialising it here would
 // pull every row into wasm memory and make the range requests pointless.
 app.ports.loadSource.subscribe(async ({ cellId, format, uri, options }) => {
+  if (native()) {
+    try {
+      app.ports.queryOutcome.send(await native().invoke('db_load_source', {
+        request: { cellId, format, uri, options },
+      }));
+    } catch (err) {
+      app.ports.queryOutcome.send({ ok: false, cellId, error: cleanError(err) });
+    }
+    return;
+  }
   const clock = stopwatch(`source ${cellId}`);
   const name = quoteIdent(cellId);
   const reader = READERS[format];
@@ -281,6 +297,16 @@ async function nullsBySampling(name, described) {
 }
 
 app.ports.materialize.subscribe(async ({ cellId, sql, orderSignificant, rowLimit }) => {
+  if (native()) {
+    try {
+      app.ports.queryOutcome.send(await native().invoke('db_materialize', {
+        request: { cellId, sql, orderSignificant, rowLimit },
+      }));
+    } catch (err) {
+      app.ports.queryOutcome.send({ ok: false, cellId, error: cleanError(err) });
+    }
+    return;
+  }
   const clock = stopwatch(`query ${cellId}`);
   const name = quoteIdent(cellId);
   try {
@@ -339,6 +365,10 @@ function hashQuery(name, orderSignificant) {
 }
 
 app.ports.dropTable.subscribe(async (cellId) => {
+  if (native()) {
+    try { await native().invoke('db_drop_table', { cellId }); } catch (err) { console.warn(err); }
+    return;
+  }
   if (!conn) return;
   // A cell is a table if it was a query and a view if it was a source, and by
   // the time this runs the cell is gone and cannot say which.

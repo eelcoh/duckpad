@@ -1,31 +1,220 @@
-// The desktop shell.
-//
-// Rust does as little as possible: the notebook still runs entirely in the
-// page — DuckDB in WebAssembly, the compiler in Elm, the charts in Vega — and
-// this opens a window onto it.
-//
-// The exception is files. A browser reaches disk through the File System
-// Access API, which is Chromium-only, or by falling back to a download and an
-// `<input type="file">`, neither of which a WebKit webview does anything with.
-// So the two file operations are commands here instead, paired with the
-// native picker. Reading and writing are deliberately not the `fs` plugin:
-// these paths come straight from a dialog the reader just used, which is a
-// clearer permission story than a filesystem scope.
+use duckdb::Connection;
+use serde::{Deserialize, Serialize};
+use serde_json::{json, Value};
+use std::{
+    path::{Path, PathBuf},
+    sync::Mutex,
+    time::Instant,
+};
 
-#[tauri::command]
-fn read_file(path: String) -> Result<String, String> {
-    std::fs::read_to_string(&path).map_err(|e| e.to_string())
+struct Database {
+    connection: Mutex<Connection>,
+    notebook_dir: Mutex<Option<PathBuf>>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct Materialize {
+    cell_id: String,
+    sql: String,
+    order_significant: bool,
+    row_limit: usize,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct Source {
+    cell_id: String,
+    format: String,
+    uri: String,
+    options: String,
+}
+
+#[derive(Serialize)]
+struct Described {
+    name: String,
+    #[serde(rename = "type")]
+    sql_type: String,
+    nullable: bool,
 }
 
 #[tauri::command]
-fn write_file(path: String, contents: String) -> Result<(), String> {
-    std::fs::write(&path, contents).map_err(|e| e.to_string())
+fn read_file(path: String, state: tauri::State<'_, Database>) -> Result<String, String> {
+    let path = PathBuf::from(path);
+    *state.notebook_dir.lock().map_err(err)? = path.parent().map(Path::to_path_buf);
+    std::fs::read_to_string(path).map_err(err)
+}
+
+#[tauri::command]
+fn write_file(path: String, contents: String, state: tauri::State<'_, Database>) -> Result<(), String> {
+    let path = PathBuf::from(path);
+    *state.notebook_dir.lock().map_err(err)? = path.parent().map(Path::to_path_buf);
+    std::fs::write(path, contents).map_err(err)
+}
+
+#[tauri::command]
+fn db_boot(state: tauri::State<'_, Database>) -> Result<Value, String> {
+    state
+        .connection
+        .lock()
+        .map_err(err)?
+        .query_row("SELECT 1", [], |_| Ok(()))
+        .map_err(err)?;
+    Ok(json!({ "ok": true, "schema": [] }))
+}
+
+#[tauri::command]
+fn db_load_source(request: Source, state: tauri::State<'_, Database>) -> Result<Value, String> {
+    let started = Instant::now();
+    let reader = match request.format.as_str() {
+        "csv" => "read_csv_auto",
+        "parquet" => "read_parquet",
+        "json" => "read_json_auto",
+        "xlsx" => "read_xlsx",
+        value => return Err(format!("unknown source format: {value}")),
+    };
+    let location = resolve_source(&request.uri, &state)?;
+    let name = quote_ident(&request.cell_id);
+    let connection = state.connection.lock().map_err(err)?;
+    if request.format == "xlsx" {
+        connection.execute_batch("LOAD excel").map_err(err)?;
+    }
+    connection
+        .execute_batch(&format!(
+            "CREATE OR REPLACE VIEW {name} AS SELECT * FROM {reader}({}{})",
+            quote_literal(&location),
+            request.options
+        ))
+        .map_err(err)?;
+    outcome(&connection, &request.cell_id, &name, 200, false, started)
+}
+
+#[tauri::command]
+fn db_materialize(request: Materialize, state: tauri::State<'_, Database>) -> Result<Value, String> {
+    let started = Instant::now();
+    let name = quote_ident(&request.cell_id);
+    let connection = state.connection.lock().map_err(err)?;
+    connection
+        .execute_batch(&format!(
+            "CREATE OR REPLACE TEMP TABLE {name} AS {}",
+            request.sql
+        ))
+        .map_err(err)?;
+    outcome(&connection, &request.cell_id, &name, request.row_limit, request.order_significant, started)
+}
+
+#[tauri::command]
+fn db_drop_table(cell_id: String, state: tauri::State<'_, Database>) -> Result<(), String> {
+    let connection = state.connection.lock().map_err(err)?;
+    let name = quote_ident(&cell_id);
+    for kind in ["VIEW", "TABLE"] {
+        let _ = connection.execute_batch(&format!("DROP {kind} IF EXISTS {name}"));
+    }
+    Ok(())
+}
+
+fn resolve_source(uri: &str, state: &tauri::State<'_, Database>) -> Result<String, String> {
+    if uri.starts_with("https://") || uri.starts_with("http://localhost") || uri.starts_with("http://127.0.0.1") {
+        return Ok(uri.into());
+    }
+    let path = PathBuf::from(uri);
+    if path.is_absolute() {
+        return Ok(path.to_string_lossy().into_owned());
+    }
+    let base = state.notebook_dir.lock().map_err(err)?;
+    Ok(base
+        .as_ref()
+        .map(|dir| dir.join(&path))
+        .unwrap_or(path)
+        .to_string_lossy()
+        .into_owned())
+}
+
+fn outcome(connection: &Connection, cell_id: &str, name: &str, limit: usize, ordered: bool, started: Instant) -> Result<Value, String> {
+    let described = describe(connection, name)?;
+    let columns: Vec<_> = described.iter().map(|c| json!({ "name": c.name, "type": c.sql_type })).collect();
+    let row_count: i64 = connection.query_row(&format!("SELECT count(*) FROM {name}"), [], |r| r.get(0)).map_err(err)?;
+    let rows = rows_json(connection, name, &described, limit)?;
+    let order = if ordered { "rn" } else { "rt" };
+    let hash: String = connection.query_row(&format!(
+        "SELECT md5(coalesce(string_agg(rt, chr(10) ORDER BY {order}), '')) FROM (SELECT row_number() OVER () rn, CAST(t AS VARCHAR) rt FROM {name} t)"
+    ), [], |r| r.get(0)).map_err(err)?;
+    Ok(json!({ "ok": true, "cellId": cell_id, "columns": columns, "described": described,
+        "rows": rows, "rowCount": row_count, "truncated": row_count > limit as i64,
+        "hash": hash, "millis": started.elapsed().as_secs_f64() * 1000.0 }))
+}
+
+fn describe(connection: &Connection, name: &str) -> Result<Vec<Described>, String> {
+    let mut statement = connection.prepare(&format!("DESCRIBE {name}")).map_err(err)?;
+    let raw = statement.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))
+        .map_err(err)?.collect::<Result<Vec<_>, _>>().map_err(err)?;
+    raw.into_iter().map(|(column, sql_type)| {
+        let nulls: i64 = connection.query_row(&format!(
+            "SELECT count(*) - count({}) FROM (SELECT * FROM {name} LIMIT 200000)", quote_ident(&column)
+        ), [], |r| r.get(0)).map_err(err)?;
+        Ok(Described { name: column, sql_type, nullable: nulls > 0 })
+    }).collect()
+}
+
+fn rows_json(connection: &Connection, name: &str, columns: &[Described], limit: usize) -> Result<Value, String> {
+    let fields = columns.iter().map(|c| {
+        let column = quote_ident(&c.name);
+        let upper = c.sql_type.to_ascii_uppercase();
+        let value = if upper.starts_with("TIMESTAMP") || upper == "DATE" {
+            format!("to_json(epoch_ms({column}))")
+        } else if matches!(upper.as_str(), "BIGINT" | "UBIGINT" | "HUGEINT" | "UHUGEINT") {
+            format!("CASE WHEN abs({column}) <= 9007199254740991 THEN to_json({column}) ELSE to_json(CAST({column} AS VARCHAR)) END")
+        } else { format!("to_json({column})") };
+        format!("{}, {value}", quote_literal(&c.name))
+    }).collect::<Vec<_>>().join(", ");
+    let encoded: String = connection.query_row(&format!(
+        "SELECT coalesce(CAST(json_group_array(json_object({fields})) AS VARCHAR), '[]') FROM (SELECT * FROM {name} LIMIT {limit})"
+    ), [], |r| r.get(0)).map_err(err)?;
+    serde_json::from_str(&encoded).map_err(err)
+}
+
+fn quote_ident(value: &str) -> String { format!("\"{}\"", value.replace('"', "\"\"")) }
+fn quote_literal(value: &str) -> String { format!("'{}'", value.replace('\'', "''")) }
+fn err(error: impl std::fmt::Display) -> String { error.to_string() }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn native_outcome_matches_the_browser_contract() {
+        let connection = Connection::open_in_memory().unwrap();
+        connection.execute_batch(
+            "CREATE TABLE result AS SELECT 7 AS n, 9007199254740992::BIGINT AS wide, \
+             TIMESTAMP '2024-01-02 03:04:05' AS happened, NULL::VARCHAR AS note",
+        ).unwrap();
+
+        let value = outcome(&connection, "cell-1", "result", 200, true, Instant::now()).unwrap();
+        assert_eq!(value["ok"], true);
+        assert_eq!(value["cellId"], "cell-1");
+        assert_eq!(value["rowCount"], 1);
+        assert_eq!(value["truncated"], false);
+        assert_eq!(value["rows"][0]["n"], 7);
+        assert_eq!(value["rows"][0]["wide"], "9007199254740992");
+        assert_eq!(value["rows"][0]["happened"], 1704164645000_i64);
+        assert!(value["rows"][0]["note"].is_null());
+        assert_eq!(value["described"][3]["nullable"], true);
+        assert_eq!(value["hash"].as_str().unwrap().len(), 32);
+    }
+
+    #[test]
+    fn sql_names_and_values_are_escaped() {
+        assert_eq!(quote_ident("a\"b"), "\"a\"\"b\"");
+        assert_eq!(quote_literal("it's"), "'it''s'");
+    }
 }
 
 fn main() {
+    let connection = Connection::open_in_memory().expect("native DuckDB failed to start");
     tauri::Builder::default()
+        .manage(Database { connection: Mutex::new(connection), notebook_dir: Mutex::new(None) })
         .plugin(tauri_plugin_dialog::init())
-        .invoke_handler(tauri::generate_handler![read_file, write_file])
+        .invoke_handler(tauri::generate_handler![read_file, write_file, db_boot, db_load_source, db_materialize, db_drop_table])
         .run(tauri::generate_context!())
         .expect("duckpad failed to start");
 }
