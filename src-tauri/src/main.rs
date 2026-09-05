@@ -40,21 +40,24 @@ struct Described {
     nullable: bool,
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn read_file(path: String, state: tauri::State<'_, Database>) -> Result<String, String> {
     let path = PathBuf::from(path);
     *state.notebook_dir.lock().map_err(err)? = path.parent().map(Path::to_path_buf);
     std::fs::read_to_string(path).map_err(err)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn write_file(path: String, contents: String, state: tauri::State<'_, Database>) -> Result<(), String> {
     let path = PathBuf::from(path);
     *state.notebook_dir.lock().map_err(err)? = path.parent().map(Path::to_path_buf);
     std::fs::write(path, contents).map_err(err)
 }
 
-#[tauri::command]
+// DuckDB work must never run on Tauri's main thread: opening the tutorial
+// dispatches several cells in sequence, and an unoptimised development build
+// can otherwise make the whole window appear frozen while they finish.
+#[tauri::command(async)]
 fn db_boot(state: tauri::State<'_, Database>) -> Result<Value, String> {
     state
         .connection
@@ -65,7 +68,7 @@ fn db_boot(state: tauri::State<'_, Database>) -> Result<Value, String> {
     Ok(json!({ "ok": true, "schema": [] }))
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn db_load_source(request: Source, state: tauri::State<'_, Database>) -> Result<Value, String> {
     let started = Instant::now();
     let reader = match request.format.as_str() {
@@ -91,7 +94,7 @@ fn db_load_source(request: Source, state: tauri::State<'_, Database>) -> Result<
     outcome(&connection, &request.cell_id, &name, 200, false, started)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn db_materialize(request: Materialize, state: tauri::State<'_, Database>) -> Result<Value, String> {
     let started = Instant::now();
     let name = quote_ident(&request.cell_id);
@@ -105,7 +108,7 @@ fn db_materialize(request: Materialize, state: tauri::State<'_, Database>) -> Re
     outcome(&connection, &request.cell_id, &name, request.row_limit, request.order_significant, started)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn db_drop_table(cell_id: String, state: tauri::State<'_, Database>) -> Result<(), String> {
     let connection = state.connection.lock().map_err(err)?;
     let name = quote_ident(&cell_id);
