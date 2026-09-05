@@ -6,10 +6,12 @@ use std::{
     sync::Mutex,
     time::Instant,
 };
+use tauri::{path::BaseDirectory, Manager};
 
 struct Database {
     connection: Mutex<Connection>,
     notebook_dir: Mutex<Option<PathBuf>>,
+    bundled_resource_dir: PathBuf,
 }
 
 #[derive(Deserialize)]
@@ -117,17 +119,25 @@ fn resolve_source(uri: &str, state: &tauri::State<'_, Database>) -> Result<Strin
     if uri.starts_with("https://") || uri.starts_with("http://localhost") || uri.starts_with("http://127.0.0.1") {
         return Ok(uri.into());
     }
-    let path = PathBuf::from(uri);
-    if path.is_absolute() {
-        return Ok(path.to_string_lossy().into_owned());
-    }
     let base = state.notebook_dir.lock().map_err(err)?;
-    Ok(base
-        .as_ref()
-        .map(|dir| dir.join(&path))
-        .unwrap_or(path)
+    Ok(resolve_source_path(
+        uri,
+        base.as_deref(),
+        &state.bundled_resource_dir,
+    )
         .to_string_lossy()
         .into_owned())
+}
+
+fn resolve_source_path(uri: &str, notebook_dir: Option<&Path>, bundled_resource_dir: &Path) -> PathBuf {
+    let path = PathBuf::from(uri);
+    if path.is_absolute() {
+        return path;
+    }
+    match notebook_dir {
+        Some(directory) => directory.join(path),
+        None => bundled_resource_dir.join(path),
+    }
 }
 
 fn outcome(connection: &Connection, cell_id: &str, name: &str, limit: usize, ordered: bool, started: Instant) -> Result<Value, String> {
@@ -207,12 +217,36 @@ mod tests {
         assert_eq!(quote_ident("a\"b"), "\"a\"\"b\"");
         assert_eq!(quote_literal("it's"), "'it''s'");
     }
+
+    #[test]
+    fn bundled_sources_and_opened_notebooks_have_distinct_bases() {
+        let resources = Path::new("/app/resources");
+        assert_eq!(
+            resolve_source_path("data/orders.csv", None, resources),
+            Path::new("/app/resources/data/orders.csv")
+        );
+        assert_eq!(
+            resolve_source_path("data/orders.csv", Some(Path::new("/work/report")), resources),
+            Path::new("/work/report/data/orders.csv")
+        );
+    }
 }
 
 fn main() {
-    let connection = Connection::open_in_memory().expect("native DuckDB failed to start");
     tauri::Builder::default()
-        .manage(Database { connection: Mutex::new(connection), notebook_dir: Mutex::new(None) })
+        .setup(|app| {
+            let bundled_resource_dir = app
+                .path()
+                .resolve(".", BaseDirectory::Resource)
+                .map_err(err)?;
+            let connection = Connection::open_in_memory().map_err(err)?;
+            app.manage(Database {
+                connection: Mutex::new(connection),
+                notebook_dir: Mutex::new(None),
+                bundled_resource_dir,
+            });
+            Ok(())
+        })
         .plugin(tauri_plugin_dialog::init())
         .invoke_handler(tauri::generate_handler![read_file, write_file, db_boot, db_load_source, db_materialize, db_drop_table])
         .run(tauri::generate_context!())
