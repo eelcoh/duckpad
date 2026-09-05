@@ -29,6 +29,9 @@ specChecks =
     , equal "source: an Excel sheet and range"
         (Ok { format = Xlsx, uri = "data/budget.xlsx", options = [ Sheet "Forecast", CellRange "A2:H200", Header True ] })
         (Source.parse "xlsx \"data/budget.xlsx\" sheet \"Forecast\" range \"A2:H200\" header true")
+    , equal "source: Excel errors may become nulls"
+        (Ok { format = Xlsx, uri = "data/players.xlsx", options = [ Sheet "Player xG", IgnoreErrors True ] })
+        (Source.parse "xlsx \"data/players.xlsx\" sheet \"Player xG\" ignoreErrors true")
     , equal "source: a path relative to the notebook"
         (Ok { format = Csv, uri = "data/orders.csv", options = [] })
         (Source.parse "csv \"data/orders.csv\"")
@@ -83,9 +86,14 @@ specChecks =
         (Source.parse "xlsx \"a.xlsx\" delimiter \";\"")
     , isErr "source: xlsx options do not apply to csv"
         (Source.parse "csv \"a.csv\" sheet \"Sheet1\"")
+    , isErr "source: ignoreErrors does not apply to csv"
+        (Source.parse "csv \"a.csv\" ignoreErrors true")
     , equal "source: xlsx options render as DuckDB wants them"
-        ", sheet='Forecast', range='A2:H200', header=true"
-        (Source.readerOptions { format = Xlsx, uri = "a.xlsx", options = [ Sheet "Forecast", CellRange "A2:H200", Header True ] })
+        ", sheet='Forecast', range='A2:H200', header=true, ignore_errors=true"
+        (Source.readerOptions { format = Xlsx, uri = "a.xlsx", options = [ Sheet "Forecast", CellRange "A2:H200", Header True, IgnoreErrors True ] })
+    , equal "source: strict Excel errors remain available explicitly"
+        ", ignore_errors=false"
+        (Source.readerOptions { format = Xlsx, uri = "a.xlsx", options = [ IgnoreErrors False ] })
     , isErr "source: an unknown option is refused"
         (Source.parse "csv \"a.csv\" wobble \"NA\"")
     , equal "source: each format names the DuckDB reader for it"

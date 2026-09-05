@@ -777,7 +777,7 @@ which still waits on a daemon that nothing else needs.
 ## Current state (2026-09-05)
 
 `mise run build` compiles the shell, `mise run serve` hosts it on :8080,
-`mise run test` runs 430 checks under node (including the bridge's 11-port
+`mise run test` runs 433 checks under node (including the bridge's 12-port
 wiring check), and `mise run roundtrip` executes 42 fixtures' generated SQL
 against a real DuckDB and compiles every generated module with `elm make`.
 
@@ -1584,8 +1584,10 @@ It follows four boundaries recorded up front:
 
 - Support `.xlsx` only and say so in the parser error. Converting old `.xls`
   files is outside the notebook and outside DuckDB.
-- Expose only DuckDB's import-shaping options initially: `sheet`, `range` and
-  `header`. They belong in the source cache key just like CSV options.
+- Expose DuckDB's import-shaping options `sheet`, `range`, `header` and
+  `ignoreErrors`. The latter deliberately turns workbook error cells such as
+  `#NUM!` into nulls while leaving strict reading as the default. They belong
+  in the source cache key just like CSV options.
 - The bridge loads the official `excel` extension explicitly and vendors matching
   [DuckDB-Wasm extension](https://duckdb.org/docs/current/clients/wasm/extensions)
   for the offline desktop build; relying on autoload would quietly reintroduce

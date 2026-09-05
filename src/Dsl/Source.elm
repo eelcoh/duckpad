@@ -43,6 +43,7 @@ type Option
     | Skip Int
     | Sheet String
     | CellRange String
+    | IgnoreErrors Bool
 
 
 parse : String -> Result String Spec
@@ -77,6 +78,7 @@ option =
         , Parser.succeed Skip |. keyword "skip" |= wholeNumber
         , Parser.succeed Sheet |. keyword "sheet" |= quoted
         , Parser.succeed CellRange |. keyword "range" |= quoted
+        , Parser.succeed IgnoreErrors |. keyword "ignoreErrors" |= boolean
         ]
         |. ws
 
@@ -145,6 +147,12 @@ renderOption o =
         CellRange cells ->
             "range=" ++ quote cells
 
+        IgnoreErrors True ->
+            "ignore_errors=true"
+
+        IgnoreErrors False ->
+            "ignore_errors=false"
+
 
 quote : String -> String
 quote value =
@@ -211,7 +219,7 @@ validate parsed =
                     "a csv source accepts only `nulls`, `delimiter`, `header` and `skip` options"
 
                 Xlsx ->
-                    "an xlsx source accepts only `sheet`, `range` and `header` options"
+                    "an xlsx source accepts only `sheet`, `range`, `header` and `ignoreErrors` options"
 
                 _ ->
                     "reader options do not apply to this format"
@@ -332,6 +340,9 @@ optionAllowed sourceFormat sourceOption =
             True
 
         ( Xlsx, Header _ ) ->
+            True
+
+        ( Xlsx, IgnoreErrors _ ) ->
             True
 
         _ ->
