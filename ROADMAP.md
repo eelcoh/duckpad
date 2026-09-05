@@ -1523,10 +1523,10 @@ deleting that directory.
 
 ## Next up
 
-The original roadmap, custom window frames and Excel sources are complete. A
-native DuckDB desktop backend is now in progress. The next recommended product
-increment is document lifecycle; the remaining desktop distribution work then
-follows as a release milestone.
+The original roadmap, custom window frames, Excel sources and native DuckDB
+desktop backend are complete. The next recommended product increment is
+document lifecycle; the remaining desktop distribution work then follows as a
+release milestone.
 
 ### Document lifecycle — in progress
 
@@ -1535,13 +1535,27 @@ follows as a release milestone.
    and uses a two-click confirmation until autosave adds precise dirty-state
    tracking. It is distinct from `Reset`, which deliberately restores the
    shipped example.
-2. **Next:** Autosave. The existing `localStorage` mirror is crash recovery, not
-   saving: it cannot update the document the reader opened. Track a document's
-   file handle/path after Open or Save and write committed edits automatically.
-   Tauri can keep writing its chosen path; a browser can retain a File System
-   Access handle where supported and must keep the recovery-only behavior where
-   it is not. Show `saving`, `saved` and `save failed` rather than making file
-   writes invisible.
+2. **Next:** Autosave and persistent document association. The existing
+   `localStorage` mirror is crash recovery, not saving: it cannot update the
+   document the reader opened. Today every Save opens a picker again, even when
+   the notebook was opened from or previously saved to a known file. Replace
+   that with conventional document behavior:
+
+   - Open remembers the selected document; Save writes that same document.
+   - Save As always opens a picker and replaces the current association after a
+     successful write.
+   - A New or restored recovery notebook has no association, so its first Save
+     behaves as Save As.
+   - Committed edits autosave to an associated document, with a short debounce
+     so typing does not produce a write for every keystroke. Show `saving`,
+     `saved` and `save failed`; a failed save must leave the document dirty and
+     recoverable.
+   - On desktop, Rust owns the path selected by the native dialog and can write
+     it again without prompting. In browsers with the File System Access API,
+     JavaScript retains the file handle for the session and requests permission
+     again if the browser requires it. Browsers without that API cannot silently
+     overwrite a download, so Save/Save As download a new file while
+     `localStorage` remains the automatic recovery mechanism.
 3. **Undo and redo.** Start with document-level source history, including cell
    creation, deletion, rename and reordering as single operations. Native
    textarea undo is insufficient because Elm owns the values and because it
