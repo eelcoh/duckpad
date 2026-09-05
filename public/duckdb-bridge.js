@@ -381,6 +381,12 @@ app.ports.dropTable.subscribe(async (cellId) => {
   }
 });
 
+app.ports.clearNotebook.subscribe(async () => {
+  if (native()) {
+    try { await native().invoke('clear_notebook'); } catch (err) { console.warn(err); }
+  }
+});
+
 // Elm already restricts cell names to [a-z0-9_], but the quoting stays: the
 // name reaches SQL as an identifier and should not depend on that guarantee
 // holding forever.

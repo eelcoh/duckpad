@@ -55,6 +55,12 @@ fn write_file(path: String, contents: String, state: tauri::State<'_, Database>)
     std::fs::write(path, contents).map_err(err)
 }
 
+#[tauri::command(async)]
+fn clear_notebook(state: tauri::State<'_, Database>) -> Result<(), String> {
+    *state.notebook_dir.lock().map_err(err)? = None;
+    Ok(())
+}
+
 // DuckDB work must never run on Tauri's main thread: opening the tutorial
 // dispatches several cells in sequence, and an unoptimised development build
 // can otherwise make the whole window appear frozen while they finish.
@@ -301,7 +307,7 @@ fn main() {
             Ok(())
         })
         .plugin(tauri_plugin_dialog::init())
-        .invoke_handler(tauri::generate_handler![read_file, write_file, db_boot, db_load_source, db_materialize, db_drop_table])
+        .invoke_handler(tauri::generate_handler![read_file, write_file, clear_notebook, db_boot, db_load_source, db_materialize, db_drop_table])
         .run(tauri::generate_context!())
         .expect("duckpad failed to start");
 }

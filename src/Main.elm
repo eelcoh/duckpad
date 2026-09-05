@@ -68,8 +68,9 @@ type alias Model =
     , nextId : Int
     , notice : Maybe String
 
-    -- Reset discards unsaved work, so it takes two clicks: the first arms it
-    -- and the second does it. Any other action disarms it again.
+    -- New and Reset cross document boundaries, so they take two clicks: the
+    -- first arms the action and the second does it. Anything else disarms it.
+    , newArmed : Bool
     , resetArmed : Bool
 
     -- Which prose cell is being edited, if any. Prose shows as rendered
@@ -122,6 +123,7 @@ type Msg
     | OpenFile
     | FileOpened D.Value
     | DismissNotice
+    | NewNotebook
     | ResetNotebook
     | ExportNotebook
     | EditProse String
@@ -150,7 +152,7 @@ init flags =
         ( notebook, notice ) =
             restore flags
     in
-    ( load notebook { title = notebook.title, cells = [], states = Dict.empty, baseSchema = Dict.empty, queue = [], current = Nothing, db = Booting, nextId = 1, notice = notice, resetArmed = False, editing = Nothing, expanded = Set.empty, inputs = Dict.empty, pickers = Dict.empty, today = Nothing }
+    ( load notebook { title = notebook.title, cells = [], states = Dict.empty, baseSchema = Dict.empty, queue = [], current = Nothing, db = Booting, nextId = 1, notice = notice, newArmed = False, resetArmed = False, editing = Nothing, expanded = Set.empty, inputs = Dict.empty, pickers = Dict.empty, today = Nothing }
     , Task.perform GotToday Date.today
     )
 
@@ -186,6 +188,10 @@ load notebook model =
         , states = cells |> List.map (\c -> ( c.id, Engine.initialState )) |> Dict.fromList
         , queue = []
         , current = Nothing
+        , editing = Nothing
+        , expanded = Set.empty
+        , inputs = Dict.empty
+        , pickers = Dict.empty
     }
 
 
@@ -310,11 +316,14 @@ update : Msg -> Model -> ( Model, Cmd Msg )
 update msg model =
     step msg
         (case msg of
+            NewNotebook ->
+                model
+
             ResetNotebook ->
                 model
 
             _ ->
-                { model | resetArmed = False }
+                { model | newArmed = False, resetArmed = False }
         )
 
 
@@ -473,6 +482,26 @@ step msg model =
         DismissNotice ->
             ( { model | notice = Nothing }, Cmd.none )
 
+        NewNotebook ->
+            if model.newArmed then
+                let
+                    blank =
+                        load Notebook.blank
+                            { model
+                                | notice = Nothing
+                                , newArmed = False
+                                , resetArmed = False
+                                , nextId = model.nextId + List.length model.cells + 1
+                            }
+                in
+                withPersist
+                    ( blank
+                    , clearDocument model
+                    )
+
+            else
+                ( { model | newArmed = True, resetArmed = False }, Cmd.none )
+
         KeyEdit id edit ->
             let
                 ( updated, cmd ) =
@@ -585,10 +614,14 @@ step msg model =
 
         ResetNotebook ->
             if model.resetArmed then
-                withPersist (schedule (load Seed.notebook { model | notice = Nothing, resetArmed = False }))
+                let
+                    ( reset, run ) =
+                        schedule (load Seed.notebook { model | notice = Nothing, newArmed = False, resetArmed = False })
+                in
+                withPersist ( reset, Cmd.batch [ clearDocument model, run ] )
 
             else
-                ( { model | resetArmed = True }, Cmd.none )
+                ( { model | newArmed = False, resetArmed = True }, Cmd.none )
 
 
 {-| The bridge reports the tables it built, so the checker knows what
@@ -599,6 +632,14 @@ withPersist ( model, cmd ) =
     ( model
     , Cmd.batch [ cmd, Ports.persist (Notebook.serialize (toNotebook model)) ]
     )
+
+
+clearDocument : Model -> Cmd Msg
+clearDocument model =
+    model.cells
+        |> List.filter (\cell -> cell.kind /= Prose)
+        |> List.map (\cell -> Ports.dropTable cell.id)
+        |> (\tables -> Cmd.batch (Ports.clearNotebook () :: tables))
 
 
 fileNameFor : String -> String
@@ -1500,6 +1541,7 @@ viewHeader model graph =
                 ]
             , Element.wrappedRow [ alignRight, spacing 10, Ui.dropOnExport ]
                 [ viewDbStatus model.db
+                , plainButton "New" model.newArmed (Just NewNotebook)
                 , plainButton "Reset" model.resetArmed (Just ResetNotebook)
                 , plainButton "Open" False (Just OpenFile)
                 , plainButton "Save" False (Just SaveFile)
@@ -1540,8 +1582,8 @@ titleField current =
         }
 
 
-{-| Reset is the only button with two states, so armedness is a parameter
-rather than a separate constructor.
+{-| Document-boundary buttons have two states, so armedness is a parameter
+rather than a separate button constructor.
 -}
 plainButton : String -> Bool -> Maybe Msg -> Element Msg
 plainButton label armed onPress =

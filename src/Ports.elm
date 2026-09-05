@@ -1,4 +1,4 @@
-port module Ports exposing (dbReady, dropTable, exportStatic, fileOpened, loadSource, materialize, persist, queryOutcome, requestOpen, requestSave, setCaret)
+port module Ports exposing (clearNotebook, dbReady, dropTable, exportStatic, fileOpened, loadSource, materialize, persist, queryOutcome, requestOpen, requestSave, setCaret)
 
 import Json.Decode as D
 
@@ -29,6 +29,12 @@ a renamed cell leaves its old one behind and a later cell of that name would
 silently read a ghost.
 -}
 port dropTable : String -> Cmd msg
+
+
+{-| Forget the file association at a document boundary. Runtime tables are
+dropped separately so this has exactly one responsibility.
+-}
+port clearNotebook : () -> Cmd msg
 
 
 port queryOutcome : (D.Value -> msg) -> Sub msg

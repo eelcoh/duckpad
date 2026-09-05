@@ -1528,13 +1528,14 @@ native DuckDB desktop backend is now in progress. The next recommended product
 increment is document lifecycle; the remaining desktop distribution work then
 follows as a release milestone.
 
-### Document lifecycle — next
+### Document lifecycle — in progress
 
-1. **New notebook.** Add a `New` button that starts from `Notebook.blank`,
-   clears the current file association and runtime tables, and asks before
-   discarding edits that have not reached a file. This is distinct from
-   `Reset`, which deliberately restores the shipped example.
-2. **Autosave.** The existing `localStorage` mirror is crash recovery, not
+1. **Done:** New notebook. The `New` button starts from `Notebook.blank`,
+   clears the current file association, runtime tables and transient UI state,
+   and uses a two-click confirmation until autosave adds precise dirty-state
+   tracking. It is distinct from `Reset`, which deliberately restores the
+   shipped example.
+2. **Next:** Autosave. The existing `localStorage` mirror is crash recovery, not
    saving: it cannot update the document the reader opened. Track a document's
    file handle/path after Open or Save and write committed edits automatically.
    Tauri can keep writing its chosen path; a browser can retain a File System
