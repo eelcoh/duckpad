@@ -16,6 +16,7 @@ const REPO = path.resolve(__dirname, '..');
 const WORK = path.join(REPO, 'tests', '.roundtrip');
 const CSV = path.join(REPO, 'public', 'data', 'orders.csv');
 const CUSTOMERS = path.join(REPO, 'public', 'data', 'customers.csv');
+const WORKBOOK = path.join(REPO, 'public', 'data', 'workbook.xlsx');
 
 // The tables the fixture schema claims exist. Kept here rather than in a
 // checked-in .sql file so the schema and its DuckDB counterpart stay adjacent.
@@ -97,8 +98,26 @@ app.ports.emit.subscribe((fixtures) => {
     results.push(...checkElm(fixture));
   }
 
+  results.push(...checkExcelSource());
+
   report(results, fixtures.length);
 });
+
+function checkExcelSource() {
+  try {
+    const output = run('duckdb', [
+      '-csv',
+      '-c',
+      `LOAD excel; SELECT category, amount, booked FROM read_xlsx('${WORKBOOK}', sheet='Forecast', range='A1:C4', header=true) ORDER BY category;`,
+    ]);
+    if (!output.includes('alpha,10.5,2026-01-02') || !output.includes('gamma,NULL,2026-01-04')) {
+      throw new Error(`unexpected workbook rows:\n${output}`);
+    }
+    return [];
+  } catch (err) {
+    return [{ name: 'xlsx_source', stage: 'source', error: err.stderr || err.message }];
+  }
+}
 
 function checkSql(fixture) {
   try {
@@ -154,7 +173,7 @@ function report(failures, total) {
 
   if (failures.length === 0) {
     console.log(
-      `${GREEN}PASS${RESET}  ${total} fixtures: SQL executed against DuckDB, modules compiled by elm make`
+      `${GREEN}PASS${RESET}  ${total} fixtures: SQL executed against DuckDB, modules compiled by elm make; XLSX source read`
     );
     process.exit(0);
   }

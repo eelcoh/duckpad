@@ -1,4 +1,4 @@
-module Dsl.Parser exposing (describe, parse)
+module Dsl.Parser exposing (describe, parse, parseDeclarations)
 
 {-| Source text to surface AST.
 
@@ -20,6 +20,16 @@ parse source =
     case Parser.run pipeline source of
         Ok ast ->
             Ok ast
+
+        Err deadEnds ->
+            Err (describe source deadEnds)
+
+
+parseDeclarations : String -> Result String (List TypeDecl)
+parseDeclarations source =
+    case Parser.run declarations source of
+        Ok decls ->
+            Ok decls
 
         Err deadEnds ->
             Err (describe source deadEnds)
@@ -139,6 +149,14 @@ pipeline =
         |= many typeDecl
         |= accessClause
         |= many stage
+        |. Parser.end
+
+
+declarations : Parser (List TypeDecl)
+declarations =
+    Parser.succeed identity
+        |. ws
+        |= some typeDecl
         |. Parser.end
 
 
@@ -272,15 +290,33 @@ partitionByStage =
             [ Parser.map Just sortSpec
             , Parser.succeed Nothing
             ]
+        |= Parser.oneOf
+            [ Parser.succeed (\start end -> Just { start = start, end = end })
+                |. kw "rowsBetween"
+                |= frameBound
+                |= frameBound
+            , Parser.succeed Nothing
+            ]
         |> Parser.andThen
             (\parsed ->
                 case parsed of
-                    PartitionBy [] Nothing ->
+                    PartitionBy [] Nothing Nothing ->
                         Parser.problem "`partitionBy` needs keys, an order, or both"
 
                     _ ->
                         Parser.succeed parsed
             )
+
+
+frameBound : Parser FrameBound
+frameBound =
+    Parser.oneOf
+        [ Parser.succeed UnboundedPreceding |. kw "unboundedPreceding"
+        , Parser.succeed UnboundedFollowing |. kw "unboundedFollowing"
+        , Parser.succeed CurrentRow |. kw "currentRow"
+        , Parser.succeed Preceding |= (Parser.int |. ws) |. kw "preceding"
+        , Parser.succeed Following |= (Parser.int |. ws) |. kw "following"
+        ]
 
 
 {-| `unpivot { name = month, value = sales } .jan .feb .mar`

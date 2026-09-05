@@ -43,7 +43,7 @@ the parser taking an interest in it.
 -}
 tags : List ( String, Kind )
 tags =
-    [ ( "duckpad", Query ), ( "source", Source ), ( "input", Input ) ]
+    [ ( "duckpad", Query ), ( "source", Source ), ( "input", Input ), ( "types", Types ) ]
 
 
 tagFor : Kind -> String

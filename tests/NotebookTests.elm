@@ -63,6 +63,11 @@ formatChecks =
     , equal "notebook: a fenced block in another language stays prose"
         (Ok [ Prose ])
         (Notebook.parse "```sql\nSELECT 1\n```" |> Result.map (.cells >> List.map .kind))
+    , equal "notebook: a shared type block round-trips"
+        (Ok [ ( Types, "domain", "type OrderId = OrderId Int" ) ])
+        (Notebook.parse "```types domain\ntype OrderId = OrderId Int\n```"
+            |> Result.map (.cells >> List.map (\c -> ( c.kind, c.id, c.source )))
+        )
     , equal "notebook: blank space between blocks does not become a prose cell"
         (Ok 2)
         (Notebook.parse "```duckpad a\naccess t () |> selectAll\n```\n\n\n\n```duckpad b\naccess t () |> selectAll\n```"

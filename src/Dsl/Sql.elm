@@ -8,7 +8,7 @@ what keeps it in step with the generated Elm.
 
 -}
 
-import Dsl.Ast as Ast exposing (CombineKind(..), Literal(..), Op(..), SortDir(..))
+import Dsl.Ast as Ast exposing (CombineKind(..), FrameBound(..), Literal(..), Op(..), SortDir(..), WindowFrame)
 import Dsl.Check exposing (Checked, CheckedCombine, CheckedUnpivot, CheckedWindow, Projection(..), Reading(..), TExpr(..))
 import Dsl.Schema exposing (Type(..))
 
@@ -246,8 +246,33 @@ over window =
                     [ "PARTITION BY " ++ (keys |> List.map expr |> String.join ", ") ]
             )
                 ++ (window.order |> Maybe.map (\spec -> "ORDER BY " ++ sort spec) |> maybeToList)
+                ++ (window.frame |> Maybe.map frame |> maybeToList)
     in
     " OVER (" ++ String.join " " parts ++ ")"
+
+
+frame : WindowFrame -> String
+frame bounds =
+    "ROWS BETWEEN " ++ frameBound bounds.start ++ " AND " ++ frameBound bounds.end
+
+
+frameBound : FrameBound -> String
+frameBound bound =
+    case bound of
+        UnboundedPreceding ->
+            "UNBOUNDED PRECEDING"
+
+        Preceding n ->
+            String.fromInt n ++ " PRECEDING"
+
+        CurrentRow ->
+            "CURRENT ROW"
+
+        Following n ->
+            String.fromInt n ++ " FOLLOWING"
+
+        UnboundedFollowing ->
+            "UNBOUNDED FOLLOWING"
 
 
 expr : TExpr -> String

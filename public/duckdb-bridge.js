@@ -20,10 +20,12 @@ const READERS = {
   csv: 'read_csv_auto',
   parquet: 'read_parquet',
   json: 'read_json_auto',
+  xlsx: 'read_xlsx',
 };
 
 let db = null;
 let conn = null;
+let excelLoaded = false;
 
 const STORAGE_KEY = 'duckpad.notebook';
 
@@ -166,6 +168,7 @@ app.ports.loadSource.subscribe(async ({ cellId, format, uri, options }) => {
   const reader = READERS[format];
   try {
     if (!reader) throw new Error(`unknown source format: ${format}`);
+    if (format === 'xlsx') await ensureExcel();
 
     // Registered under a name of our own, so the URI never reaches SQL.
     const vfsName = `source_${cellId}.${format}`;
@@ -210,6 +213,17 @@ app.ports.loadSource.subscribe(async ({ cellId, format, uri, options }) => {
     app.ports.queryOutcome.send({ ok: false, cellId, error: cleanError(err) });
   }
 });
+
+// Extension autoload normally reaches extensions.duckdb.org. Point it at the
+// signed copy shipped with duckpad instead, so opening a local workbook does
+// not quietly make the desktop app depend on the network.
+async function ensureExcel() {
+  if (excelLoaded) return;
+  const repository = new URL('./vendor/extensions/', window.location.href).href;
+  await conn.query(`SET custom_extension_repository = '${repository.replaceAll("'", "''")}'`);
+  await conn.query('LOAD excel');
+  excelLoaded = true;
+}
 
 // The compiler needs to know which columns exist, what they hold, and which
 // can be absent.

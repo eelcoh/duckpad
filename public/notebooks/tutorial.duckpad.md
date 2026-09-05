@@ -109,16 +109,18 @@ access orders ()
 
 ## Giving a column a type
 
-A text column holding a fixed set of values can be declared as a type. The table then shows constructors instead of raw strings, and the Elm module duckpad generates has a real `Status` type in it.
+A **types** cell holds domain declarations independently of any table. A query using `as Status` depends on this cell just as it depends on a source. The table then shows constructors instead of raw strings, and the generated Elm module has a real `Status` type.
 
-Delete one of the constructors and the cell stops compiling — the tags have to cover what is in the data.
+Delete one of the constructors and every query using `Status` becomes stale; give a payload constructor a missing column and the error appears where the type is applied.
 
-```duckpad typed
+```types domain
 type Status
   = Submitted "submitted"
   | InTransit "in_transit"
   | Delivered "delivered" from .delivered_at
+```
 
+```duckpad typed
 access orders ()
   |> map (\o ->
        { owner = o.owner

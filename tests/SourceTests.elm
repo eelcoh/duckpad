@@ -26,6 +26,9 @@ specChecks =
     , equal "source: json"
         (Ok { format = Json, uri = "https://example.com/a.json", options = [] })
         (Source.parse "json \"https://example.com/a.json\"")
+    , equal "source: an Excel sheet and range"
+        (Ok { format = Xlsx, uri = "data/budget.xlsx", options = [ Sheet "Forecast", CellRange "A2:H200", Header True ] })
+        (Source.parse "xlsx \"data/budget.xlsx\" sheet \"Forecast\" range \"A2:H200\" header true")
     , equal "source: a path relative to the notebook"
         (Ok { format = Csv, uri = "data/orders.csv", options = [] })
         (Source.parse "csv \"data/orders.csv\"")
@@ -56,7 +59,7 @@ specChecks =
     , isErr "source: a protocol-relative URL is refused"
         (Source.parse "csv \"//example.com/a.csv\"")
     , isErr "source: an unknown format is refused"
-        (Source.parse "xlsx \"a.xlsx\"")
+        (Source.parse "ods \"a.ods\"")
     , isErr "source: a location is required"
         (Source.parse "csv")
     , isErr "source: an empty location is refused"
@@ -76,11 +79,18 @@ specChecks =
         (Source.readerOptions { format = Csv, uri = "a.csv", options = [ Nulls "it's" ] })
     , isErr "source: options do not apply to parquet, which has none"
         (Source.parse "parquet \"a.parquet\" nulls \"NA\"")
+    , isErr "source: csv options do not apply to xlsx"
+        (Source.parse "xlsx \"a.xlsx\" delimiter \";\"")
+    , isErr "source: xlsx options do not apply to csv"
+        (Source.parse "csv \"a.csv\" sheet \"Sheet1\"")
+    , equal "source: xlsx options render as DuckDB wants them"
+        ", sheet='Forecast', range='A2:H200', header=true"
+        (Source.readerOptions { format = Xlsx, uri = "a.xlsx", options = [ Sheet "Forecast", CellRange "A2:H200", Header True ] })
     , isErr "source: an unknown option is refused"
         (Source.parse "csv \"a.csv\" wobble \"NA\"")
     , equal "source: each format names the DuckDB reader for it"
-        [ "read_csv_auto", "read_parquet", "read_json_auto" ]
-        (List.map Source.reader [ Csv, Parquet, Json ])
+        [ "read_csv_auto", "read_parquet", "read_json_auto", "read_xlsx" ]
+        (List.map Source.reader [ Csv, Parquet, Json, Xlsx ])
     ]
 
 

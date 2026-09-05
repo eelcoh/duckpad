@@ -13,6 +13,7 @@ module Dsl.Check exposing
     , TExpr(..)
     , check
     , typeOf
+    , validateStandaloneDeclarations
     )
 
 {-| Surface AST plus a schema, into a typed IR.
@@ -75,6 +76,7 @@ a second cell, which in a notebook is the natural place for it.
 type alias CheckedWindow =
     { partition : List TExpr
     , order : Maybe SortSpec
+    , frame : Maybe WindowFrame
     }
 
 
@@ -357,10 +359,10 @@ applyStage schema params ast stage builder =
         ( Filter _, Grouped ) ->
             Err "`filter` cannot sit between `groupBy` and `reduce` — put it before the `groupBy` to filter rows, or after the `reduce` to filter groups"
 
-        ( PartitionBy keys order, Rows ) ->
-            partitionBy keys order builder
+        ( PartitionBy keys order frame, Rows ) ->
+            partitionBy keys order frame builder
 
-        ( PartitionBy _ _, _ ) ->
+        ( PartitionBy _ _ _, _ ) ->
             Err "`partitionBy` has to come before `groupBy`, `reduce` or `map` — rank the groups in a cell that reads this one"
 
         ( Extend lambda, Partitioned ) ->
@@ -1161,8 +1163,8 @@ need a name to be referred to by, and unlike `groupBy` nothing downstream
 refers to it — the extend's lambda reads the row, not the key.
 
 -}
-partitionBy : List String -> Maybe SortSpec -> Builder -> Result String Builder
-partitionBy keys order builder =
+partitionBy : List String -> Maybe SortSpec -> Maybe WindowFrame -> Builder -> Result String Builder
+partitionBy keys order frame builder =
     case builder.sides of
         [ only ] ->
             let
@@ -1185,15 +1187,18 @@ partitionBy keys order builder =
                             else
                                 Err ("`partitionBy` orders by `" ++ spec.column ++ "`, which " ++ only.table ++ " does not have")
             in
-            Result.map2
-                (\partition sorted ->
-                    { builder
-                        | phase = Partitioned
-                        , window = Just { partition = partition, order = sorted }
-                    }
-                )
-                (collect (List.map key keys))
-                ordered
+            Result.map2 Tuple.pair (collect (List.map key keys)) ordered
+                |> Result.andThen
+                    (\( partition, sorted ) ->
+                        validateFrame sorted frame
+                            |> Result.map
+                                (\_ ->
+                                    { builder
+                                        | phase = Partitioned
+                                        , window = Just { partition = partition, order = sorted, frame = frame }
+                                    }
+                                )
+                    )
 
         sides ->
             Err
@@ -1201,6 +1206,64 @@ partitionBy keys order builder =
                     ++ String.fromInt (List.length sides)
                     ++ " tables, so it has to say what the row should be with `map` before a window can be taken over it"
                 )
+
+
+validateFrame : Maybe SortSpec -> Maybe WindowFrame -> Result String ()
+validateFrame order frame =
+    case frame of
+        Nothing ->
+            Ok ()
+
+        Just bounds ->
+            if order == Nothing then
+                Err "`rowsBetween` needs an ordering in `partitionBy`, because row positions without an order are not deterministic"
+
+            else if invalidFrameBound bounds.start || invalidFrameBound bounds.end then
+                Err "a window-frame offset cannot be negative"
+
+            else if bounds.start == UnboundedFollowing then
+                Err "a window frame cannot start at `unboundedFollowing`"
+
+            else if bounds.end == UnboundedPreceding then
+                Err "a window frame cannot end at `unboundedPreceding`"
+
+            else if framePosition bounds.start > framePosition bounds.end then
+                Err "the start of a window frame has to come before its end"
+
+            else
+                Ok ()
+
+
+invalidFrameBound : FrameBound -> Bool
+invalidFrameBound bound =
+    case bound of
+        Preceding n ->
+            n < 0
+
+        Following n ->
+            n < 0
+
+        _ ->
+            False
+
+
+framePosition : FrameBound -> ( Int, Int )
+framePosition bound =
+    case bound of
+        UnboundedPreceding ->
+            ( 0, 0 )
+
+        Preceding n ->
+            ( 1, -n )
+
+        CurrentRow ->
+            ( 2, 0 )
+
+        Following n ->
+            ( 3, n )
+
+        UnboundedFollowing ->
+            ( 4, 0 )
 
 
 {-| Add what the window computed, keeping every row.
@@ -1499,6 +1562,34 @@ validateDeclarations : List ( String, Type ) -> List TypeDecl -> Result String (
 validateDeclarations columns decls =
     decls
         |> List.foldl (\decl acc -> Result.andThen (\_ -> validateDecl columns decl) acc) (Ok ())
+
+
+{-| Validate declarations that live outside a query. Payload columns are
+checked where an enum is applied, because a shared declaration has no table
+whose columns it could inspect.
+-}
+validateStandaloneDeclarations : List TypeDecl -> Result String ()
+validateStandaloneDeclarations decls =
+    case duplicated (List.map .name decls) of
+        Just name ->
+            Err ("type `" ++ name ++ "` is declared more than once in this cell")
+
+        Nothing ->
+            decls
+                |> List.foldl
+                    (\decl acc ->
+                        Result.andThen
+                            (\_ ->
+                                case decl.definition of
+                                    Wraps _ _ ->
+                                        validateDecl [] decl
+
+                                    Enum constructors ->
+                                        validateEnum [] decl.name (List.map (\c -> { c | payloadColumn = Nothing }) constructors)
+                            )
+                            acc
+                    )
+                    (Ok ())
 
 
 validateDecl : List ( String, Type ) -> TypeDecl -> Result String ()
@@ -2377,9 +2468,7 @@ checkCast env inner typeName =
             Err
                 ("`"
                     ++ typeName
-                    ++ "` is not declared in this cell. Add `type "
-                    ++ typeName
-                    ++ " = ...` above the pipeline"
+                    ++ "` is not declared here. Add it above the pipeline or in a `types` cell"
                 )
 
         Just decl ->
@@ -2393,7 +2482,14 @@ checkCast env inner typeName =
                         Wraps _ wrapped ->
                             Schema.primitive wrapped |> Maybe.withDefault TString
             in
-            checkExpr env inner
+            (case decl.definition of
+                Enum constructors ->
+                    validateEnum (List.concatMap .columns env.sides) decl.name constructors
+
+                Wraps _ _ ->
+                    Ok ()
+            )
+                |> Result.andThen (\_ -> checkExpr env inner)
                 |> Result.andThen
                     (\t ->
                         if baseType (typeOf t) == required then

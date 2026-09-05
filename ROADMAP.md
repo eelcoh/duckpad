@@ -420,7 +420,7 @@ A source is its own cell kind with its own fence:
     csv "https://cdn.jsdelivr.net/npm/vega-datasets@2/data/seattle-weather.csv"
     ```
 
-Formats are `csv`, `parquet` and `json`. Locations are https URLs or
+Formats are `csv`, `parquet`, `json` and `xlsx`. Locations are https URLs or
 paths next to the notebook.
 
 Decisions:
@@ -774,12 +774,12 @@ the export is a picture of one run of it.
 Not built: promoting hand-authored Elm cells to a documented feature,
 which still waits on a daemon that nothing else needs.
 
-## Current state (2026-08-29)
+## Current state (2026-09-05)
 
 `mise run build` compiles the shell, `mise run serve` hosts it on :8080,
-`mise run test` runs 293 checks under node, and `mise run roundtrip`
-executes every fixture's generated SQL against a real DuckDB and compiles
-every generated module with `elm make`.
+`mise run test` runs 430 checks under node (including the bridge's 11-port
+wiring check), and `mise run roundtrip` executes 42 fixtures' generated SQL
+against a real DuckDB and compiles every generated module with `elm make`.
 
 Layout:
 
@@ -1012,9 +1012,16 @@ recorded as they were hit, in the order they are worth closing:
    for that intermediate result, which is arguably where it should have
    been anyway.
 
-   Not done: **custom frames**. `ROWS BETWEEN` would buy moving averages,
-   where the default frame gives running totals. It needs its own
-   spelling and has not been designed.
+   **Custom frames are done.** A trailing seven-row average is explicit:
+
+       |> partitionBy .origin (asc .date) rowsBetween 6 preceding currentRow
+       |> extend (\w -> { moving = avg w.delay })
+
+   Bounds are `unboundedPreceding`, `n preceding`, `currentRow`, `n following`
+   and `unboundedFollowing`. The checker requires an ordering, rejects negative
+   offsets and refuses a start that comes after the end. It renders directly
+   as `ROWS BETWEEN … AND …`; the frame belongs to the one window the stage
+   already defines, so no new execution or typing machinery is involved.
 
 ## Statistical functions
 
@@ -1131,27 +1138,31 @@ reaches as far as the columns it describes. Three details worth keeping:
   than a module that does not compile. After the change this should be
   unreachable, which is the point of checking it.
 
-**A type cell is still open.** What propagation cannot do is let two
+**A type cell is now done.** Propagation alone could not let two
 cells with no data path share a type — and `type OrderId = OrderId Int`
-is a domain fact, not a property of one table. As a node it would be
-unusual, since every cell today produces rows or a scalar and this one
-produces neither, but it fits otherwise: cells mentioning the type
-depend on it, editing it marks them stale, deleting it turns them red
-exactly like a missing table. It is a smaller job now that declarations
-already flow, because the machinery is the same — a declaration
-environment threaded into `Check` rather than parsed from the cell.
+is a domain fact, not a property of one table. It is written as its own
+named fence:
 
-Two wrinkles it would have to answer:
+    ```types domain
+    type OrderId = OrderId Int
+    ```
+
+The cell produces neither rows nor a scalar. Queries mentioning the type
+through `as OrderId` depend on it in a separate type namespace; editing it
+marks those queries stale, and deleting it leaves the cast undeclared. Local
+declarations still work and shadow the need for a type-cell edge.
+
+Two wrinkles are handled explicitly:
 
 - **An enum is not always table-independent.** `Delivered "delivered"
   from .delivered_at` names a column, and `validateEnum` checks it
   against the source's columns. A shared declaration has no source, so
-  that check has to move to the cell applying the type — meaning a type
-  cell can be well-formed on its own and still fail somewhere else.
-- **Edges would come from `as T`.** `readsOf` finds table names; it
-  would need type references too, which is a second namespace in the
-  graph, with duplicate definitions needing what duplicate cell names
-  get.
+  that check happens in the query applying the type. A type cell can be
+  well-formed on its own and still fail at an incompatible use site.
+- **Edges come from `as T`.** Table reads and type references remain
+  separate during parsing and meet only when the notebook graph resolves a
+  type name to its provider. A second provider for the same name is invalid,
+  rather than one silently winning.
 
 ## What a pandas user would miss
 
@@ -1176,14 +1187,9 @@ Aggregates take a list of arguments now rather than exactly one, which
 is what made the two-argument ones possible and matches how scalar
 functions already worked.
 
-**Window functions are what is left, and they are the largest single
-item.** They need a stage of their own — a partition, an ordering, and a
-result that is still a row rather than a group — which is the one place
-in this section where real design is required rather than a name and a
-type rule. Worth weighing against the thesis at the top of this
-document before starting: `rank` within a partition is what a pandas
-user asks for most, but a windowing abstraction is also the most complex
-thing this language would contain.
+**Window functions are done** as `partitionBy` followed by `extend`,
+including ranking, lag/lead, running and framed aggregates, and QUALIFY for
+filters over added columns.
 
 Note on **list aggregates**, which an earlier draft of this section
 called cheap: they are not. `list(x)` returns a list, and this type
@@ -1209,7 +1215,9 @@ happens to be present — and inside the condition the grouping rule is
 lifted, because a condition looks at one row at a time and a bare column
 is exactly what is meant there.
 
-`UNPIVOT` and the list aggregates remain unexposed and are cheap.
+`UNPIVOT` is exposed. List aggregates remain unexposed and are not cheap:
+their result would require a list type through checking, Elm generation,
+table rendering and chart-channel validation.
 
 ### The other two need an escape hatch, and it costs the guarantee
 
@@ -1472,10 +1480,9 @@ waiting for ever.
 
 Caveats worth keeping:
 
-- CSP was off for the spike. A real build should enumerate what the page
-  needs, or better, vendor duckdb-wasm and Vega into `public/` — which
-  an offline desktop app wants regardless, and which would remove the
-  custom-protocol import question entirely.
+- **CSP and offline assets are done.** duckdb-wasm and Vega are vendored in
+  `public/vendor/`, and the Tauri policy enumerates the scripts, workers,
+  WebAssembly, fonts, images and connections the page needs.
 - The binary measured here is 189 MB, but that is a debug build with
   symbols. The number worth comparing against Electron's ~150 MB is a
   `--release` build, which has not been made yet.
@@ -1516,5 +1523,48 @@ deleting that directory.
 
 ## Next up
 
-The language gaps above, or the Tauri spike. They do not depend on each
-other.
+The original roadmap, custom window frames and Excel sources are complete. The
+next recommended increment is desktop distribution as a separate product
+milestone:
+
+1. Replace duckdb-wasm behind the existing port seam with native DuckDB in the
+   Tauri backend.
+2. Make and measure a release build.
+3. Exercise Windows and macOS, then add signing/notarisation only for platforms
+   that will actually be distributed.
+
+List-valued aggregates remain lower priority: they require a new type
+throughout the stack, while the current roadmap has no concrete notebook that
+needs one.
+
+### Excel sources — done
+
+[DuckDB has first-party `.xlsx` import](https://duckdb.org/docs/current/guides/file_formats/excel_import)
+through `read_xlsx`; legacy `.xls` is not supported. The source spelling should
+follow the existing format model:
+
+    ```source budget
+    xlsx "data/budget.xlsx" sheet "Forecast" range "A2:H200" header true
+    ```
+
+It follows four boundaries recorded up front:
+
+- Support `.xlsx` only and say so in the parser error. Converting old `.xls`
+  files is outside the notebook and outside DuckDB.
+- Expose only DuckDB's import-shaping options initially: `sheet`, `range` and
+  `header`. They belong in the source cache key just like CSV options.
+- The bridge loads the official `excel` extension explicitly and vendors matching
+  [DuckDB-Wasm extension](https://duckdb.org/docs/current/clients/wasm/extensions)
+  for the offline desktop build; relying on autoload would quietly reintroduce
+  a network dependency.
+- Treat column inference as DuckDB's. Excel columns are not intrinsically
+  typed, so mixed cells will commonly become `String`; duckpad should report
+  the inferred schema rather than invent coercion rules.
+
+The round-trip harness reads a real workbook with a named sheet, range, header,
+date and null, rather than only checking the generated option text.
+
+Remote browser sources remain subject to CORS and an XLSX ZIP cannot offer
+Parquet-style column/range pushdown. Real arbitrary local paths become cleanest
+after native DuckDB lands in Tauri; the browser build can still support HTTPS
+and notebook-relative files under its existing source rules.

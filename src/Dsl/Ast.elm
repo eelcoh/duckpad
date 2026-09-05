@@ -7,6 +7,7 @@ module Dsl.Ast exposing
     , GroupKeys(..)
     , Pattern(..)
     , Field
+    , FrameBound(..)
     , Lambda
     , Literal(..)
     , Op(..)
@@ -16,6 +17,7 @@ module Dsl.Ast exposing
     , Stage(..)
     , TypeDecl
     , UnpivotSpec
+    , WindowFrame
     , opSymbol
     )
 
@@ -122,7 +124,7 @@ type Stage
       -- `partitionBy .origin (asc .date)` — the OVER clause, named for what
       -- it does to the rows rather than for the SQL. Both halves are optional
       -- but not both at once: no keys means the whole table is one partition.
-    | PartitionBy (List String) (Maybe SortSpec)
+    | PartitionBy (List String) (Maybe SortSpec) (Maybe WindowFrame)
       -- `extend (\w -> { n = rowNumber w })` — the partner to `reduce`. Where
       -- a reduce collapses each group to one row, an extend keeps every row
       -- and adds what the window computed.
@@ -164,6 +166,20 @@ type alias SortSpec =
     { column : String
     , direction : SortDir
     }
+
+
+type alias WindowFrame =
+    { start : FrameBound
+    , end : FrameBound
+    }
+
+
+type FrameBound
+    = UnboundedPreceding
+    | Preceding Int
+    | CurrentRow
+    | Following Int
+    | UnboundedFollowing
 
 
 type SortDir

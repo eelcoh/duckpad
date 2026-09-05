@@ -26,6 +26,9 @@ type Kind
       -- A control bound to a name. No compile step: its value is what a query
       -- mentioning that name reads.
     | Input
+      -- Shared domain declarations. A type cell produces no rows; query
+      -- cells depend on it through `as TypeName` references.
+    | Types
     | Prose
 
 
@@ -63,6 +66,9 @@ isRunnable cell =
         Input ->
             String.trim cell.source /= ""
 
+        Types ->
+            String.trim cell.source /= ""
+
         Prose ->
             False
 
@@ -78,6 +84,9 @@ kindLabel kind =
 
         Input ->
             "input"
+
+        Types ->
+            "types"
 
         Prose ->
             "prose"

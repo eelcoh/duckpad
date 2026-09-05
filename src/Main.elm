@@ -22,6 +22,7 @@ import DatePicker
 import Dsl.Check exposing (Cardinality(..), Display(..))
 import Dsl.Compile exposing (Compiled)
 import Dsl.Lexer
+import Dsl.Parser
 import Dsl.Schema as Schema exposing (Schema, Type(..))
 import Dsl.Input
 import Dsl.Source
@@ -218,6 +219,23 @@ known once the order exists.
 -}
 graphOf : Model -> Graph
 graphOf model =
+    let
+        typeProviders =
+            model.cells
+                |> List.filter (\c -> c.kind == Types)
+                |> List.concatMap
+                    (\c ->
+                        Dsl.Parser.parseDeclarations c.source
+                            |> Result.toMaybe
+                            |> Maybe.withDefault []
+                            |> List.map (\decl -> ( decl.name, c.id ))
+                    )
+
+        providersFor name =
+            typeProviders
+                |> List.filter (\( typeName, _ ) -> typeName == name)
+                |> List.map Tuple.second
+    in
     model.cells
         |> List.filter (\c -> c.kind /= Prose)
         |> List.map
@@ -225,7 +243,10 @@ graphOf model =
                 ( c.id
                 , case c.kind of
                     Query ->
-                        Set.fromList (Dsl.Compile.readsOf c.source)
+                        Set.fromList
+                            (Dsl.Compile.readsOf c.source
+                                ++ List.concatMap providersFor (Dsl.Compile.typeRefsOf c.source)
+                            )
 
                     Input ->
                         -- Most inputs depend on nothing; one that draws its
@@ -374,6 +395,9 @@ step msg model =
 
                             Input ->
                                 "range 0 100 default 50"
+
+                            Types ->
+                                "type OrderId = OrderId Int"
 
                             Prose ->
                                 "Notes."
@@ -773,8 +797,85 @@ advance model =
                             Input ->
                                 dispatchInput cell rest model
 
+                            Types ->
+                                dispatchTypes cell rest model
+
                             _ ->
                                 dispatch cell rest model
+
+
+dispatchTypes : Cell -> List String -> Model -> ( Model, Cmd Msg )
+dispatchTypes cell rest model =
+    let
+        state =
+            stateOf cell.id model
+    in
+    case Dsl.Parser.parseDeclarations cell.source |> Result.andThen (\decls -> Dsl.Check.validateStandaloneDeclarations decls |> Result.andThen (\_ -> uniqueTypeProvider cell.id decls model)) of
+        Err message ->
+            advance
+                { model
+                    | queue = rest
+                    , states = Dict.insert cell.id { state | status = Invalid message, compiled = Nothing, valueHash = Nothing } model.states
+                }
+
+        Ok typeDeclarations ->
+            let
+                artefacts =
+                    { sql = ""
+                    , elmModule = ""
+                    , rowType = []
+                    , declarations = typeDeclarations
+                    , reads = []
+                    , cardinality = Many
+                    , display = AsRows
+                    , orderSignificant = False
+                    }
+            in
+            advance
+                { model
+                    | queue = rest
+                    , states =
+                        Dict.insert cell.id
+                            { state
+                                | status = Fresh { cached = state.valueHash == Just cell.source, millis = 0 }
+                                , compiled = Just artefacts
+                                , rowType = Nothing
+                                , compileKey = Just cell.source
+                                , table = Nothing
+                                , valueHash = Just cell.source
+                                , keyForValue = Just cell.source
+                            }
+                            model.states
+                }
+
+
+uniqueTypeProvider : String -> List TypeDecl -> Model -> Result String (List TypeDecl)
+uniqueTypeProvider cellId declarations model =
+    let
+        names =
+            List.map .name declarations
+
+        conflict =
+            model.cells
+                |> List.filter (\other -> other.kind == Types && other.id /= cellId)
+                |> List.filterMap
+                    (\other ->
+                        Dsl.Parser.parseDeclarations other.source
+                            |> Result.toMaybe
+                            |> Maybe.andThen
+                                (List.filter (\decl -> List.member decl.name names)
+                                    >> List.head
+                                    >> Maybe.map (\decl -> ( decl.name, other.id ))
+                                )
+                    )
+                |> List.head
+    in
+    case conflict of
+        Just ( name, otherId ) ->
+            Err ("type `" ++ name ++ "` is also declared by types cell `" ++ otherId ++ "`; each type needs one provider")
+
+        Nothing ->
+            Ok declarations
 
 
 {-| An input resolves without touching the database: its value is already
@@ -1325,6 +1426,9 @@ freshName kind model =
                 Input ->
                     "input_"
 
+                Types ->
+                    "types_"
+
                 Prose ->
                     "note_"
 
@@ -1566,6 +1670,7 @@ viewAddRow =
     row [ spacing 8, Ui.dropOnExport ]
         [ plainButton "+ source" False (Just (AddCell Source))
         , plainButton "+ input" False (Just (AddCell Input))
+        , plainButton "+ types" False (Just (AddCell Types))
         , plainButton "+ query cell" False (Just (AddCell Query))
         , plainButton "+ prose cell" False (Just (AddCell Prose))
         ]
@@ -1632,7 +1737,12 @@ viewCellHead model graph cell state =
          , Ui.tinyCaps Ui.muted (Cell.kindLabel cell.kind)
          ]
             ++ viewStatus cell state.status
-            ++ viewSignature state
+            ++ (if cell.kind == Types then
+                    []
+
+                else
+                    viewSignature state
+               )
             ++ [ el [ width fill ] Element.none
                , viewEdges graph cell
                , if cell.kind == Prose then
@@ -1877,6 +1987,9 @@ editor cell =
                 Input ->
                     "range 0 100 default 50"
 
+                Types ->
+                    "type OrderId = OrderId Int"
+
                 Prose ->
                     "Notes…"
             )
@@ -1951,6 +2064,17 @@ viewOutput : Model -> Cell -> CellState -> Element Msg
 viewOutput model cell state =
     if cell.kind == Prose then
         Element.none
+
+    else if cell.kind == Types then
+        case state.status of
+            Invalid message ->
+                message_ Ui.bad message
+
+            Blocked upstream ->
+                message_ Ui.bad ("Not run: upstream cell `" ++ upstream ++ "` has no usable value.")
+
+            _ ->
+                Element.none
 
     else if cell.kind == Input then
         case Dsl.Input.parse cell.source of
@@ -2421,7 +2545,11 @@ there is a daemon to compile one.
 -}
 viewArtefacts : Model -> Cell -> CellState -> Element Msg
 viewArtefacts model cell state =
-    case state.compiled of
+    if cell.kind == Types then
+        Element.none
+
+    else
+     case state.compiled of
         Nothing ->
             Element.none
 

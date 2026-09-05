@@ -189,6 +189,14 @@ access orders ()
   |> selectAll
 """
       )
+    , ( "window_moving_average"
+      , """
+access orders ()
+  |> partitionBy .region (asc .id) rowsBetween 2 preceding currentRow
+  |> extend (\\w -> { moving_average = avg w.total })
+  |> selectAll
+"""
+      )
     , ( "unpivot_wide"
       , """
 access quarterly ()

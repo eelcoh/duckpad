@@ -1,4 +1,4 @@
-module Dsl.Compile exposing (Compiled, compile, readsOf)
+module Dsl.Compile exposing (Compiled, compile, readsOf, typeRefsOf)
 
 {-| The front door: source text and a schema, in; SQL, an Elm module, and the
 metadata the notebook engine needs, out.
@@ -80,6 +80,74 @@ readsOf source =
                 ++ Set.toList (freeVars ast)
 
         Err _ ->
+            []
+
+
+{-| Declared type names a query applies. The notebook resolves these in a
+separate namespace to type cells before building the graph.
+-}
+typeRefsOf : String -> List String
+typeRefsOf source =
+    case Dsl.Parser.parse source of
+        Ok ast ->
+            let
+                local =
+                    ast.declarations |> List.map .name |> Set.fromList
+            in
+            ast.stages
+                |> List.concatMap stageTypeRefs
+                |> Set.fromList
+                |> (\refs -> Set.diff refs local)
+                |> Set.toList
+
+        Err _ ->
+            []
+
+
+stageTypeRefs : Stage -> List String
+stageTypeRefs stage =
+    case stage of
+        Filter lambda ->
+            exprTypeRefs lambda.body
+
+        Map lambda ->
+            exprTypeRefs lambda.body
+
+        Reduce lambda ->
+            exprTypeRefs lambda.body
+
+        GroupBy (ByExpressions lambda) ->
+            exprTypeRefs lambda.body
+
+        Extend lambda ->
+            exprTypeRefs lambda.body
+
+        _ ->
+            []
+
+
+exprTypeRefs : Expr -> List String
+exprTypeRefs expr =
+    case expr of
+        Cast inner name ->
+            name :: exprTypeRefs inner
+
+        Record fields ->
+            List.concatMap (\field -> exprTypeRefs field.value) fields
+
+        Binary _ left right ->
+            exprTypeRefs left ++ exprTypeRefs right
+
+        Not inner ->
+            exprTypeRefs inner
+
+        Aggregate _ args ->
+            List.concatMap exprTypeRefs args
+
+        Call _ args ->
+            List.concatMap exprTypeRefs args
+
+        _ ->
             []
 
 

@@ -15,6 +15,9 @@ const path = require('path');
 
 const CDN = 'https://cdn.jsdelivr.net';
 const DUCKDB = '@duckdb/duckdb-wasm@1.32.0';
+// The engine embedded by that package. Extension paths are ABI-versioned, so
+// update these two constants together.
+const DUCKDB_ENGINE = 'v1.4.3';
 const out = path.join(__dirname, '..', 'public', 'vendor');
 
 // The two entry points, and the names the rest of the app imports them by.
@@ -31,6 +34,11 @@ const ASSETS = [
   'duckdb-browser-mvp.worker.js',
   'duckdb-eh.wasm',
   'duckdb-browser-eh.worker.js',
+];
+
+const EXTENSION_ASSETS = [
+  `${DUCKDB_ENGINE}/wasm_mvp/excel.duckdb_extension.wasm`,
+  `${DUCKDB_ENGINE}/wasm_eh/excel.duckdb_extension.wasm`,
 ];
 
 // A module path becomes one filename, so every rewritten import is a sibling.
@@ -76,7 +84,17 @@ async function main() {
     process.stdout.write(`  ${asset} (${Math.round(bytes.length / 1024)}k)\n`);
   }
 
-  console.log(`\nvendored ${done.size} modules and ${ASSETS.length} assets into public/vendor/`);
+  for (const asset of EXTENSION_ASSETS) {
+    const res = await fetch(`https://extensions.duckdb.org/${asset}`);
+    if (!res.ok) throw new Error(`${res.status} for ${asset}`);
+    const bytes = Buffer.from(await res.arrayBuffer());
+    const destination = path.join(out, 'extensions', asset);
+    fs.mkdirSync(path.dirname(destination), { recursive: true });
+    fs.writeFileSync(destination, bytes);
+    process.stdout.write(`  extensions/${asset} (${Math.round(bytes.length / 1024)}k)\n`);
+  }
+
+  console.log(`\nvendored ${done.size} modules, ${ASSETS.length} runtime assets and ${EXTENSION_ASSETS.length} extensions into public/vendor/`);
 }
 
 main().catch((err) => {

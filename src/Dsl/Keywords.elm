@@ -24,6 +24,12 @@ reserved =
         , "unpivot"
         , "summarize"
         , "partitionBy"
+        , "rowsBetween"
+        , "preceding"
+        , "following"
+        , "currentRow"
+        , "unboundedPreceding"
+        , "unboundedFollowing"
         , "extend"
         , "limit"
         , "intersect"
@@ -125,4 +131,4 @@ functions =
 -}
 formats : Set String
 formats =
-    Set.fromList [ "csv", "parquet", "json" ]
+    Set.fromList [ "csv", "parquet", "json", "xlsx" ]

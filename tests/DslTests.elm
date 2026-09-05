@@ -317,6 +317,34 @@ parserChecks =
         (Dsl.Parser.parse "type A = X \"x\"\ntype B = Y \"y\"\naccess t () |> selectAll"
             |> Result.map (.declarations >> List.length)
         )
+    , equal "parse: a type cell contains declarations without a pipeline"
+        (Ok [ "OrderId", "Status" ])
+        (Dsl.Parser.parseDeclarations "type OrderId = OrderId Int\ntype Status = Open \"open\""
+            |> Result.map (List.map .name)
+        )
+    , isErr "parse: a type cell needs at least one declaration"
+        (Dsl.Parser.parseDeclarations "")
+    , equal "reads: a cast refers to a shared type"
+        [ "Status" ]
+        (Dsl.Compile.typeRefsOf "access orders () |> map (\\o -> { status = o.status as Status }) |> selectAll")
+    , equal "reads: a locally declared type needs no type-cell edge"
+        []
+        (Dsl.Compile.typeRefsOf "type Status = Open \"open\"\naccess orders () |> map (\\o -> { status = o.status as Status }) |> selectAll")
+    , equal "types: a standalone wrapper is valid"
+        (Ok ())
+        (Dsl.Parser.parseDeclarations "type OrderId = OrderId Int" |> Result.andThen Dsl.Check.validateStandaloneDeclarations)
+    , isErr "types: duplicate names in one type cell are refused"
+        (Dsl.Parser.parseDeclarations "type Id = A Int\ntype Id = B Int" |> Result.andThen Dsl.Check.validateStandaloneDeclarations)
+    , equal "types: a query compiles against a declaration from a type cell"
+        (Ok [ "Status" ])
+        (Dsl.Parser.parseDeclarations "type Status = Open \"open\" from .delivered_at"
+            |> Result.andThen (\decls -> Dsl.Compile.compile schema Dict.empty decls "Generated" "access orders () |> map (\\o -> { status = o.status as Status }) |> selectAll")
+            |> Result.map (.declarations >> List.map .name)
+        )
+    , isErr "types: a shared enum payload is checked where it is applied"
+        (Dsl.Parser.parseDeclarations "type Status = Open \"open\" from .missing"
+            |> Result.andThen (\decls -> Dsl.Compile.compile schema Dict.empty decls "Generated" "access orders () |> map (\\o -> { status = o.status as Status }) |> selectAll")
+        )
 
     -- Failures should be failures, not silent successes.
     , isErr "parse: a pipeline must have a source"
@@ -441,7 +469,7 @@ reduced fields =
 windowChecks : List Check
 windowChecks =
     [ equal "parse: partitionBy takes keys and an order, either of which may be left out"
-        (Ok [ PartitionBy [ "region" ] (Just { column = "total", direction = Desc }), SelectAll ])
+        (Ok [ PartitionBy [ "region" ] (Just { column = "total", direction = Desc }) Nothing, SelectAll ])
         (stagesOf "access orders ()\n  |> partitionBy .region (desc .total)\n  |> selectAll")
     , isErr "parse: partitionBy with neither keys nor an order does nothing"
         (ok "access orders () |> partitionBy |> selectAll")
@@ -451,6 +479,18 @@ windowChecks =
     , contains "window: no keys means the whole table is one partition"
         "OVER (ORDER BY \"id\")"
         (sqlOf "access orders ()\n  |> partitionBy (asc .id)\n  |> extend (\\w -> { running = sum w.total })\n  |> selectAll")
+    , contains "window frame: a trailing seven-row average"
+        "ROWS BETWEEN 6 PRECEDING AND CURRENT ROW"
+        (sqlOf "access orders ()\n  |> partitionBy .region (asc .id) rowsBetween 6 preceding currentRow\n  |> extend (\\w -> { moving = avg w.total })\n  |> selectAll")
+    , contains "window frame: following and unbounded bounds render"
+        "ROWS BETWEEN CURRENT ROW AND UNBOUNDED FOLLOWING"
+        (sqlOf "access orders ()\n  |> partitionBy (asc .id) rowsBetween currentRow unboundedFollowing\n  |> extend (\\w -> { remaining = sum w.total })\n  |> selectAll")
+    , isErr "window frame: an order is required"
+        (compile "access orders ()\n  |> partitionBy .region rowsBetween 2 preceding currentRow\n  |> extend (\\w -> { moving = avg w.total })\n  |> selectAll")
+    , isErr "window frame: the start cannot follow the end"
+        (compile "access orders ()\n  |> partitionBy (asc .id) rowsBetween 2 following currentRow\n  |> extend (\\w -> { moving = avg w.total })\n  |> selectAll")
+    , isErr "window frame: offsets cannot be negative"
+        (compile "access orders ()\n  |> partitionBy (asc .id) rowsBetween -2 preceding currentRow\n  |> extend (\\w -> { moving = avg w.total })\n  |> selectAll")
     , contains "window: the row is kept and added to, so the projection starts at *"
         "SELECT *, "
         (sqlOf ranked)

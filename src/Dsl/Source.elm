@@ -18,6 +18,7 @@ type Format
     = Csv
     | Parquet
     | Json
+    | Xlsx
 
 
 type alias Spec =
@@ -40,6 +41,8 @@ type Option
     | Delimiter String
     | Header Bool
     | Skip Int
+    | Sheet String
+    | CellRange String
 
 
 parse : String -> Result String Spec
@@ -49,7 +52,7 @@ parse source =
             validate parsed
 
         Err _ ->
-            Err "a source reads `csv \"…\"`, `parquet \"…\"` or `json \"…\"`"
+            Err "a source reads `csv \"…\"`, `parquet \"…\"`, `json \"…\"` or `xlsx \"…\"`"
 
 
 spec : Parser Spec
@@ -72,6 +75,8 @@ option =
         , Parser.succeed Delimiter |. keyword "delimiter" |= quoted
         , Parser.succeed Header |. keyword "header" |= boolean
         , Parser.succeed Skip |. keyword "skip" |= wholeNumber
+        , Parser.succeed Sheet |. keyword "sheet" |= quoted
+        , Parser.succeed CellRange |. keyword "range" |= quoted
         ]
         |. ws
 
@@ -134,6 +139,12 @@ renderOption o =
         Skip n ->
             "skip=" ++ String.fromInt n
 
+        Sheet name ->
+            "sheet=" ++ quote name
+
+        CellRange cells ->
+            "range=" ++ quote cells
+
 
 quote : String -> String
 quote value =
@@ -148,6 +159,7 @@ format =
         [ Parser.succeed Csv |. Parser.keyword "csv"
         , Parser.succeed Parquet |. Parser.keyword "parquet"
         , Parser.succeed Json |. Parser.keyword "json"
+        , Parser.succeed Xlsx |. Parser.keyword "xlsx"
         ]
 
 
@@ -192,8 +204,18 @@ validate parsed =
         uri =
             String.trim parsed.uri
     in
-    if parsed.format /= Csv && not (List.isEmpty parsed.options) then
-        Err "reader options only apply to a csv"
+    if not (List.all (optionAllowed parsed.format) parsed.options) then
+        Err
+            (case parsed.format of
+                Csv ->
+                    "a csv source accepts only `nulls`, `delimiter`, `header` and `skip` options"
+
+                Xlsx ->
+                    "an xlsx source accepts only `sheet`, `range` and `header` options"
+
+                _ ->
+                    "reader options do not apply to this format"
+            )
 
     else if uri == "" then
         Err "this source has no location"
@@ -259,6 +281,9 @@ formatName f =
         Json ->
             "json"
 
+        Xlsx ->
+            "xlsx"
+
 
 {-| The DuckDB function that reads this format.
 -}
@@ -274,9 +299,40 @@ reader f =
         Json ->
             "read_json_auto"
 
+        Xlsx ->
+            "read_xlsx"
+
 
 {-| Registered files keep their extension: DuckDB's readers sniff it.
 -}
 extension : Format -> String
 extension =
     formatName
+
+
+optionAllowed : Format -> Option -> Bool
+optionAllowed sourceFormat sourceOption =
+    case ( sourceFormat, sourceOption ) of
+        ( Csv, Nulls _ ) ->
+            True
+
+        ( Csv, Delimiter _ ) ->
+            True
+
+        ( Csv, Header _ ) ->
+            True
+
+        ( Csv, Skip _ ) ->
+            True
+
+        ( Xlsx, Sheet _ ) ->
+            True
+
+        ( Xlsx, CellRange _ ) ->
+            True
+
+        ( Xlsx, Header _ ) ->
+            True
+
+        _ ->
+            False
