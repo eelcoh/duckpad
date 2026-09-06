@@ -1,4 +1,4 @@
-module Chart exposing (rowLimit, spec)
+module VegaChart exposing (rowLimit, spec)
 
 {-| A Vega-Lite specification, built from a checked chart and its rows.
 

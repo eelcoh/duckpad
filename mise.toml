@@ -12,8 +12,12 @@ node tools/vendor-native.js
 
 [tasks.build]
 description = "Compile the Elm notebook shell"
-depends = ["seed", "vendored"]
+depends = ["seed", "vendored", "chart-spike"]
 run = "elm make src/Main.elm --output=public/elm.js"
+
+[tasks.chart-spike]
+description = "Compile the elm-charts parity spike"
+run = "elm make tools/ElmChartsSpike.elm --output=public/chart-spike.js"
 
 [tasks.serve]
 description = "Serve the notebook at http://localhost:8080 (build first)"

@@ -16,7 +16,7 @@ import Cell exposing (Cell, Kind(..), Status(..))
 import Dag exposing (Graph)
 import Dict exposing (Dict)
 import Dsl.Ast exposing (Constructor, Definition(..), Literal(..), TypeDecl)
-import Chart
+import VegaChart
 import Date exposing (Date)
 import DatePicker
 import Dsl.Check exposing (Cardinality(..), Display(..))
@@ -1683,7 +1683,7 @@ runOrReuse cell rest model graph state compileKey artefacts =
             , rowLimit =
                 case artefacts.display of
                     AsChart _ ->
-                        Chart.rowLimit
+                        VegaChart.rowLimit
 
                     _ ->
                         previewRows
@@ -3064,7 +3064,7 @@ viewTable shape t =
                 div []
                     [ resultMeta shape t
                     , Html.node "vega-chart"
-                        [ Html.Attributes.property "spec" (Chart.spec spec t.rows) ]
+                        [ Html.Attributes.property "spec" (VegaChart.spec spec t.rows) ]
                         []
                     ]
 

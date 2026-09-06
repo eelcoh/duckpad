@@ -1624,23 +1624,34 @@ These follow document lifecycle unless one becomes necessary to complete it:
    still accepts legacy `source` fences and rewrites them as `data` on the next
    save, preserving the meaning of existing notebooks. The cell body (`csv`,
    `parquet`, `json`, `xlsx`) and dependency semantics remain unchanged.
-4. **Next: Move chart rendering to [elm-charts](https://www.elm-charts.org/).** Spike
-   the current bar, line and point examples in `terezka/elm-charts`, then replace
-   the Vega/Vega-Lite custom-element bridge if they reach feature parity. Keep
-   chart channel checking in Duckpad's compiler, render the chart as Elm-owned
-   SVG, preserve tooltips and responsive sizing, and verify that static export
-   captures the SVG without the current canvas-to-image repair. Remove the
-   vendored Vega runtime only after existing notebooks and exports render
-   equivalently.
+4. **Done: Spike [elm-charts](https://www.elm-charts.org/).** The executable
+   `tools/ElmChartsSpike.elm`, served by `public/chart-spike.html`, reproduces a
+   categorical bar chart, ordered line chart and numeric scatter plot as
+   Elm-owned SVG. It confirms custom category labels, responsive view-box
+   scaling and library-native hover tooltips. `mise run build` compiles the
+   spike so dependency or API drift cannot leave it as an obsolete experiment.
+   The old spec builder is now explicitly `VegaChart`; production rendering
+   still uses it while parity work continues.
+5. **Next: Adapt live Duckpad chart data to elm-charts.** Convert checked
+   dynamic JSON rows into a small plotting datum, retain the compiler-derived
+   channel types, and add per-cell hover state. Cover categorical and numeric x
+   axes, timestamp formatting, nullable values and `color`-grouped series.
+   Exercise that adapter with the seeded bar and both line charts plus a
+   scatter fixture.
+6. **Then: switch production rendering and export.** Render charts through the
+   adapter as Elm-owned SVG, verify responsive sizing and static HTML export,
+   and remove the Vega custom element, export canvas repair and vendored Vega
+   runtime only after existing notebooks render equivalently.
 
 Recommended sequence from here:
 
-1. Close the inferred-schema/generated-code visibility regression and verify it
-   in the desktop build as well as in compilation tests.
-2. Spike `elm-charts` against the existing bar, line and point fixtures; decide
-   on parity before removing any Vega path.
-3. Complete the Elm-owned SVG chart migration, including tooltips, responsive
-   sizing and static export, then remove Vega only when outputs match.
+1. **Done:** close the inferred-schema/generated-code visibility regression;
+   both Elm schema and generated SQL/Elm are confirmed visible on desktop.
+2. **Done:** spike `elm-charts` against bar, line and point fixtures. The core
+   marks, custom labels, responsive SVG and tooltips are viable; the remaining
+   parity work belongs in Duckpad's dynamic-data adapter.
+3. **Next:** build that adapter, then complete the Elm-owned SVG migration and
+   static export; remove Vega only when outputs match.
 4. Implement the startup/document-home design above, including restoration of
    desktop document association and safe handling of detached recovery data.
 5. Revisit Elm beyond DuckDB using concrete unmet operations, then proceed to
