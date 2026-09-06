@@ -10,6 +10,7 @@ otherwise need.
 -}
 
 import Check exposing (Check)
+import ChartTests
 import DslTests
 import EngineTests
 import HistoryTests
@@ -36,7 +37,7 @@ main =
 
 allChecks : List Check
 allChecks =
-    EngineTests.checks ++ DslTests.checks ++ NotebookTests.checks ++ SourceTests.checks ++ IndentTests.checks ++ LexerTests.checks ++ InputTests.checks ++ HistoryTests.checks ++ QueryTests.checks
+    EngineTests.checks ++ DslTests.checks ++ NotebookTests.checks ++ SourceTests.checks ++ IndentTests.checks ++ LexerTests.checks ++ InputTests.checks ++ HistoryTests.checks ++ QueryTests.checks ++ ChartTests.checks
 
 
 encode : Check -> E.Value

@@ -16,7 +16,6 @@ import Cell exposing (Cell, Kind(..), Status(..))
 import Dag exposing (Graph)
 import Dict exposing (Dict)
 import Dsl.Ast exposing (Constructor, Definition(..), Literal(..), TypeDecl)
-import VegaChart
 import Date exposing (Date)
 import DatePicker
 import Dsl.Check exposing (Cardinality(..), Display(..))
@@ -26,6 +25,7 @@ import Dsl.Parser
 import Dsl.Schema as Schema exposing (Schema, Type(..))
 import Dsl.Input
 import Dsl.Source
+import ElmChart
 import Engine exposing (CellState, Shape)
 import Element exposing (Element, alignRight, centerX, centerY, column, el, fill, height, maximum, padding, paddingXY, px, row, spacing, text, width)
 import Element.Background as Background
@@ -78,6 +78,7 @@ type alias Model =
     , insertingAt : Maybe Int
     , schemaExpanded : Set.Set String
     , schemaTables : Set.Set String
+    , chartHovers : Dict String ElmChart.Hover
 
     -- New and Reset cross document boundaries, so they take two clicks: the
     -- first arms the action and the second does it. Anything else disarms it.
@@ -138,6 +139,7 @@ type Msg
     | ToggleInsert Int
     | ToggleSchema String
     | ShowSchemaAsTable String Bool
+    | ChartHovered String ElmChart.Hover
     | DeleteCell String
     | RunAll
     | TitleEdited String
@@ -179,7 +181,7 @@ init flags =
         ( notebook, notice ) =
             restore flags
     in
-    ( load notebook { title = notebook.title, cells = [], states = Dict.empty, baseSchema = Dict.empty, queue = [], current = Nothing, db = Booting, nextId = 1, notice = notice, associated = False, revision = 0, saveState = Unassociated, saveBefore = Nothing, history = History.empty, historyEdit = Nothing, insertingAt = Nothing, schemaExpanded = Set.empty, schemaTables = Set.empty, newArmed = False, resetArmed = False, editing = Nothing, expanded = Set.empty, inputs = Dict.empty, pickers = Dict.empty, today = Nothing }
+    ( load notebook { title = notebook.title, cells = [], states = Dict.empty, baseSchema = Dict.empty, queue = [], current = Nothing, db = Booting, nextId = 1, notice = notice, associated = False, revision = 0, saveState = Unassociated, saveBefore = Nothing, history = History.empty, historyEdit = Nothing, insertingAt = Nothing, schemaExpanded = Set.empty, schemaTables = Set.empty, chartHovers = Dict.empty, newArmed = False, resetArmed = False, editing = Nothing, expanded = Set.empty, inputs = Dict.empty, pickers = Dict.empty, today = Nothing }
     , Task.perform GotToday Date.today
     )
 
@@ -222,6 +224,7 @@ load notebook model =
         , insertingAt = Nothing
         , schemaExpanded = Set.empty
         , schemaTables = Set.empty
+        , chartHovers = Dict.empty
     }
 
 
@@ -491,6 +494,11 @@ step msg model =
                     else
                         Set.remove id model.schemaTables
               }
+            , Cmd.none
+            )
+
+        ChartHovered id hovering ->
+            ( { model | chartHovers = Dict.insert id hovering model.chartHovers }
             , Cmd.none
             )
 
@@ -1683,7 +1691,7 @@ runOrReuse cell rest model graph state compileKey artefacts =
             , rowLimit =
                 case artefacts.display of
                     AsChart _ ->
-                        VegaChart.rowLimit
+                        ElmChart.rowLimit
 
                     _ ->
                         previewRows
@@ -2727,7 +2735,7 @@ viewOutput model cell state =
                     ( Just t, Just shape ) ->
                         column [ width fill ]
                             [ message_ Ui.stale "Stale — showing the previous result until this re-runs."
-                            , el [ width fill, Element.alpha 0.45 ] (Element.html (viewTable shape t))
+                            , el [ width fill, Element.alpha 0.45 ] (Element.html (viewTable cell.id model shape t))
                             ]
 
                     _ ->
@@ -2739,7 +2747,7 @@ viewOutput model cell state =
             _ ->
                 case ( state.table, Engine.display state ) of
                     ( Just t, Just shape ) ->
-                        el [ width fill ] (Element.html (viewTable shape t))
+                        el [ width fill ] (Element.html (viewTable cell.id model shape t))
 
                     _ ->
                         message_ Ui.muted "Running…"
@@ -3053,8 +3061,8 @@ message_ colour body =
 count line above them, because how many rows there are is worth knowing either
 way — and for a chart it is the only place a truncation would show.
 -}
-viewTable : Engine.Shape -> Table -> Html Msg
-viewTable shape t =
+viewTable : String -> Model -> Engine.Shape -> Table -> Html Msg
+viewTable cellId model shape t =
     if shape.scalar then
         viewScalar shape t
 
@@ -3063,9 +3071,11 @@ viewTable shape t =
             Just spec ->
                 div []
                     [ resultMeta shape t
-                    , Html.node "vega-chart"
-                        [ Html.Attributes.property "spec" (VegaChart.spec spec t.rows) ]
-                        []
+                    , ElmChart.view
+                        (ChartHovered cellId)
+                        (Dict.get cellId model.chartHovers |> Maybe.withDefault ElmChart.empty)
+                        spec
+                        t.rows
                     ]
 
             Nothing ->
