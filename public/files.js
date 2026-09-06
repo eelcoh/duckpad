@@ -14,13 +14,15 @@ const tauri = () => window.__TAURI__;
 
 const NOTEBOOK = { name: 'duckpad notebook', extensions: ['md'] };
 const PAGE = { name: 'Web page', extensions: ['html'] };
+let notebookHandle = null;
 
 /** The notebook the reader chose, or null if they cancelled. */
 export async function openNotebook() {
   if (tauri()) {
     const path = await tauri().dialog.open({ multiple: false, filters: [NOTEBOOK] });
     if (!path) return null;
-    return tauri().core.invoke('read_file', { path });
+    const content = await tauri().core.invoke('read_file', { path });
+    return { content, associated: true };
   }
 
   if (window.showOpenFilePicker) {
@@ -28,18 +30,57 @@ export async function openNotebook() {
       const [handle] = await window.showOpenFilePicker({
         types: [{ description: NOTEBOOK.name, accept: { 'text/markdown': ['.md'] } }],
       });
-      return (await handle.getFile()).text();
+      notebookHandle = handle;
+      return { content: await (await handle.getFile()).text(), associated: true };
     } catch (err) {
       if (err && err.name === 'AbortError') return null;
       throw err;
     }
   }
 
-  return pickWithInput();
+  const content = await pickWithInput();
+  return content === null ? null : { content, associated: false };
 }
 
-export async function saveNotebook(name, content) {
-  return saveText(name, content, NOTEBOOK, 'text/markdown');
+export async function saveNotebook(name, content, saveAs) {
+  if (tauri()) {
+    if (!saveAs) {
+      await tauri().core.invoke('write_current_file', { contents: content });
+      return { associated: true };
+    }
+    const path = await tauri().dialog.save({ defaultPath: name, filters: [NOTEBOOK] });
+    if (!path) return { cancelled: true };
+    await tauri().core.invoke('write_file', { path, contents: content });
+    return { associated: true };
+  }
+
+  if (window.showSaveFilePicker) {
+    try {
+      let handle = notebookHandle;
+      if (saveAs || !handle) {
+        handle = await window.showSaveFilePicker({
+          suggestedName: name,
+          types: [{ description: NOTEBOOK.name, accept: { 'text/markdown': ['.md'] } }],
+        });
+      }
+      const writable = await handle.createWritable();
+      await writable.write(content);
+      await writable.close();
+      notebookHandle = handle;
+      return { associated: true };
+    } catch (err) {
+      if (err && err.name === 'AbortError') return { cancelled: true };
+      throw err;
+    }
+  }
+
+  download(name, content, 'text/markdown');
+  return { associated: false };
+}
+
+export async function clearNotebook() {
+  notebookHandle = null;
+  if (tauri()) await tauri().core.invoke('clear_notebook');
 }
 
 export async function saveExport(name, html) {
@@ -50,7 +91,7 @@ async function saveText(name, content, filter, mime) {
   if (tauri()) {
     const path = await tauri().dialog.save({ defaultPath: name, filters: [filter] });
     if (!path) return;
-    await tauri().core.invoke('write_file', { path, contents: content });
+    await tauri().core.invoke('write_export', { path, contents: content });
     return;
   }
 

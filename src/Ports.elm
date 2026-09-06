@@ -1,4 +1,4 @@
-port module Ports exposing (clearNotebook, dbReady, dropTable, exportStatic, fileOpened, loadSource, materialize, persist, queryOutcome, requestOpen, requestSave, setCaret)
+port module Ports exposing (clearNotebook, dbReady, dropTable, exportStatic, fileOpened, fileSaved, loadSource, materialize, persist, queryOutcome, requestOpen, requestSave, setCaret)
 
 import Json.Decode as D
 
@@ -50,13 +50,16 @@ document.
 port persist : String -> Cmd msg
 
 
-port requestSave : { name : String, content : String } -> Cmd msg
+port requestSave : { name : String, content : String, revision : Int, saveAs : Bool } -> Cmd msg
 
 
 port requestOpen : () -> Cmd msg
 
 
 port fileOpened : (D.Value -> msg) -> Sub msg
+
+
+port fileSaved : (D.Value -> msg) -> Sub msg
 
 
 {-| Put the caret back after an edit the keyboard handler made itself.

@@ -8,7 +8,7 @@
 
 import * as duckdb from './vendor/duckdb.mjs';
 import { exportStatic } from './export.js';
-import { openNotebook, saveNotebook } from './files.js';
+import { clearNotebook, openNotebook, saveNotebook } from './files.js';
 
 const PREVIEW_ROWS = 200;
 const native = () => window.__TAURI__ && window.__TAURI__.core;
@@ -72,14 +72,19 @@ app.ports.persist.subscribe((content) => {
 // a browser and the desktop shell. The File System Access API is Chromium
 // only, and the webview Tauri uses on Linux has neither it nor a working
 // download, so on the desktop these become calls into Rust.
-app.ports.requestSave.subscribe(async ({ name, content }) => {
-  await saveNotebook(name, content);
+app.ports.requestSave.subscribe(async ({ name, content, revision, saveAs }) => {
+  try {
+    const result = await saveNotebook(name, content, saveAs);
+    app.ports.fileSaved.send({ ok: true, revision, ...result });
+  } catch (err) {
+    app.ports.fileSaved.send({ ok: false, revision, error: String(err) });
+  }
 });
 
 app.ports.requestOpen.subscribe(async () => {
   try {
-    const text = await openNotebook();
-    if (text !== null) app.ports.fileOpened.send({ ok: true, content: text });
+    const opened = await openNotebook();
+    if (opened !== null) app.ports.fileOpened.send({ ok: true, ...opened });
   } catch (err) {
     app.ports.fileOpened.send({ ok: false, error: String(err) });
   }
@@ -382,9 +387,7 @@ app.ports.dropTable.subscribe(async (cellId) => {
 });
 
 app.ports.clearNotebook.subscribe(async () => {
-  if (native()) {
-    try { await native().invoke('clear_notebook'); } catch (err) { console.warn(err); }
-  }
+  try { await clearNotebook(); } catch (err) { console.warn(err); }
 });
 
 // Elm already restricts cell names to [a-z0-9_], but the quoting stays: the

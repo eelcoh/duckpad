@@ -1532,32 +1532,32 @@ release milestone.
 
 1. **Done:** New notebook. The `New` button starts from `Notebook.blank`,
    clears the current file association, runtime tables and transient UI state,
-   and uses a two-click confirmation until autosave adds precise dirty-state
-   tracking. It is distinct from `Reset`, which deliberately restores the
-   shipped example.
-2. **Next:** Autosave and persistent document association. The existing
-   `localStorage` mirror is crash recovery, not saving: it cannot update the
-   document the reader opened. Today every Save opens a picker again, even when
-   the notebook was opened from or previously saved to a known file. Replace
-   that with conventional document behavior:
+   and uses a conservative two-click confirmation at the document boundary. It
+   is distinct from `Reset`, which deliberately restores the shipped example.
+2. **Done:** Autosave and persistent document association. The existing
+   `localStorage` mirror remains crash recovery rather than being confused with
+   saving. Document saving now has conventional behavior:
 
    - Open remembers the selected document; Save writes that same document.
    - Save As always opens a picker and replaces the current association after a
      successful write.
    - A New or restored recovery notebook has no association, so its first Save
      behaves as Save As.
-   - Committed edits autosave to an associated document, with a short debounce
-     so typing does not produce a write for every keystroke. Show `saving`,
-     `saved` and `save failed`; a failed save must leave the document dirty and
-     recoverable.
+   - Edits autosave to an associated document after an 800 ms debounce, so
+     typing does not produce a write for every keystroke. Revision tokens keep
+     an older write from marking a newer edit saved. The header shows `saving`,
+     `saved`, `unsaved` and `save failed`; failures remain recoverable in the
+     `localStorage` mirror and are reported without discarding the edit.
    - On desktop, Rust owns the path selected by the native dialog and can write
      it again without prompting. In browsers with the File System Access API,
      JavaScript retains the file handle for the session and requests permission
      again if the browser requires it. Browsers without that API cannot silently
      overwrite a download, so Save/Save As download a new file while
      `localStorage` remains the automatic recovery mechanism.
-3. **Undo and redo.** Start with document-level source history, including cell
-   creation, deletion, rename and reordering as single operations. Native
+   - Static HTML export has its own native write command and therefore cannot
+     accidentally replace the notebook's remembered path.
+3. **Next:** Undo and redo. Start with document-level source history, including
+   cell creation, deletion, rename and reordering as single operations. Native
    textarea undo is insufficient because Elm owns the values and because it
    cannot restore structural edits. Use bounded snapshots or inverse edits,
    expose Undo/Redo buttons, and add the conventional `Ctrl/Cmd-Z` and

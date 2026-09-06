@@ -43,6 +43,7 @@ import Json.Decode as D
 import Notebook exposing (Notebook)
 import Seed
 import Ports
+import Process
 import Prose
 import Query exposing (Outcome(..), Table)
 import Set
@@ -67,6 +68,10 @@ type alias Model =
     , db : DbStatus
     , nextId : Int
     , notice : Maybe String
+    , associated : Bool
+    , revision : Int
+    , saveState : SaveState
+    , saveBefore : Maybe SaveState
 
     -- New and Reset cross document boundaries, so they take two clicks: the
     -- first arms the action and the second does it. Anything else disarms it.
@@ -109,6 +114,14 @@ type DbStatus
     | DbFailed String
 
 
+type SaveState
+    = Unassociated
+    | Saved
+    | Dirty
+    | Saving
+    | SaveFailed String
+
+
 type Msg
     = DbReady D.Value
     | GotOutcome D.Value
@@ -120,8 +133,11 @@ type Msg
     | RunAll
     | TitleEdited String
     | SaveFile
+    | SaveAsFile
     | OpenFile
     | FileOpened D.Value
+    | AutosaveDue Int
+    | FileSaved D.Value
     | DismissNotice
     | NewNotebook
     | ResetNotebook
@@ -152,7 +168,7 @@ init flags =
         ( notebook, notice ) =
             restore flags
     in
-    ( load notebook { title = notebook.title, cells = [], states = Dict.empty, baseSchema = Dict.empty, queue = [], current = Nothing, db = Booting, nextId = 1, notice = notice, newArmed = False, resetArmed = False, editing = Nothing, expanded = Set.empty, inputs = Dict.empty, pickers = Dict.empty, today = Nothing }
+    ( load notebook { title = notebook.title, cells = [], states = Dict.empty, baseSchema = Dict.empty, queue = [], current = Nothing, db = Booting, nextId = 1, notice = notice, associated = False, revision = 0, saveState = Unassociated, saveBefore = Nothing, newArmed = False, resetArmed = False, editing = Nothing, expanded = Set.empty, inputs = Dict.empty, pickers = Dict.empty, today = Nothing }
     , Task.perform GotToday Date.today
     )
 
@@ -447,26 +463,39 @@ step msg model =
             withPersist ( { model | title = title }, Cmd.none )
 
         SaveFile ->
-            ( model
-            , Ports.requestSave
-                { name = fileNameFor model.title
-                , content = Notebook.serialize (toNotebook model)
-                }
-            )
+            beginSave (not model.associated) model
+
+        SaveAsFile ->
+            beginSave True model
 
         OpenFile ->
             ( model, Ports.requestOpen () )
 
         FileOpened payload ->
             case D.decodeValue openedDecoder payload of
-                Ok (Ok text) ->
-                    case Notebook.parse text of
+                Ok (Ok opened) ->
+                    case Notebook.parse opened.content of
                         Ok notebook ->
                             let
                                 loaded =
-                                    load notebook { model | notice = Nothing }
+                                    load notebook
+                                        { model
+                                            | notice = Nothing
+                                            , associated = opened.associated
+                                            , revision = model.revision + 1
+                                            , saveState =
+                                                if opened.associated then
+                                                    Saved
+
+                                                else
+                                                    Unassociated
+                                            , saveBefore = Nothing
+                                        }
+
+                                ( scheduled, run ) =
+                                    schedule loaded
                             in
-                            withPersist (schedule loaded)
+                            ( scheduled, Cmd.batch [ run, Ports.persist (Notebook.serialize (toNotebook scheduled)) ] )
 
                         Err message ->
                             ( { model | notice = Just ("That file is not a notebook this can read. " ++ message) }
@@ -479,6 +508,25 @@ step msg model =
                 Err err ->
                     ( { model | notice = Just (D.errorToString err) }, Cmd.none )
 
+        AutosaveDue revision ->
+            if revision == model.revision && model.associated && model.saveState == Dirty then
+                beginSave False model
+
+            else
+                ( model, Cmd.none )
+
+        FileSaved payload ->
+            case D.decodeValue savedDecoder payload of
+                Ok outcome ->
+                    finishSave outcome model
+
+                Err err ->
+                    let
+                        message =
+                            D.errorToString err
+                    in
+                    ( { model | saveState = SaveFailed message, saveBefore = Nothing, notice = Just ("Could not save this notebook. " ++ message) }, Cmd.none )
+
         DismissNotice ->
             ( { model | notice = Nothing }, Cmd.none )
 
@@ -489,6 +537,9 @@ step msg model =
                         load Notebook.blank
                             { model
                                 | notice = Nothing
+                                , associated = False
+                                , saveState = Unassociated
+                                , saveBefore = Nothing
                                 , newArmed = False
                                 , resetArmed = False
                                 , nextId = model.nextId + List.length model.cells + 1
@@ -616,7 +667,7 @@ step msg model =
             if model.resetArmed then
                 let
                     ( reset, run ) =
-                        schedule (load Seed.notebook { model | notice = Nothing, newArmed = False, resetArmed = False })
+                        schedule (load Seed.notebook { model | notice = Nothing, associated = False, saveState = Unassociated, saveBefore = Nothing, newArmed = False, resetArmed = False })
                 in
                 withPersist ( reset, Cmd.batch [ clearDocument model, run ] )
 
@@ -629,9 +680,84 @@ step msg model =
 -}
 withPersist : ( Model, Cmd Msg ) -> ( Model, Cmd Msg )
 withPersist ( model, cmd ) =
-    ( model
-    , Cmd.batch [ cmd, Ports.persist (Notebook.serialize (toNotebook model)) ]
+    let
+        revision =
+            model.revision + 1
+
+        updated =
+            { model
+                | revision = revision
+                , saveState =
+                    if model.associated then
+                        Dirty
+
+                    else
+                        Unassociated
+            }
+
+        autosave =
+            if updated.associated then
+                Process.sleep 800 |> Task.perform (\_ -> AutosaveDue revision)
+
+            else
+                Cmd.none
+    in
+    ( updated
+    , Cmd.batch [ cmd, Ports.persist (Notebook.serialize (toNotebook updated)), autosave ]
     )
+
+
+beginSave : Bool -> Model -> ( Model, Cmd Msg )
+beginSave saveAs model =
+    ( { model | saveBefore = Just model.saveState, saveState = Saving }
+    , Ports.requestSave
+        { name = fileNameFor model.title
+        , content = Notebook.serialize (toNotebook model)
+        , revision = model.revision
+        , saveAs = saveAs
+        }
+    )
+
+
+type SaveOutcome
+    = SaveOk Int Bool
+    | SaveCancelled Int
+    | SaveError Int String
+
+
+finishSave : SaveOutcome -> Model -> ( Model, Cmd Msg )
+finishSave outcome model =
+    case outcome of
+        SaveOk revision associated ->
+            ( { model
+                | associated = associated
+                , saveState =
+                    if revision /= model.revision then
+                        Dirty
+
+                    else if associated then
+                        Saved
+
+                    else
+                        Unassociated
+                , saveBefore = Nothing
+              }
+            , Cmd.none
+            )
+
+        SaveCancelled revision ->
+            if revision == model.revision then
+                ( { model | saveState = Maybe.withDefault Unassociated model.saveBefore, saveBefore = Nothing }, Cmd.none )
+
+            else
+                ( { model | saveState = Dirty, saveBefore = Nothing }, Cmd.none )
+
+        SaveError revision message ->
+            if revision == model.revision then
+                ( { model | saveState = SaveFailed message, saveBefore = Nothing, notice = Just ("Could not save this notebook. " ++ message) }, Cmd.none )
+
+            else
+                ( { model | saveState = Dirty, saveBefore = Nothing }, Cmd.none )
 
 
 clearDocument : Model -> Cmd Msg
@@ -679,16 +805,44 @@ orDefault fallback text =
             text
 
 
-openedDecoder : D.Decoder (Result String String)
+openedDecoder : D.Decoder (Result String { content : String, associated : Bool })
 openedDecoder =
     D.field "ok" D.bool
         |> D.andThen
             (\ok ->
                 if ok then
-                    D.map Ok (D.field "content" D.string)
+                    D.map2 (\content associated -> Ok { content = content, associated = associated })
+                        (D.field "content" D.string)
+                        (D.field "associated" D.bool)
 
                 else
                     D.map Err (D.field "error" D.string)
+            )
+
+
+savedDecoder : D.Decoder SaveOutcome
+savedDecoder =
+    D.map2 Tuple.pair
+        (D.field "ok" D.bool)
+        (D.field "revision" D.int)
+        |> D.andThen
+            (\( ok, revision ) ->
+                if not ok then
+                    D.map (SaveError revision) (D.field "error" D.string)
+
+                else
+                    D.oneOf
+                        [ D.field "cancelled" D.bool
+                            |> D.andThen
+                                (\cancelled ->
+                                    if cancelled then
+                                        D.succeed (SaveCancelled revision)
+
+                                    else
+                                        D.fail "not cancelled"
+                                )
+                        , D.map (SaveOk revision) (D.field "associated" D.bool)
+                        ]
             )
 
 
@@ -1493,6 +1647,7 @@ subscriptions _ =
         [ Ports.queryOutcome GotOutcome
         , Ports.dbReady DbReady
         , Ports.fileOpened FileOpened
+        , Ports.fileSaved FileSaved
         ]
 
 
@@ -1541,10 +1696,12 @@ viewHeader model graph =
                 ]
             , Element.wrappedRow [ alignRight, spacing 10, Ui.dropOnExport ]
                 [ viewDbStatus model.db
+                , viewSaveStatus model.saveState
                 , plainButton "New" model.newArmed (Just NewNotebook)
                 , plainButton "Reset" model.resetArmed (Just ResetNotebook)
                 , plainButton "Open" False (Just OpenFile)
                 , plainButton "Save" False (Just SaveFile)
+                , plainButton "Save as" False (Just SaveAsFile)
                 , plainButton "Export" False (Just ExportNotebook)
                 , plainButton "Run all"
                     False
@@ -1681,6 +1838,25 @@ viewDbStatus db =
 
         DbFailed _ ->
             Ui.pill Ui.bad "duckdb failed"
+
+
+viewSaveStatus : SaveState -> Element Msg
+viewSaveStatus state =
+    case state of
+        Unassociated ->
+            Ui.pill Ui.muted "not saved"
+
+        Saved ->
+            Ui.pill Ui.good "saved"
+
+        Dirty ->
+            Ui.pill Ui.stale "unsaved"
+
+        Saving ->
+            Ui.pill Ui.accent "saving…"
+
+        SaveFailed _ ->
+            Ui.pill Ui.bad "save failed"
 
 
 viewExecutionOrder : Graph -> Element Msg

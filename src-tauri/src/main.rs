@@ -10,6 +10,7 @@ use tauri::{path::BaseDirectory, Manager};
 
 struct Database {
     connection: Mutex<Connection>,
+    document_path: Mutex<Option<PathBuf>>,
     notebook_dir: Mutex<Option<PathBuf>>,
     bundled_resource_dir: PathBuf,
     excel_extension: PathBuf,
@@ -44,19 +45,40 @@ struct Described {
 #[tauri::command(async)]
 fn read_file(path: String, state: tauri::State<'_, Database>) -> Result<String, String> {
     let path = PathBuf::from(path);
+    let contents = std::fs::read_to_string(&path).map_err(err)?;
+    *state.document_path.lock().map_err(err)? = Some(path.clone());
     *state.notebook_dir.lock().map_err(err)? = path.parent().map(Path::to_path_buf);
-    std::fs::read_to_string(path).map_err(err)
+    Ok(contents)
 }
 
 #[tauri::command(async)]
 fn write_file(path: String, contents: String, state: tauri::State<'_, Database>) -> Result<(), String> {
     let path = PathBuf::from(path);
+    std::fs::write(&path, contents).map_err(err)?;
+    *state.document_path.lock().map_err(err)? = Some(path.clone());
     *state.notebook_dir.lock().map_err(err)? = path.parent().map(Path::to_path_buf);
+    Ok(())
+}
+
+#[tauri::command(async)]
+fn write_current_file(contents: String, state: tauri::State<'_, Database>) -> Result<(), String> {
+    let path = state
+        .document_path
+        .lock()
+        .map_err(err)?
+        .clone()
+        .ok_or_else(|| "this notebook has no file yet".to_string())?;
+    std::fs::write(path, contents).map_err(err)
+}
+
+#[tauri::command(async)]
+fn write_export(path: String, contents: String) -> Result<(), String> {
     std::fs::write(path, contents).map_err(err)
 }
 
 #[tauri::command(async)]
 fn clear_notebook(state: tauri::State<'_, Database>) -> Result<(), String> {
+    *state.document_path.lock().map_err(err)? = None;
     *state.notebook_dir.lock().map_err(err)? = None;
     Ok(())
 }
@@ -300,6 +322,7 @@ fn main() {
                 .join("excel.duckdb_extension");
             app.manage(Database {
                 connection: Mutex::new(connection),
+                document_path: Mutex::new(None),
                 notebook_dir: Mutex::new(None),
                 bundled_resource_dir,
                 excel_extension,
@@ -307,7 +330,7 @@ fn main() {
             Ok(())
         })
         .plugin(tauri_plugin_dialog::init())
-        .invoke_handler(tauri::generate_handler![read_file, write_file, clear_notebook, db_boot, db_load_source, db_materialize, db_drop_table])
+        .invoke_handler(tauri::generate_handler![read_file, write_file, write_current_file, write_export, clear_notebook, db_boot, db_load_source, db_materialize, db_drop_table])
         .run(tauri::generate_context!())
         .expect("duckpad failed to start");
 }
