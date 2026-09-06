@@ -76,6 +76,7 @@ type alias Model =
     , history : History.History Notebook
     , historyEdit : Maybe String
     , insertingAt : Maybe Int
+    , schemaExpanded : Set.Set String
 
     -- New and Reset cross document boundaries, so they take two clicks: the
     -- first arms the action and the second does it. Anything else disarms it.
@@ -134,6 +135,7 @@ type Msg
     | CommitEdit
     | AddCell Int Kind
     | ToggleInsert Int
+    | ToggleSchema String
     | DeleteCell String
     | RunAll
     | TitleEdited String
@@ -175,7 +177,7 @@ init flags =
         ( notebook, notice ) =
             restore flags
     in
-    ( load notebook { title = notebook.title, cells = [], states = Dict.empty, baseSchema = Dict.empty, queue = [], current = Nothing, db = Booting, nextId = 1, notice = notice, associated = False, revision = 0, saveState = Unassociated, saveBefore = Nothing, history = History.empty, historyEdit = Nothing, insertingAt = Nothing, newArmed = False, resetArmed = False, editing = Nothing, expanded = Set.empty, inputs = Dict.empty, pickers = Dict.empty, today = Nothing }
+    ( load notebook { title = notebook.title, cells = [], states = Dict.empty, baseSchema = Dict.empty, queue = [], current = Nothing, db = Booting, nextId = 1, notice = notice, associated = False, revision = 0, saveState = Unassociated, saveBefore = Nothing, history = History.empty, historyEdit = Nothing, insertingAt = Nothing, schemaExpanded = Set.empty, newArmed = False, resetArmed = False, editing = Nothing, expanded = Set.empty, inputs = Dict.empty, pickers = Dict.empty, today = Nothing }
     , Task.perform GotToday Date.today
     )
 
@@ -216,6 +218,7 @@ load notebook model =
         , inputs = Dict.empty
         , pickers = Dict.empty
         , insertingAt = Nothing
+        , schemaExpanded = Set.empty
     }
 
 
@@ -460,6 +463,18 @@ step msg model =
 
                     else
                         Just position
+              }
+            , Cmd.none
+            )
+
+        ToggleSchema id ->
+            ( { model
+                | schemaExpanded =
+                    if Set.member id model.schemaExpanded then
+                        Set.remove id model.schemaExpanded
+
+                    else
+                        Set.insert id model.schemaExpanded
               }
             , Cmd.none
             )
@@ -2109,9 +2124,92 @@ viewCell model graph cell =
         ]
         [ viewCellHead model graph cell state
         , el [ width fill ] (Element.html (viewBody model cell))
+        , viewSourceSchema model cell state
         , viewOutput model cell state
         , viewArtefacts model cell state
         ]
+
+
+viewSourceSchema : Model -> Cell -> CellState -> Element Msg
+viewSourceSchema model cell state =
+    if cell.kind /= Source then
+        Element.none
+
+    else
+        case state.table of
+            Nothing ->
+                Element.none
+
+            Just result ->
+                let
+                    open =
+                        Set.member cell.id model.schemaExpanded
+
+                    toggle =
+                        Input.button
+                            [ Font.size 11
+                            , Font.color Ui.muted
+                            , Element.mouseOver [ Font.color Ui.accent ]
+                            , Ui.dropOnExport
+                            ]
+                            { onPress = Just (ToggleSchema cell.id)
+                            , label = text ((if open then "▾ " else "▸ ") ++ "schema · " ++ String.fromInt (List.length result.described) ++ " columns")
+                            }
+                in
+                column
+                    [ width fill
+                    , spacing 8
+                    , paddingXY 12 8
+                    , Border.widthEach { top = 1, left = 0, right = 0, bottom = 0 }
+                    , Border.color Ui.line
+                    ]
+                    [ toggle
+                    , if open then
+                        schemaTable result.described
+
+                      else
+                        Element.none
+                    ]
+
+
+schemaTable : List Query.Described -> Element Msg
+schemaTable columns =
+    let
+        heading label =
+            el [ paddingXY 6 4 ] (Ui.tinyCaps Ui.muted label)
+
+        value body =
+            el [ paddingXY 6 5, Font.family Ui.mono, Font.size 11 ] (text body)
+
+        duckpadType column =
+            case Schema.fromDuckDb column.sqlType of
+                Just inferred ->
+                    Schema.typeName
+                        (if column.nullable then
+                            TMaybe inferred
+
+                         else
+                            inferred
+                        )
+
+                Nothing ->
+                    "unsupported"
+    in
+    Element.table
+        [ width fill
+        , Border.width 1
+        , Border.color Ui.line
+        , Border.rounded 5
+        ]
+        { data = columns
+        , columns =
+            [ { header = heading "file column", width = fill, view = .originalName >> value }
+            , { header = heading "field", width = fill, view = .name >> value }
+            , { header = heading "duckdb", width = px 150, view = .sqlType >> value }
+            , { header = heading "duckpad", width = px 180, view = duckpadType >> value }
+            , { header = heading "nullable", width = px 75, view = .nullable >> (\nullable -> if nullable then "yes" else "no") >> value }
+            ]
+        }
 
 
 viewCellHead : Model -> Graph -> Cell -> CellState -> Element Msg

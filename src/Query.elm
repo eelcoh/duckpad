@@ -46,7 +46,8 @@ type alias Table =
 rather than read off a declaration that a CREATE TABLE AS never set.
 -}
 type alias Described =
-    { name : String
+    { originalName : String
+    , name : String
     , sqlType : String
     , nullable : Bool
     }
@@ -85,7 +86,8 @@ tableDecoder =
 describedDecoder : Decoder (List Described)
 describedDecoder =
     D.list
-        (D.map3 Described
+        (D.map4 Described
+            (D.oneOf [ D.field "originalName" D.string, D.field "name" D.string ])
             (D.field "name" D.string)
             (D.field "type" D.string)
             (D.field "nullable" D.bool)

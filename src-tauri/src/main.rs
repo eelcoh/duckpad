@@ -36,6 +36,8 @@ struct Source {
 
 #[derive(Serialize)]
 struct Described {
+    #[serde(rename = "originalName")]
+    original_name: String,
     name: String,
     #[serde(rename = "type")]
     sql_type: String,
@@ -120,7 +122,8 @@ fn db_load_source(request: Source, state: tauri::State<'_, Database>) -> Result<
             request.options
         ))
         .map_err(err)?;
-    outcome(&connection, &request.cell_id, &name, 200, false, started)
+    let original_names = original_column_names(&connection, reader, &location, &request.options);
+    outcome(&connection, &request.cell_id, &name, 200, false, started, original_names.as_deref())
 }
 
 #[tauri::command(async)]
@@ -134,7 +137,7 @@ fn db_materialize(request: Materialize, state: tauri::State<'_, Database>) -> Re
             request.sql
         ))
         .map_err(err)?;
-    outcome(&connection, &request.cell_id, &name, request.row_limit, request.order_significant, started)
+    outcome(&connection, &request.cell_id, &name, request.row_limit, request.order_significant, started, None)
 }
 
 #[tauri::command(async)]
@@ -172,8 +175,8 @@ fn resolve_source_path(uri: &str, notebook_dir: Option<&Path>, bundled_resource_
     }
 }
 
-fn outcome(connection: &Connection, cell_id: &str, name: &str, limit: usize, ordered: bool, started: Instant) -> Result<Value, String> {
-    let described = describe(connection, name)?;
+fn outcome(connection: &Connection, cell_id: &str, name: &str, limit: usize, ordered: bool, started: Instant, original_names: Option<&[String]>) -> Result<Value, String> {
+    let described = describe(connection, name, original_names)?;
     let columns: Vec<_> = described.iter().map(|c| json!({ "name": c.name, "type": c.sql_type })).collect();
     let row_count: i64 = connection.query_row(&format!("SELECT count(*) FROM {name}"), [], |r| r.get(0)).map_err(err)?;
     let rows = rows_json(connection, name, &described, limit)?;
@@ -186,16 +189,27 @@ fn outcome(connection: &Connection, cell_id: &str, name: &str, limit: usize, ord
         "hash": hash, "millis": started.elapsed().as_secs_f64() * 1000.0 }))
 }
 
-fn describe(connection: &Connection, name: &str) -> Result<Vec<Described>, String> {
+fn describe(connection: &Connection, name: &str, original_names: Option<&[String]>) -> Result<Vec<Described>, String> {
     let mut statement = connection.prepare(&format!("DESCRIBE {name}")).map_err(err)?;
     let raw = statement.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))
         .map_err(err)?.collect::<Result<Vec<_>, _>>().map_err(err)?;
-    raw.into_iter().map(|(column, sql_type)| {
+    raw.into_iter().enumerate().map(|(index, (column, sql_type))| {
         let nulls: i64 = connection.query_row(&format!(
             "SELECT count(*) - count({}) FROM (SELECT * FROM {name} LIMIT 200000)", quote_ident(&column)
         ), [], |r| r.get(0)).map_err(err)?;
-        Ok(Described { name: column, sql_type, nullable: nulls > 0 })
+        let original_name = original_names.and_then(|names| names.get(index)).cloned().unwrap_or_else(|| column.clone());
+        Ok(Described { original_name, name: column, sql_type, nullable: nulls > 0 })
     }).collect()
+}
+
+fn original_column_names(connection: &Connection, reader: &str, location: &str, options: &str) -> Option<Vec<String>> {
+    if reader != "read_xlsx" || !options.contains("normalize_names=true") {
+        return None;
+    }
+    let raw_options = options.replace("normalize_names=true", "normalize_names=false");
+    let sql = format!("DESCRIBE SELECT * FROM {reader}({}{raw_options})", quote_literal(location));
+    let mut statement = connection.prepare(&sql).ok()?;
+    statement.query_map([], |row| row.get::<_, String>(0)).ok()?.collect::<Result<Vec<_>, _>>().ok()
 }
 
 fn rows_json(connection: &Connection, name: &str, columns: &[Described], limit: usize) -> Result<Value, String> {
@@ -240,7 +254,8 @@ mod tests {
              TIMESTAMP '2024-01-02 03:04:05' AS happened, NULL::VARCHAR AS note",
         ).unwrap();
 
-        let value = outcome(&connection, "cell-1", "result", 200, true, Instant::now()).unwrap();
+        let original_names = vec!["Number".into(), "Wide number".into(), "When".into(), "Note".into()];
+        let value = outcome(&connection, "cell-1", "result", 200, true, Instant::now(), Some(&original_names)).unwrap();
         assert_eq!(value["ok"], true);
         assert_eq!(value["cellId"], "cell-1");
         assert_eq!(value["rowCount"], 1);
@@ -250,6 +265,7 @@ mod tests {
         assert_eq!(value["rows"][0]["happened"], 1704164645000_i64);
         assert!(value["rows"][0]["note"].is_null());
         assert_eq!(value["described"][3]["nullable"], true);
+        assert_eq!(value["described"][1]["originalName"], "Wide number");
         assert_eq!(value["hash"].as_str().unwrap().len(), 32);
     }
 

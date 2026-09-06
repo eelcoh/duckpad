@@ -1577,19 +1577,20 @@ These follow document lifecycle unless one becomes necessary to complete it:
    every cell kind. The new cell is inserted at that exact file position,
    receives editing focus, and is one undoable/autosaved operation. Dependency
    execution remains graph-driven rather than being changed by display order.
-2. **Next: Show inferred data types.** After a data file loads, give its cell a
-   collapsible schema panel showing the original/inferred column name, DuckDB
-   type, Duckpad type and nullability. This needs to make transformations such
-   as Excel `normalizeNames` visible and explain why an `ignoreErrors` column
-   became `Maybe Float`; the reader should not have to discover the schema by
-   provoking an unknown-column error.
-3. **Rename Source cells to Data cells.** In the UI, model and documentation,
-   `Data` better describes a file-backed table; `Source` reads like program
-   source code. Treat this as a file-format migration rather than a search and
-   replace: write new cells with the `data` fence tag, continue accepting the
-   legacy `source` fence tag on read, and preserve old notebooks' meaning. The
-   cell body (`csv`, `parquet`, `json`, `xlsx`) and dependency semantics stay
-   unchanged.
+2. **Done: Show inferred data types.** Every successfully loaded source has a
+   collapsible schema panel showing file heading, usable field name, DuckDB
+   type, Duckpad type and observed nullability. With Excel `normalizeNames true`,
+   a metadata-only second `DESCRIBE` recovers the original headings and
+   pairs them with normalized names by column position; failure of that
+   supplementary lookup does not fail the data load. Unsupported DuckDB types
+   are identified rather than silently disappearing from the explanation.
+3. **Next: Rename Source cells to Data cells.** In the UI, model and
+   documentation, `Data` better describes a file-backed table; `Source` reads
+   like program source code. Treat this as a file-format migration rather than
+   a search and replace: write new cells with the `data` fence tag, continue
+   accepting the legacy `source` fence tag on read, and preserve old
+   notebooks' meaning. The cell body (`csv`, `parquet`, `json`, `xlsx`) and
+   dependency semantics stay unchanged.
 4. **Move chart rendering to [elm-charts](https://www.elm-charts.org/).** Spike
    the current bar, line and point examples in `terezka/elm-charts`, then replace
    the Vega/Vega-Lite custom-element bridge if they reach feature parity. Keep

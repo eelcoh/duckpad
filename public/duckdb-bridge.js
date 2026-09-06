@@ -202,7 +202,8 @@ app.ports.loadSource.subscribe(async ({ cellId, format, uri, options }) => {
     );
     clock.lap('view');
 
-    const described = await describe(name, format, vfsName);
+    const originalNames = await originalColumnNames(format, reader, vfsName, options);
+    const described = await describe(name, format, vfsName, originalNames);
     clock.lap('describe');
 
     const counted = plainRows(await conn.query(`SELECT count(*) AS n FROM ${name}`))[0];
@@ -253,18 +254,37 @@ async function ensureExcel() {
 // NULL constraints, so every column reports itself as nullable and the row
 // type would drown in Maybe. What the notebook actually wants to know is
 // whether a column *does* contain nulls, which is a question about the data.
-async function describe(name, format, vfsName) {
+async function describe(name, format, vfsName, originalNames = null) {
   const described = plainRows(await conn.query(`DESCRIBE ${name}`));
 
   const nulls =
     (format === 'parquet' ? await nullsFromParquet(vfsName) : null) ||
     (await nullsBySampling(name, described));
 
-  return described.map((c) => ({
+  return described.map((c, index) => ({
+    originalName: originalNames?.[index] || c.column_name,
     name: c.column_name,
     type: c.column_type,
     nullable: Number(nulls[c.column_name] || 0) > 0,
   }));
+}
+
+// Normalized Excel names replace the workbook headings in the view schema.
+// DESCRIBE the same reader with normalization disabled to recover those
+// headings; this reads metadata/header rows, not the worksheet into a table.
+async function originalColumnNames(format, reader, vfsName, options) {
+  if (format !== 'xlsx' || !/normalize_names\s*=\s*true/i.test(options)) return null;
+  try {
+    const rawOptions = options.replace(/normalize_names\s*=\s*true/i, 'normalize_names=false');
+    const rows = plainRows(
+      await conn.query(`DESCRIBE SELECT * FROM ${reader}('${vfsName}'${rawOptions})`)
+    );
+    return rows.map((column) => column.column_name);
+  } catch {
+    // The inferred schema is still useful if a particular extension version
+    // cannot perform the metadata-only second describe.
+    return null;
+  }
 }
 
 // Parquet already knows. Every column chunk carries a null count in the file
