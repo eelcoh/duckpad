@@ -1,4 +1,4 @@
-module Notebook exposing (Notebook, blank, parse, serialize)
+module Notebook exposing (Notebook, blank, insertCell, parse, serialize)
 
 {-| The on-disk format: Markdown with the query cells in fenced blocks.
 
@@ -30,6 +30,16 @@ type alias Notebook =
 blank : Notebook
 blank =
     { title = "Untitled notebook", cells = [] }
+
+
+insertCell : Int -> Cell -> Notebook -> Notebook
+insertCell position cell notebook =
+    { notebook
+        | cells =
+            List.take position notebook.cells
+                ++ [ cell ]
+                ++ List.drop position notebook.cells
+    }
 
 
 fence : String

@@ -75,6 +75,7 @@ type alias Model =
     , saveBefore : Maybe SaveState
     , history : History.History Notebook
     , historyEdit : Maybe String
+    , insertingAt : Maybe Int
 
     -- New and Reset cross document boundaries, so they take two clicks: the
     -- first arms the action and the second does it. Anything else disarms it.
@@ -131,7 +132,8 @@ type Msg
     | SourceEdited String String
     | NameEdited String String
     | CommitEdit
-    | AddCell Kind
+    | AddCell Int Kind
+    | ToggleInsert Int
     | DeleteCell String
     | RunAll
     | TitleEdited String
@@ -173,7 +175,7 @@ init flags =
         ( notebook, notice ) =
             restore flags
     in
-    ( load notebook { title = notebook.title, cells = [], states = Dict.empty, baseSchema = Dict.empty, queue = [], current = Nothing, db = Booting, nextId = 1, notice = notice, associated = False, revision = 0, saveState = Unassociated, saveBefore = Nothing, history = History.empty, historyEdit = Nothing, newArmed = False, resetArmed = False, editing = Nothing, expanded = Set.empty, inputs = Dict.empty, pickers = Dict.empty, today = Nothing }
+    ( load notebook { title = notebook.title, cells = [], states = Dict.empty, baseSchema = Dict.empty, queue = [], current = Nothing, db = Booting, nextId = 1, notice = notice, associated = False, revision = 0, saveState = Unassociated, saveBefore = Nothing, history = History.empty, historyEdit = Nothing, insertingAt = Nothing, newArmed = False, resetArmed = False, editing = Nothing, expanded = Set.empty, inputs = Dict.empty, pickers = Dict.empty, today = Nothing }
     , Task.perform GotToday Date.today
     )
 
@@ -213,6 +215,7 @@ load notebook model =
         , expanded = Set.empty
         , inputs = Dict.empty
         , pickers = Dict.empty
+        , insertingAt = Nothing
     }
 
 
@@ -410,7 +413,7 @@ step msg model =
         CommitEdit ->
             schedule { model | editing = Nothing, historyEdit = Nothing }
 
-        AddCell kind ->
+        AddCell position kind ->
             let
                 fresh =
                     { id = freshName kind model
@@ -435,12 +438,31 @@ step msg model =
             in
             recordDocumentEdit model
                 ( { model
-                    | cells = model.cells ++ [ fresh ]
+                    | cells = (Notebook.insertCell position fresh (toNotebook model)).cells
                     , states = Dict.insert fresh.id Engine.initialState model.states
                     , nextId = model.nextId + 1
+                    , editing =
+                        if kind == Prose then
+                            Just fresh.id
+
+                        else
+                            Nothing
+                    , insertingAt = Nothing
                   }
-                , Cmd.none
+                , Task.attempt Focused (Browser.Dom.focus (domIdFor fresh.id))
                 )
+
+        ToggleInsert position ->
+            ( { model
+                | insertingAt =
+                    if model.insertingAt == Just position then
+                        Nothing
+
+                    else
+                        Just position
+              }
+            , Cmd.none
+            )
 
         DeleteCell id ->
             let
@@ -1792,8 +1814,7 @@ view model =
             ]
             (viewHeader model graph
                 :: viewNotice model.notice
-                ++ List.map (viewCell model graph) model.cells
-                ++ [ viewAddRow ]
+                ++ viewNotebookCells model graph
             )
         )
 
@@ -2015,15 +2036,44 @@ viewExecutionOrder graph =
         ]
 
 
-viewAddRow : Element Msg
-viewAddRow =
-    row [ spacing 8, Ui.dropOnExport ]
-        [ plainButton "+ source" False (Just (AddCell Source))
-        , plainButton "+ input" False (Just (AddCell Input))
-        , plainButton "+ types" False (Just (AddCell Types))
-        , plainButton "+ query cell" False (Just (AddCell Query))
-        , plainButton "+ prose cell" False (Just (AddCell Prose))
-        ]
+viewNotebookCells : Model -> Graph -> List (Element Msg)
+viewNotebookCells model graph =
+    (model.cells
+        |> List.indexedMap
+            (\position cell ->
+                [ viewAddRow model position
+                , viewCell model graph cell
+                ]
+            )
+        |> List.concat
+    )
+        ++ [ viewAddRow model (List.length model.cells) ]
+
+
+viewAddRow : Model -> Int -> Element Msg
+viewAddRow model position =
+    if model.insertingAt == Just position then
+        Element.wrappedRow
+            [ spacing 6, centerX, paddingXY 0 2, Ui.dropOnExport ]
+            [ plainButton "+ source" False (Just (AddCell position Source))
+            , plainButton "+ input" False (Just (AddCell position Input))
+            , plainButton "+ types" False (Just (AddCell position Types))
+            , plainButton "+ query" False (Just (AddCell position Query))
+            , plainButton "+ prose" False (Just (AddCell position Prose))
+            , plainButton "cancel" False (Just (ToggleInsert position))
+            ]
+
+    else
+        Input.button
+            [ centerX
+            , paddingXY 10 2
+            , Font.size 11
+            , Font.color Ui.muted
+            , Ui.dropOnExport
+            , Element.alpha 0.45
+            , Element.mouseOver [ Element.alpha 1, Font.color Ui.accent ]
+            ]
+            { onPress = Just (ToggleInsert position), label = text "+ insert cell" }
 
 
 

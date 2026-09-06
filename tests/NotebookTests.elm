@@ -91,6 +91,24 @@ formatChecks =
         (Notebook.parse "```duckpad Not-A-Name\naccess t () |> selectAll\n```")
     , assert "notebook: an empty notebook round-trips"
         (Notebook.parse (Notebook.serialize Notebook.blank) == Ok Notebook.blank)
+    , equal "notebook: a cell can be inserted before the first cell"
+        [ "new", "", "a", "", "b" ]
+        (Notebook.insertCell 0 { id = "new", kind = Query, source = "access orders () |> selectAll" } sample
+            |> .cells
+            |> List.map .id
+        )
+    , equal "notebook: a cell can be inserted between existing cells"
+        [ "", "a", "new", "", "b" ]
+        (Notebook.insertCell 2 { id = "new", kind = Query, source = "access orders () |> selectAll" } sample
+            |> .cells
+            |> List.map .id
+        )
+    , equal "notebook: insertion after the last cell preserves file order"
+        [ "", "a", "", "b", "new" ]
+        (Notebook.insertCell 4 { id = "new", kind = Query, source = "access orders () |> selectAll" } sample
+            |> .cells
+            |> List.map .id
+        )
     ]
 
 

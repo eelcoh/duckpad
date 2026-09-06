@@ -1572,12 +1572,12 @@ autosave failure must leave both undo history and the recovery mirror intact.
 
 These follow document lifecycle unless one becomes necessary to complete it:
 
-1. **Next: Insert cells anywhere.** Replace the single add row at the bottom with an
-   insertion affordance before the first cell, between every pair of cells and
-   after the last cell. Every cell kind must be available at every insertion
-   point, so a notebook can begin with prose. Preserve file order and focus the
-   newly inserted cell without changing dependency execution order.
-2. **Show inferred data types.** After a data file loads, give its cell a
+1. **Done: Insert cells anywhere.** A quiet insertion affordance appears before
+   the first cell, between every pair and after the last; expanding it offers
+   every cell kind. The new cell is inserted at that exact file position,
+   receives editing focus, and is one undoable/autosaved operation. Dependency
+   execution remains graph-driven rather than being changed by display order.
+2. **Next: Show inferred data types.** After a data file loads, give its cell a
    collapsible schema panel showing the original/inferred column name, DuckDB
    type, Duckpad type and nullability. This needs to make transformations such
    as Excel `normalizeNames` visible and explain why an `ignoreErrors` column
