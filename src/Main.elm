@@ -2191,7 +2191,7 @@ viewDataSchema model cell state =
                             schemaTable result.described
 
                         else
-                            artefact "Inferred Elm model" (schemaElmModel result.described)
+                            schemaElmModelView result.described
 
                       else
                         Element.none
@@ -2267,6 +2267,32 @@ schemaElmModel columns =
                         |> String.concat
                    )
                 ++ "\n    }"
+
+
+schemaElmModelView : List Query.Described -> Element Msg
+schemaElmModelView columns =
+    column
+        [ width fill
+        , paddingXY 12 8
+        , spacing 2
+        , Background.color Ui.card
+        ]
+        (Ui.tinyCaps Ui.accent "Inferred Elm model"
+            :: (schemaElmModel columns
+                    |> String.lines
+                    |> List.map
+                        (\line ->
+                            el
+                                [ width fill
+                                , Element.clipX
+                                , Font.family Ui.mono
+                                , Font.size 11
+                                , Font.color Ui.ink
+                                ]
+                                (text line)
+                        )
+               )
+        )
 
 
 elmTypeName : Query.Described -> String
