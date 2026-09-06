@@ -2284,7 +2284,6 @@ schemaElmModelView columns =
                         (\line ->
                             el
                                 [ width fill
-                                , Element.clipX
                                 , Font.family Ui.mono
                                 , Font.size 11
                                 , Font.color Ui.ink
@@ -3222,7 +3221,7 @@ artefact label body =
         , Background.color Ui.card
         ]
         [ Ui.tinyCaps Ui.accent label
-        , el [ width fill, Element.clipX ]
+        , el [ width fill ]
             (Element.html (pre [ class "artefact-pre" ] [ Html.text body ]))
         ]
 
