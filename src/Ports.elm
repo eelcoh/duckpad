@@ -14,7 +14,7 @@ that asked for an order needs the stricter one that folds them as they lie.
 port materialize : { cellId : String, sql : String, orderSignificant : Bool, rowLimit : Int } -> Cmd msg
 
 
-{-| Point a source cell at external data.
+{-| Point a data cell at external data.
 
 The result comes back on `queryOutcome` like a query does, but carries the
 schema DuckDB inferred, because for a source that is the only place a row type

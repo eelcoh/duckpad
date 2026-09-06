@@ -414,9 +414,9 @@ demo rather than a tool. It also comes first in dependency order —
 joins are pointless over a single table, and export cannot be designed
 until it is known how data gets in.
 
-A source is its own cell kind with its own fence:
+A data cell is its own cell kind with its own fence:
 
-    ```source weather
+    ```data weather
     csv "https://cdn.jsdelivr.net/npm/vega-datasets@2/data/seattle-weather.csv"
     ```
 
@@ -425,7 +425,7 @@ paths next to the notebook.
 
 Decisions:
 
-- **A source becomes a view, not a materialised table.** A source is a
+- **A data cell becomes a view, not a materialised table.** A data cell is a
   reference to external data, not a computed value, and the difference
   is load-bearing: a view lets DuckDB push filters and column pruning
   into the file, so a query over a remote Parquet fetches the byte ranges
@@ -434,11 +434,11 @@ Decisions:
   value cache is unaffected.
 
   Measured in the browser: the three-million-row, 13 MB
-  `flights-3m.parquet` loads as a source in **297 ms** over https. That
+  `flights-3m.parquet` loads as a data cell in **297 ms** over https. That
   number is the evidence for both this decision and the metadata one
   below — before nullability was read from the file footer, the same
-  source was slow enough to notice.
-- **A source's identity is where it points, not what is behind it.** Its
+  data cell was slow enough to notice.
+- **A data cell's identity is where it points, not what is behind it.** Its
   hash is format, URI and row count. The notebook does not refetch to
   discover whether a remote file changed; the row count is carried along
   so a file that grew or shrank still invalidates dependents, which is
@@ -456,7 +456,7 @@ Decisions:
   to sample 200k. For CSV and JSON, which cannot say, it is sampled up
   to a cap — a column whose only nulls lie past the cap renders as `?`
   rather than failing silently.
-- The hardcoded base table is gone. The seeded notebook uses a source
+- The hardcoded base table is gone. The seeded notebook uses a data
   cell, so the mechanism is the only path in. It ships two: `orders` and
   `customers`, keyed on `owner` so the combining stages have something
   real to work on. `hugo` has orders but no customer record and `iris`
@@ -552,7 +552,7 @@ Checked and rejected:
   read from a browser.
 - **palmerpenguins** encodes missing values as the string `NA`, so
   DuckDB types every numeric column as VARCHAR and finds no nulls. It
-  needs a null-string option the source language does not have — a fair
+  needs a null-string option the data-cell language does not have — a fair
   argument for adding reader options later.
 
 ## Combining rows  [DONE]
@@ -787,7 +787,7 @@ Layout:
   `ElmGen`, `Compile`.
 - `src/Dag.elm`, `src/Engine.elm`, `src/Hash.elm` — the reactive engine.
 - `src/Notebook.elm` — the Markdown file format.
-- `src/Dsl/Source.elm` — the source-cell language.
+- `src/Dsl/Source.elm` — the data-cell location language.
 - `src/Main.elm` — the notebook shell.
 - `public/duckdb-bridge.js` — base tables, schema reporting, query
   execution, content hashing.
@@ -927,7 +927,7 @@ recorded as they were hit, in the order they are worth closing:
    - **A truncated upstream is refused**, rather than offering the
      subset that happened to be fetched. So is a column with more
      distinct values than anyone would choose between; both say to group
-     the source cell down first.
+     the data cell down first.
    - **No automatic "any" entry.** There is no way to say "do not
      filter", and adding a value that is not in the column and a filter
      that quietly rewrites itself is worse than the gap.
@@ -1156,7 +1156,7 @@ Two wrinkles are handled explicitly:
 
 - **An enum is not always table-independent.** `Delivered "delivered"
   from .delivered_at` names a column, and `validateEnum` checks it
-  against the source's columns. A shared declaration has no source, so
+  against the input table's columns. A shared declaration has no table, so
   that check happens in the query applying the type. A type cell can be
   well-formed on its own and still fail at an incompatible use site.
 - **Edges come from `as T`.** Table reads and type references remain
@@ -1362,7 +1362,7 @@ want. Three things are genuinely missing, in increasing order of
 importance:
 
 - No terminal and no server to start.
-- **Real local files.** A source must be an https URL or a path served
+- **Real local files.** A data cell must use an https URL or a path served
   beside the page; you cannot point at `~/data/sales.parquet` at all.
   Saving is worse than it looks, too — the File System Access API is
   Chromium-only, so outside Chromium `Save` already falls back to a
@@ -1577,21 +1577,20 @@ These follow document lifecycle unless one becomes necessary to complete it:
    every cell kind. The new cell is inserted at that exact file position,
    receives editing focus, and is one undoable/autosaved operation. Dependency
    execution remains graph-driven rather than being changed by display order.
-2. **Done: Show inferred data types.** Every successfully loaded source has a
-   collapsible schema panel showing file heading, usable field name, DuckDB
-   type, Duckpad type and observed nullability. With Excel `normalizeNames true`,
+2. **Done: Show inferred data types.** Every successfully loaded data cell has a
+   collapsible schema panel. It defaults to an inferred Elm `Row` alias and can
+   be toggled to a table showing file heading, usable field name, DuckDB type,
+   Duckpad type and observed nullability. With Excel `normalizeNames true`,
    a metadata-only second `DESCRIBE` recovers the original headings and
    pairs them with normalized names by column position; failure of that
    supplementary lookup does not fail the data load. Unsupported DuckDB types
    are identified rather than silently disappearing from the explanation.
-3. **Next: Rename Source cells to Data cells.** In the UI, model and
-   documentation, `Data` better describes a file-backed table; `Source` reads
-   like program source code. Treat this as a file-format migration rather than
-   a search and replace: write new cells with the `data` fence tag, continue
-   accepting the legacy `source` fence tag on read, and preserve old
-   notebooks' meaning. The cell body (`csv`, `parquet`, `json`, `xlsx`) and
-   dependency semantics stay unchanged.
-4. **Move chart rendering to [elm-charts](https://www.elm-charts.org/).** Spike
+3. **Done: Rename Source cells to Data cells.** The UI and model now call a
+   file-backed table `Data`, and new saves use the `data` fence tag. The reader
+   still accepts legacy `source` fences and rewrites them as `data` on the next
+   save, preserving the meaning of existing notebooks. The cell body (`csv`,
+   `parquet`, `json`, `xlsx`) and dependency semantics remain unchanged.
+4. **Next: Move chart rendering to [elm-charts](https://www.elm-charts.org/).** Spike
    the current bar, line and point examples in `terezka/elm-charts`, then replace
    the Vega/Vega-Lite custom-element bridge if they reach feature parity. Keep
    chart channel checking in Duckpad's compiler, render the chart as Elm-owned
@@ -1635,7 +1634,7 @@ adding a new cell kind.
 
 1. **Done:** replace duckdb-wasm behind the existing port seam with native
    DuckDB in the Tauri backend. Queries and local CSV, JSON, Parquet and Excel
-   sources use the Rust-owned connection. `tools/vendor-native.js` downloads
+   data cells use the Rust-owned connection. `tools/vendor-native.js` downloads
    DuckDB's signed Excel extension for the build host's version and platform;
    Tauri packages it and the backend loads its explicit resource path, so an
    `.xlsx` source never triggers a runtime download or depends on `~/.duckdb`.
@@ -1647,13 +1646,13 @@ List-valued aggregates remain lower priority: they require a new type
 throughout the stack, while the current roadmap has no concrete notebook that
 needs one.
 
-### Excel sources — done
+### Excel data cells — done
 
 [DuckDB has first-party `.xlsx` import](https://duckdb.org/docs/current/guides/file_formats/excel_import)
-through `read_xlsx`; legacy `.xls` is not supported. The source spelling should
+through `read_xlsx`; legacy `.xls` is not supported. The data-cell spelling should
 follow the existing format model:
 
-    ```source budget
+    ```data budget
     xlsx "data/budget.xlsx" sheet "Forecast" range "A2:H200" header true
     ```
 
@@ -1666,7 +1665,7 @@ It follows four boundaries recorded up front:
   workbook errors such as `#NUM!` into nulls while leaving strict reading as
   the default. Name normalization converts headings that DuckDB accepts but
   Duckpad cannot address—capitalized or punctuated names—into lower-case field
-  names. These options belong in the source cache key just like CSV options.
+  names. These options belong in the data cache key just like CSV options.
 - The bridge loads the official `excel` extension explicitly and vendors matching
   [DuckDB-Wasm extension](https://duckdb.org/docs/current/clients/wasm/extensions)
   for the offline desktop build; relying on autoload would quietly reintroduce
@@ -1679,7 +1678,7 @@ It follows four boundaries recorded up front:
 The round-trip harness reads a real workbook with a named sheet, range, header,
 date and null, rather than only checking the generated option text.
 
-Remote browser sources remain subject to CORS and an XLSX ZIP cannot offer
+Remote browser data remains subject to CORS and an XLSX ZIP cannot offer
 Parquet-style column/range pushdown. Real arbitrary local paths become cleanest
 after native DuckDB lands in Tauri; the browser build can still support HTTPS
-and notebook-relative files under its existing source rules.
+and notebook-relative files under its existing data-location rules.

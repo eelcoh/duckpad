@@ -1,6 +1,6 @@
 module SourceTests exposing (checks)
 
-{-| Tests for source cells: the little language that names external data, and
+{-| Tests for data cells: the little language that names external data, and
 how such a cell appears in the file format.
 -}
 
@@ -116,17 +116,17 @@ formatChecks =
         text =
             "```source orders\ncsv \"data/orders.csv\"\n```\n\n```duckpad recent\naccess orders () |> selectAll\n```"
     in
-    [ equal "source: a source block round-trips through the file format"
-        (Ok [ ( "orders", Source ), ( "recent", Query ) ])
+    [ equal "data: a legacy source block is still accepted"
+        (Ok [ ( "orders", Data ), ( "recent", Query ) ])
         (Notebook.parse text
             |> Result.map (.cells >> List.map (\c -> ( c.id, c.kind )))
         )
-    , equal "source: serializing puts it back under its own fence"
+    , equal "data: serializing a legacy block writes the new fence"
         (Ok True)
         (Notebook.parse text
-            |> Result.map (Notebook.serialize >> String.contains "```source orders")
+            |> Result.map (Notebook.serialize >> String.contains "```data orders")
         )
-    , equal "source: a source and a query cannot share a name"
+    , equal "data: a data cell and a query cannot share a name"
         True
         (case Notebook.parse "```source a\ncsv \"x.csv\"\n```\n\n```duckpad a\naccess t () |> selectAll\n```" of
             Err _ ->
@@ -134,5 +134,10 @@ formatChecks =
 
             Ok _ ->
                 False
+        )
+    , equal "data: the new fence reads as a data cell"
+        (Ok [ Data ])
+        (Notebook.parse "```data orders\ncsv \"data/orders.csv\"\n```"
+            |> Result.map (.cells >> List.map .kind)
         )
     ]

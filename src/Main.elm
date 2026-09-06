@@ -77,6 +77,7 @@ type alias Model =
     , historyEdit : Maybe String
     , insertingAt : Maybe Int
     , schemaExpanded : Set.Set String
+    , schemaTables : Set.Set String
 
     -- New and Reset cross document boundaries, so they take two clicks: the
     -- first arms the action and the second does it. Anything else disarms it.
@@ -136,6 +137,7 @@ type Msg
     | AddCell Int Kind
     | ToggleInsert Int
     | ToggleSchema String
+    | ShowSchemaAsTable String Bool
     | DeleteCell String
     | RunAll
     | TitleEdited String
@@ -177,7 +179,7 @@ init flags =
         ( notebook, notice ) =
             restore flags
     in
-    ( load notebook { title = notebook.title, cells = [], states = Dict.empty, baseSchema = Dict.empty, queue = [], current = Nothing, db = Booting, nextId = 1, notice = notice, associated = False, revision = 0, saveState = Unassociated, saveBefore = Nothing, history = History.empty, historyEdit = Nothing, insertingAt = Nothing, schemaExpanded = Set.empty, newArmed = False, resetArmed = False, editing = Nothing, expanded = Set.empty, inputs = Dict.empty, pickers = Dict.empty, today = Nothing }
+    ( load notebook { title = notebook.title, cells = [], states = Dict.empty, baseSchema = Dict.empty, queue = [], current = Nothing, db = Booting, nextId = 1, notice = notice, associated = False, revision = 0, saveState = Unassociated, saveBefore = Nothing, history = History.empty, historyEdit = Nothing, insertingAt = Nothing, schemaExpanded = Set.empty, schemaTables = Set.empty, newArmed = False, resetArmed = False, editing = Nothing, expanded = Set.empty, inputs = Dict.empty, pickers = Dict.empty, today = Nothing }
     , Task.perform GotToday Date.today
     )
 
@@ -219,6 +221,7 @@ load notebook model =
         , pickers = Dict.empty
         , insertingAt = Nothing
         , schemaExpanded = Set.empty
+        , schemaTables = Set.empty
     }
 
 
@@ -292,7 +295,7 @@ graphOf model =
                             |> Maybe.withDefault Set.empty
 
                     _ ->
-                        -- A source reads external data, and depends on no cell.
+                        -- A data cell reads external data, and depends on no cell.
                         Set.empty
                 )
             )
@@ -426,7 +429,7 @@ step msg model =
                             Query ->
                                 "access orders ()\n  |> selectAll"
 
-                            Source ->
+                            Data ->
                                 "csv \"https://cdn.jsdelivr.net/npm/vega-datasets@2/data/seattle-weather.csv\""
 
                             Input ->
@@ -475,6 +478,18 @@ step msg model =
 
                     else
                         Set.insert id model.schemaExpanded
+              }
+            , Cmd.none
+            )
+
+        ShowSchemaAsTable id asTable ->
+            ( { model
+                | schemaTables =
+                    if asTable then
+                        Set.insert id model.schemaTables
+
+                    else
+                        Set.remove id model.schemaTables
               }
             , Cmd.none
             )
@@ -1139,8 +1154,8 @@ advance model =
 
                     else
                         case cell.kind of
-                            Source ->
-                                dispatchSource cell rest model
+                            Data ->
+                                dispatchData cell rest model
 
                             Input ->
                                 dispatchInput cell rest model
@@ -1383,11 +1398,11 @@ dedupe =
         []
 
 
-{-| What identifies a source: where it points and how it is read. An option
+{-| What identifies a data cell: where it points and how it is read. An option
 changes the data as surely as the URI does.
 -}
-sourceKey : Dsl.Source.Spec -> String
-sourceKey spec =
+dataKey : Dsl.Source.Spec -> String
+dataKey spec =
     Dsl.Source.formatName spec.format ++ " " ++ spec.uri ++ Dsl.Source.readerOptions spec
 
 
@@ -1467,13 +1482,13 @@ literalKey literal =
                 "false"
 
 
-{-| A source is not compiled and not materialised. It becomes a view over the
+{-| A data cell is not compiled and not materialised. It becomes a view over the
 external data, and its identity is the location it points at rather than the
 rows behind it — so re-running does not refetch, and changing the URI
 invalidates everything downstream.
 -}
-dispatchSource : Cell -> List String -> Model -> ( Model, Cmd Msg )
-dispatchSource cell rest model =
+dispatchData : Cell -> List String -> Model -> ( Model, Cmd Msg )
+dispatchData cell rest model =
     case Dsl.Source.parse cell.source of
         Err message ->
             advance
@@ -1488,7 +1503,7 @@ dispatchSource cell rest model =
                     stateOf cell.id model
 
                 key =
-                    Engine.valueKeyFor (graphOf model) model.states cell.id (sourceKey spec)
+                    Engine.valueKeyFor (graphOf model) model.states cell.id (dataKey spec)
             in
             if state.keyForValue == Just key && Engine.hasValue state then
                 advance
@@ -1684,16 +1699,16 @@ applyOutcome outcome model =
                 state =
                     stateOf id model
 
-                isSource =
-                    findCell id model |> Maybe.map (\c -> c.kind == Source) |> Maybe.withDefault False
+                isData =
+                    findCell id model |> Maybe.map (\c -> c.kind == Data) |> Maybe.withDefault False
 
                 valueKey =
-                    if isSource then
+                    if isData then
                         findCell id model
                             |> Maybe.andThen (\c -> Dsl.Source.parse c.source |> Result.toMaybe)
                             |> Maybe.map
                                 (\spec ->
-                                    Engine.valueKeyFor (graphOf model) model.states id (sourceKey spec)
+                                    Engine.valueKeyFor (graphOf model) model.states id (dataKey spec)
                                 )
 
                     else
@@ -1702,7 +1717,7 @@ applyOutcome outcome model =
                                 (\c -> Engine.valueKeyFor (graphOf model) model.states id c.sql)
 
                 rowType =
-                    if isSource then
+                    if isData then
                         Just (fromDescribed result.described)
 
                     else
@@ -1768,7 +1783,7 @@ freshName kind model =
                 Query ->
                     "cell_"
 
-                Source ->
+                Data ->
                     "data_"
 
                 Input ->
@@ -2070,7 +2085,7 @@ viewAddRow model position =
     if model.insertingAt == Just position then
         Element.wrappedRow
             [ spacing 6, centerX, paddingXY 0 2, Ui.dropOnExport ]
-            [ plainButton "+ source" False (Just (AddCell position Source))
+            [ plainButton "+ data" False (Just (AddCell position Data))
             , plainButton "+ input" False (Just (AddCell position Input))
             , plainButton "+ types" False (Just (AddCell position Types))
             , plainButton "+ query" False (Just (AddCell position Query))
@@ -2124,15 +2139,15 @@ viewCell model graph cell =
         ]
         [ viewCellHead model graph cell state
         , el [ width fill ] (Element.html (viewBody model cell))
-        , viewSourceSchema model cell state
+        , viewDataSchema model cell state
         , viewOutput model cell state
         , viewArtefacts model cell state
         ]
 
 
-viewSourceSchema : Model -> Cell -> CellState -> Element Msg
-viewSourceSchema model cell state =
-    if cell.kind /= Source then
+viewDataSchema : Model -> Cell -> CellState -> Element Msg
+viewDataSchema model cell state =
+    if cell.kind /= Data then
         Element.none
 
     else
@@ -2144,6 +2159,9 @@ viewSourceSchema model cell state =
                 let
                     open =
                         Set.member cell.id model.schemaExpanded
+
+                    asTable =
+                        Set.member cell.id model.schemaTables
 
                     toggle =
                         Input.button
@@ -2163,9 +2181,17 @@ viewSourceSchema model cell state =
                     , Border.widthEach { top = 1, left = 0, right = 0, bottom = 0 }
                     , Border.color Ui.line
                     ]
-                    [ toggle
+                    [ row [ width fill, spacing 8 ]
+                        [ el [ width fill ] toggle
+                        , schemaModeButton (not asTable) "Elm" (ShowSchemaAsTable cell.id False)
+                        , schemaModeButton asTable "Table" (ShowSchemaAsTable cell.id True)
+                        ]
                     , if open then
-                        schemaTable result.described
+                        if asTable then
+                            schemaTable result.described
+
+                        else
+                            artefact "Inferred Elm model" (schemaElmModel result.described)
 
                       else
                         Element.none
@@ -2181,19 +2207,6 @@ schemaTable columns =
         value body =
             el [ paddingXY 6 5, Font.family Ui.mono, Font.size 11 ] (text body)
 
-        duckpadType column =
-            case Schema.fromDuckDb column.sqlType of
-                Just inferred ->
-                    Schema.typeName
-                        (if column.nullable then
-                            TMaybe inferred
-
-                         else
-                            inferred
-                        )
-
-                Nothing ->
-                    "unsupported"
     in
     Element.table
         [ width fill
@@ -2206,10 +2219,86 @@ schemaTable columns =
             [ { header = heading "file column", width = fill, view = .originalName >> value }
             , { header = heading "field", width = fill, view = .name >> value }
             , { header = heading "duckdb", width = px 150, view = .sqlType >> value }
-            , { header = heading "duckpad", width = px 180, view = duckpadType >> value }
+            , { header = heading "duckpad", width = px 180, view = duckpadTypeName >> value }
             , { header = heading "nullable", width = px 75, view = .nullable >> (\nullable -> if nullable then "yes" else "no") >> value }
             ]
         }
+
+
+schemaModeButton : Bool -> String -> Msg -> Element Msg
+schemaModeButton selected label message =
+    Input.button
+        [ paddingXY 7 3
+        , Font.size 10
+        , Font.color
+            (if selected then
+                Ui.accent
+
+             else
+                Ui.muted
+            )
+        , Border.width 1
+        , Border.color
+            (if selected then
+                Ui.accent
+
+             else
+                Ui.line
+            )
+        , Border.rounded 4
+        , Ui.dropOnExport
+        ]
+        { onPress = Just message, label = text label }
+
+
+schemaElmModel : List Query.Described -> String
+schemaElmModel columns =
+    case columns of
+        [] ->
+            "type alias Row =\n    {}"
+
+        first :: rest ->
+            "type alias Row =\n    { "
+                ++ first.name
+                ++ " : "
+                ++ elmTypeName first
+                ++ (rest
+                        |> List.map (\column -> "\n    , " ++ column.name ++ " : " ++ elmTypeName column)
+                        |> String.concat
+                   )
+                ++ "\n    }"
+
+
+elmTypeName : Query.Described -> String
+elmTypeName column =
+    case Schema.fromDuckDb column.sqlType of
+        Just inferred ->
+            Schema.elmAnnotation
+                (if column.nullable then
+                    TMaybe inferred
+
+                 else
+                    inferred
+                )
+
+        Nothing ->
+            "Unsupported"
+
+
+duckpadTypeName : Query.Described -> String
+duckpadTypeName column =
+    case Schema.fromDuckDb column.sqlType of
+        Just inferred ->
+            Schema.typeName
+                (if column.nullable then
+                    TMaybe inferred
+
+                 else
+                    inferred
+                )
+
+        Nothing ->
+            "Unsupported"
 
 
 viewCellHead : Model -> Graph -> Cell -> CellState -> Element Msg
@@ -2479,7 +2568,7 @@ editor cell =
                 Query ->
                     "access orders () |> selectAll"
 
-                Source ->
+                Data ->
                     "csv \"https://…\""
 
                 Input ->

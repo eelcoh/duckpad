@@ -10,9 +10,9 @@ Work down the page. Each query cell introduces one idea and the prose above it s
 
 ## Where data comes from
 
-A **source** cell names a file and binds it to the cell's name. Nothing else in the notebook knows or cares where `orders` came from.
+A **data** cell names a file and binds it to the cell's name. Nothing else in the notebook knows or cares where `orders` came from.
 
-```source orders
+```data orders
 csv "data/orders.csv"
 ```
 
@@ -90,7 +90,7 @@ access orders ()
 
 `diff` keeps unmatched rows on the left, and `exclude` keeps only the unmatched ones.
 
-```source customers
+```data customers
 csv "data/customers.csv"
 ```
 
@@ -109,7 +109,7 @@ access orders ()
 
 ## Giving a column a type
 
-A **types** cell holds domain declarations independently of any table. A query using `as Status` depends on this cell just as it depends on a source. The table then shows constructors instead of raw strings, and the generated Elm module has a real `Status` type.
+A **types** cell holds domain declarations independently of any table. A query using `as Status` depends on this cell just as it depends on a data cell. The table then shows constructors instead of raw strings, and the generated Elm module has a real `Status` type.
 
 Delete one of the constructors and every query using `Status` becomes stale; give a payload constructor a missing column and the error appears where the type is applied.
 

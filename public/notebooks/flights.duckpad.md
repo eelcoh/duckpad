@@ -12,11 +12,11 @@ A terminator says how a cell is shown: `selectAll` gives a table, and `barChart`
 
 An input cell binds a control to its name. Drag `min_distance` and only the cells that read it re-run — `total_flights` and `by_state` both do, and `since` trims the time series. `focus_state` takes its options from a column of `by_state`, so the states you can choose are the ones that chart is showing — the value is compiled into their SQL, so the cache does the rest. That is what lets `routes` below join `airports` twice — once for the origin and once for the destination — without the two sides colliding.
 
-```source airports
+```data airports
 csv "https://cdn.jsdelivr.net/npm/vega-datasets@2/data/airports.csv"
 ```
 
-```source flights
+```data flights
 parquet "https://cdn.jsdelivr.net/npm/vega-datasets@3.2.0/data/flights-3m.parquet"
 ```
 

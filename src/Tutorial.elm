@@ -30,10 +30,10 @@ cells =
       }
     , { id = "p_source"
       , kind = Prose
-      , source = "## Where data comes from\n\nA **source** cell names a file and binds it to the cell's name. Nothing else in the notebook knows or cares where `orders` came from."
+      , source = "## Where data comes from\n\nA **data** cell names a file and binds it to the cell's name. Nothing else in the notebook knows or cares where `orders` came from."
       }
     , { id = "orders"
-      , kind = Source
+      , kind = Data
       , source = "csv \"data/orders.csv\""
       }
     , { id = "p_access"
@@ -81,7 +81,7 @@ cells =
       , source = "## Combining two tables\n\n`intersect` matches rows by a key from each side. It **pairs** the rows rather than merging them, so each side keeps its own column names and the lambda takes both: `\\(o, c) -> …`. Two tables that both have an `id` need no renaming.\n\n`diff` keeps unmatched rows on the left, and `exclude` keeps only the unmatched ones."
       }
     , { id = "customers"
-      , kind = Source
+      , kind = Data
       , source = "csv \"data/customers.csv\""
       }
     , { id = "by_tier"
@@ -90,7 +90,7 @@ cells =
       }
     , { id = "p_types"
       , kind = Prose
-      , source = "## Giving a column a type\n\nA **types** cell holds domain declarations independently of any table. A query using `as Status` depends on this cell just as it depends on a source. The table then shows constructors instead of raw strings, and the generated Elm module has a real `Status` type.\n\nDelete one of the constructors and every query using `Status` becomes stale; give a payload constructor a missing column and the error appears where the type is applied."
+      , source = "## Giving a column a type\n\nA **types** cell holds domain declarations independently of any table. A query using `as Status` depends on this cell just as it depends on a data cell. The table then shows constructors instead of raw strings, and the generated Elm module has a real `Status` type.\n\nDelete one of the constructors and every query using `Status` becomes stale; give a payload constructor a missing column and the error appears where the type is applied."
       }
     , { id = "domain"
       , kind = Types

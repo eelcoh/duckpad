@@ -36,7 +36,7 @@ type alias Table =
     , millis : Float
 
     -- How DuckDB describes the materialised result. A query cell already knows
-    -- its row type from the compiler and ignores this; a source cell has no
+    -- its row type from the compiler and ignores this; a data cell has no
     -- other way to learn one.
     , described : List Described
     }

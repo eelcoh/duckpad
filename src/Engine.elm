@@ -41,7 +41,7 @@ type alias CellState =
     , compiled : Maybe Compiled
 
     -- What downstream cells compile against. A query cell gets this from its
-    -- own compilation; a source cell gets it from DuckDB, which is the only
+    -- own compilation; a data cell gets it from DuckDB, which is the only
     -- thing that knows what is actually in the file.
     , rowType : Maybe (List ( String, Type ))
     , compileKey : Maybe String
@@ -252,7 +252,7 @@ markStale seeds graph states =
 {-| What is needed to render a cell's result: the row type, whatever declared
 types its columns refer to, and whether the order means anything.
 
-A query cell has all of that on its compilation. A source cell is never
+A query cell has all of that on its compilation. A data cell is never
 compiled — DuckDB reports its row type instead — so it has to be handled
 separately. Forgetting that is why a source used to show "Running…" under a
 pill that already said it was fresh.

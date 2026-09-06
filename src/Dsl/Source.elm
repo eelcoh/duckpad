@@ -1,6 +1,6 @@
 module Dsl.Source exposing (Format(..), Option(..), Spec, extension, formatName, parse, reader, readerOptions)
 
-{-| The tiny language a source cell is written in.
+{-| The tiny language a data cell is written in.
 
     csv "https://cdn.jsdelivr.net/npm/vega-datasets@2/data/seattle-weather.csv"
 

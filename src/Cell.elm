@@ -20,9 +20,9 @@ type alias Cell =
 
 type Kind
     = Query
-      -- External data the notebook reads but does not compute. A source is a
-      -- graph node like any other, so cells that read it are ordered after it.
-    | Source
+      -- External data the notebook reads but does not compute. A data cell is
+      -- a graph node like any other, so cells that read it are ordered after it.
+    | Data
       -- A control bound to a name. No compile step: its value is what a query
       -- mentioning that name reads.
     | Input
@@ -60,7 +60,7 @@ isRunnable cell =
         Query ->
             String.trim cell.source /= ""
 
-        Source ->
+        Data ->
             String.trim cell.source /= ""
 
         Input ->
@@ -79,8 +79,8 @@ kindLabel kind =
         Query ->
             "query"
 
-        Source ->
-            "source"
+        Data ->
+            "data"
 
         Input ->
             "input"

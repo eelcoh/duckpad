@@ -127,7 +127,7 @@ functions =
         ]
 
 
-{-| The formats a source cell may name.
+{-| The formats a data cell may name.
 -}
 formats : Set String
 formats =

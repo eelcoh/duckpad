@@ -290,7 +290,7 @@ engineChecks =
     , equal "engine: a query cell renders from its compilation"
         (Just defaultRow)
         (Engine.display (upstreamState defaultRow "H1") |> Maybe.map .rowType)
-    , equal "engine: a source cell renders from the row type DuckDB reported"
+    , equal "engine: a data cell renders from the row type DuckDB reported"
         (Just [ ( "iata", TString ) ])
         (Engine.display
             { initialState
