@@ -1528,7 +1528,7 @@ desktop backend are complete. The next recommended product increment is
 document lifecycle; the remaining desktop distribution work then follows as a
 release milestone.
 
-### Document lifecycle — in progress
+### Document lifecycle — done
 
 1. **Done:** New notebook. The `New` button starts from `Notebook.blank`,
    clears the current file association, runtime tables and transient UI state,
@@ -1556,13 +1556,13 @@ release milestone.
      `localStorage` remains the automatic recovery mechanism.
    - Static HTML export has its own native write command and therefore cannot
      accidentally replace the notebook's remembered path.
-3. **Next:** Undo and redo. Start with document-level source history, including
-   cell creation, deletion, rename and reordering as single operations. Native
-   textarea undo is insufficient because Elm owns the values and because it
-   cannot restore structural edits. Use bounded snapshots or inverse edits,
-   expose Undo/Redo buttons, and add the conventional `Ctrl/Cmd-Z` and
-   `Ctrl/Cmd-Shift-Z` shortcuts. Loading or creating a notebook starts a new
-   history; autosaving does not.
+3. **Done:** Undo and redo. A bounded document-level snapshot history covers
+   cell content, creation, deletion, rename and order. Continuous typing in one
+   field is coalesced until blur, while structural changes remain individual
+   operations. Undo/Redo buttons and `Ctrl/Cmd-Z`, `Ctrl/Cmd-Shift-Z` (plus
+   `Ctrl-Y`) are available. Restoring a snapshot reruns the reactive graph and
+   participates in autosave, but autosaving itself does not enter history.
+   Loading, creating or resetting a notebook starts a new history.
 
 The safety rule tying the three together: `New`, Open and Reset are document
 boundaries; they must not silently destroy the last recoverable state, and an
@@ -1572,7 +1572,7 @@ autosave failure must leave both undo history and the recovery mirror intact.
 
 These follow document lifecycle unless one becomes necessary to complete it:
 
-1. **Insert cells anywhere.** Replace the single add row at the bottom with an
+1. **Next: Insert cells anywhere.** Replace the single add row at the bottom with an
    insertion affordance before the first cell, between every pair of cells and
    after the last cell. Every cell kind must be available at every insertion
    point, so a notebook can begin with prose. Preserve file order and focus the

@@ -37,6 +37,7 @@ import Html exposing (Html, div, option, pre, select, span, table, tbody, td, te
 import Html.Attributes exposing (attribute, class, id, placeholder, rows, spellcheck, value)
 import Html.Attributes
 import Html.Events exposing (onBlur, onInput)
+import History
 import Ui
 import Indent
 import Json.Decode as D
@@ -72,6 +73,8 @@ type alias Model =
     , revision : Int
     , saveState : SaveState
     , saveBefore : Maybe SaveState
+    , history : History.History Notebook
+    , historyEdit : Maybe String
 
     -- New and Reset cross document boundaries, so they take two clicks: the
     -- first arms the action and the second does it. Anything else disarms it.
@@ -138,6 +141,8 @@ type Msg
     | FileOpened D.Value
     | AutosaveDue Int
     | FileSaved D.Value
+    | Undo
+    | Redo
     | DismissNotice
     | NewNotebook
     | ResetNotebook
@@ -168,7 +173,7 @@ init flags =
         ( notebook, notice ) =
             restore flags
     in
-    ( load notebook { title = notebook.title, cells = [], states = Dict.empty, baseSchema = Dict.empty, queue = [], current = Nothing, db = Booting, nextId = 1, notice = notice, associated = False, revision = 0, saveState = Unassociated, saveBefore = Nothing, newArmed = False, resetArmed = False, editing = Nothing, expanded = Set.empty, inputs = Dict.empty, pickers = Dict.empty, today = Nothing }
+    ( load notebook { title = notebook.title, cells = [], states = Dict.empty, baseSchema = Dict.empty, queue = [], current = Nothing, db = Booting, nextId = 1, notice = notice, associated = False, revision = 0, saveState = Unassociated, saveBefore = Nothing, history = History.empty, historyEdit = Nothing, newArmed = False, resetArmed = False, editing = Nothing, expanded = Set.empty, inputs = Dict.empty, pickers = Dict.empty, today = Nothing }
     , Task.perform GotToday Date.today
     )
 
@@ -392,7 +397,7 @@ step msg model =
             in
             -- Staleness propagates on every keystroke; compiling and running
             -- wait for the edit to be committed.
-            withPersist
+            recordGroupedEdit "source" model
                 ( { updated
                     | states = Engine.markStale (Set.singleton id) (graphOf updated) updated.states
                   }
@@ -403,7 +408,7 @@ step msg model =
             renameCell id (sanitiseName newName) model
 
         CommitEdit ->
-            schedule { model | editing = Nothing }
+            schedule { model | editing = Nothing, historyEdit = Nothing }
 
         AddCell kind ->
             let
@@ -428,7 +433,7 @@ step msg model =
                                 "Notes."
                     }
             in
-            withPersist
+            recordDocumentEdit model
                 ( { model
                     | cells = model.cells ++ [ fresh ]
                     , states = Dict.insert fresh.id Engine.initialState model.states
@@ -445,7 +450,7 @@ step msg model =
                         , states = Dict.remove id model.states
                     }
             in
-            withPersist
+            recordDocumentEdit model
                 ( { updated
                     | states =
                         Engine.markStale
@@ -460,7 +465,7 @@ step msg model =
             schedule { model | states = invalidate model.states }
 
         TitleEdited title ->
-            withPersist ( { model | title = title }, Cmd.none )
+            recordGroupedEdit "title" model ( { model | title = title }, Cmd.none )
 
         SaveFile ->
             beginSave (not model.associated) model
@@ -490,6 +495,8 @@ step msg model =
                                                 else
                                                     Unassociated
                                             , saveBefore = Nothing
+                                            , history = History.empty
+                                            , historyEdit = Nothing
                                         }
 
                                 ( scheduled, run ) =
@@ -527,6 +534,22 @@ step msg model =
                     in
                     ( { model | saveState = SaveFailed message, saveBefore = Nothing, notice = Just ("Could not save this notebook. " ++ message) }, Cmd.none )
 
+        Undo ->
+            case History.undo (toNotebook model) model.history of
+                Just ( notebook, history ) ->
+                    restoreHistory notebook history model
+
+                Nothing ->
+                    ( model, Cmd.none )
+
+        Redo ->
+            case History.redo (toNotebook model) model.history of
+                Just ( notebook, history ) ->
+                    restoreHistory notebook history model
+
+                Nothing ->
+                    ( model, Cmd.none )
+
         DismissNotice ->
             ( { model | notice = Nothing }, Cmd.none )
 
@@ -540,6 +563,8 @@ step msg model =
                                 , associated = False
                                 , saveState = Unassociated
                                 , saveBefore = Nothing
+                                , history = History.empty
+                                , historyEdit = Nothing
                                 , newArmed = False
                                 , resetArmed = False
                                 , nextId = model.nextId + List.length model.cells + 1
@@ -667,7 +692,7 @@ step msg model =
             if model.resetArmed then
                 let
                     ( reset, run ) =
-                        schedule (load Seed.notebook { model | notice = Nothing, associated = False, saveState = Unassociated, saveBefore = Nothing, newArmed = False, resetArmed = False })
+                        schedule (load Seed.notebook { model | notice = Nothing, associated = False, saveState = Unassociated, saveBefore = Nothing, history = History.empty, historyEdit = Nothing, newArmed = False, resetArmed = False })
                 in
                 withPersist ( reset, Cmd.batch [ clearDocument model, run ] )
 
@@ -705,6 +730,97 @@ withPersist ( model, cmd ) =
     ( updated
     , Cmd.batch [ cmd, Ports.persist (Notebook.serialize (toNotebook updated)), autosave ]
     )
+
+
+recordDocumentEdit : Model -> ( Model, Cmd Msg ) -> ( Model, Cmd Msg )
+recordDocumentEdit before ( after, cmd ) =
+    withPersist
+        ( { after | history = History.record (toNotebook before) before.history, historyEdit = Nothing }
+        , cmd
+        )
+
+
+recordGroupedEdit : String -> Model -> ( Model, Cmd Msg ) -> ( Model, Cmd Msg )
+recordGroupedEdit group before ( after, cmd ) =
+    if before.historyEdit == Just group then
+        withPersist ( { after | historyEdit = Just group }, cmd )
+
+    else
+        withPersist
+            ( { after
+                | history = History.record (toNotebook before) before.history
+                , historyEdit = Just group
+              }
+            , cmd
+            )
+
+
+restoreHistory : Notebook -> History.History Notebook -> Model -> ( Model, Cmd Msg )
+restoreHistory notebook history model =
+    let
+        loaded =
+            load notebook { model | history = history, historyEdit = Nothing, editing = Nothing, notice = Nothing }
+
+        restoredIds =
+            loaded.cells |> List.map .id |> Set.fromList
+
+        restored =
+            { loaded
+                | inputs = Dict.filter (\id _ -> Set.member id restoredIds) model.inputs
+                , pickers = Dict.filter (\id _ -> Set.member id restoredIds) model.pickers
+            }
+
+        drops =
+            model.cells
+                |> List.filter (\cell -> not (Set.member cell.id restoredIds))
+                |> List.map (\cell -> Ports.dropTable cell.id)
+
+        ( scheduled, run ) =
+            schedule restored
+    in
+    withPersist ( scheduled, Cmd.batch (run :: drops) )
+
+
+type alias HistoryKey =
+    { key : String
+    , control : Bool
+    , meta : Bool
+    , shift : Bool
+    }
+
+
+historyKey : D.Decoder { message : Msg, stopPropagation : Bool, preventDefault : Bool }
+historyKey =
+    D.map4 HistoryKey
+        (D.field "key" D.string)
+        (D.field "ctrlKey" D.bool)
+        (D.field "metaKey" D.bool)
+        (D.field "shiftKey" D.bool)
+        |> D.andThen
+            (\key ->
+                let
+                    handled message =
+                        D.succeed
+                            { message = message
+                            , stopPropagation = True
+                            , preventDefault = True
+                            }
+                in
+                if (key.control || key.meta) && String.toLower key.key == "z" then
+                    handled
+                        (if key.shift then
+                            Redo
+
+                         else
+                            Undo
+                        )
+
+                else if key.control && String.toLower key.key == "y" then
+                    handled Redo
+
+                else
+                    D.fail "not a history shortcut"
+            )
 
 
 beginSave : Bool -> Model -> ( Model, Cmd Msg )
@@ -932,7 +1048,7 @@ renameCell old new model =
                     Nothing ->
                         model.states
         in
-        withPersist
+        recordGroupedEdit "name" model
             ( { model | cells = cells, states = invalidate states }
             , Ports.dropTable old
             )
@@ -1666,6 +1782,7 @@ view model =
         , Font.family Ui.sans
         , Font.size 14
         , Font.color Ui.ink
+        , Element.htmlAttribute (Html.Events.custom "keydown" historyKey)
         ]
         (column
             [ width (fill |> maximum 1040)
@@ -1697,6 +1814,20 @@ viewHeader model graph =
             , Element.wrappedRow [ alignRight, spacing 10, Ui.dropOnExport ]
                 [ viewDbStatus model.db
                 , viewSaveStatus model.saveState
+                , plainButton "Undo" False
+                    (if History.canUndo model.history then
+                        Just Undo
+
+                     else
+                        Nothing
+                    )
+                , plainButton "Redo" False
+                    (if History.canRedo model.history then
+                        Just Redo
+
+                     else
+                        Nothing
+                    )
                 , plainButton "New" model.newArmed (Just NewNotebook)
                 , plainButton "Reset" model.resetArmed (Just ResetNotebook)
                 , plainButton "Open" False (Just OpenFile)
@@ -1731,6 +1862,7 @@ titleField current =
         , width (px 260)
         , Element.focused [ Border.color Ui.line, Background.color Ui.card ]
         , Element.mouseOver [ Border.color Ui.line ]
+        , Element.htmlAttribute (Html.Events.onBlur CommitEdit)
         ]
         { onChange = TitleEdited
         , text = current
