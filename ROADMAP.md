@@ -1568,6 +1568,68 @@ The safety rule tying the three together: `New`, Open and Reset are document
 boundaries; they must not silently destroy the last recoverable state, and an
 autosave failure must leave both undo history and the recovery mirror intact.
 
+### Notebook UX and charting — requested
+
+These follow document lifecycle unless one becomes necessary to complete it:
+
+1. **Insert cells anywhere.** Replace the single add row at the bottom with an
+   insertion affordance before the first cell, between every pair of cells and
+   after the last cell. Every cell kind must be available at every insertion
+   point, so a notebook can begin with prose. Preserve file order and focus the
+   newly inserted cell without changing dependency execution order.
+2. **Show inferred data types.** After a data file loads, give its cell a
+   collapsible schema panel showing the original/inferred column name, DuckDB
+   type, Duckpad type and nullability. This needs to make transformations such
+   as Excel `normalizeNames` visible and explain why an `ignoreErrors` column
+   became `Maybe Float`; the reader should not have to discover the schema by
+   provoking an unknown-column error.
+3. **Rename Source cells to Data cells.** In the UI, model and documentation,
+   `Data` better describes a file-backed table; `Source` reads like program
+   source code. Treat this as a file-format migration rather than a search and
+   replace: write new cells with the `data` fence tag, continue accepting the
+   legacy `source` fence tag on read, and preserve old notebooks' meaning. The
+   cell body (`csv`, `parquet`, `json`, `xlsx`) and dependency semantics stay
+   unchanged.
+4. **Move chart rendering to [elm-charts](https://www.elm-charts.org/).** Spike
+   the current bar, line and point examples in `terezka/elm-charts`, then replace
+   the Vega/Vega-Lite custom-element bridge if they reach feature parity. Keep
+   chart channel checking in Duckpad's compiler, render the chart as Elm-owned
+   SVG, preserve tooltips and responsive sizing, and verify that static export
+   captures the SVG without the current canvas-to-image repair. Remove the
+   vendored Vega runtime only after existing notebooks and exports render
+   equivalently.
+
+### Elm beyond DuckDB — decision reopened
+
+The earlier decision was “no escape hatch”: keep transformations in the total
+query language and close to DuckDB. Reopen that decision before implementing
+another execution model, but start from concrete operations that a real
+notebook cannot express with DuckDB-native work rather than from “arbitrary Elm”
+as a feature by itself.
+
+The discussion must distinguish three uses of Elm that have very different
+costs:
+
+- **Elm for presentation and interaction**, such as elm-charts, custom result
+  views and controls. This consumes typed query results but does not transform
+  tables or feed data back into the dependency graph.
+- **More built-in transformations implemented in Elm/Duckpad.** These can stay
+  typed and total, but moving rows out of DuckDB may lose vectorized execution,
+  spilling and predicate pushdown. Each proposed operation needs a reason it
+  cannot be expressed efficiently as generated DuckDB SQL.
+- **User-authored Elm cells.** These require an Elm compiler/runtime packaging
+  story, an input/output row contract, error and timeout isolation, caching, and
+  a decision on whether their output may feed downstream cells. Allowing that
+  output into the graph is substantially different from the previously
+  proposed leaf-only escape hatch.
+
+Before choosing among them, collect two or three motivating examples and decide
+the non-negotiables: whether outputs are reusable tables, whether execution must
+remain offline in both browser and desktop builds, whether arbitrary code may
+block the reactive graph, and which totality/reproducibility guarantees Duckpad
+is willing to relax. Record the decision and a smallest possible spike before
+adding a new cell kind.
+
 ### Desktop distribution — native backend done
 
 1. **Done:** replace duckdb-wasm behind the existing port seam with native
