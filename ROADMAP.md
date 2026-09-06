@@ -1568,6 +1568,40 @@ The safety rule tying the three together: `New`, Open and Reset are document
 boundaries; they must not silently destroy the last recoverable state, and an
 autosave failure must leave both undo history and the recovery mirror intact.
 
+### Startup and document home — requested, deferred
+
+Startup needs a product decision rather than another unconditional restore.
+The current desktop behavior restores notebook text from the recovery mirror
+without restoring its file association. A relative data location such as
+`eredivisie.xlsx` is consequently resolved beside the executable instead of
+beside the notebook, so startup presents a page full of data-load failures and
+blocked downstream cells. Recovery is working, but without document context it
+looks like corruption.
+
+Recommended shape:
+
+1. **Desktop:** remember the last successfully associated notebook path and
+   reopen that document on startup. Restore the recovery mirror over it only
+   when it contains newer unsaved work. If the file moved or access fails, show
+   a calm document-home state with `Locate`, `Recover as new`, `New` and `Open`
+   actions; do not execute the detached notebook first.
+2. **Browser:** start at a small document-home/recents page because persistent
+   file handles and permissions vary by browser. Offer `New`, `Open`, the last
+   recovery snapshot and any handles the browser can still access. A recovery
+   snapshot remains explicitly unassociated until the user reconnects it.
+3. Keep `Reset example` available as an intentional action, not the implicit
+   startup document. Recent entries should show name, path where available,
+   last-opened time and whether recoverable unsaved edits exist. Store no file
+   contents in the recents index.
+4. Define execution timing with this work: reopen an associated document only
+   after its location is known; never run relative data cells from an arbitrary
+   process working directory. A blank/home page should therefore start without
+   query errors.
+
+This follows the chart migration rather than interrupting it, but should land
+before packaging Duckpad as a general desktop release: a trustworthy first
+screen is part of document persistence, not cosmetic polish.
+
 ### Notebook UX and charting — requested
 
 These follow document lifecycle unless one becomes necessary to complete it:
@@ -1598,6 +1632,19 @@ These follow document lifecycle unless one becomes necessary to complete it:
    captures the SVG without the current canvas-to-image repair. Remove the
    vendored Vega runtime only after existing notebooks and exports render
    equivalently.
+
+Recommended sequence from here:
+
+1. Close the inferred-schema/generated-code visibility regression and verify it
+   in the desktop build as well as in compilation tests.
+2. Spike `elm-charts` against the existing bar, line and point fixtures; decide
+   on parity before removing any Vega path.
+3. Complete the Elm-owned SVG chart migration, including tooltips, responsive
+   sizing and static export, then remove Vega only when outputs match.
+4. Implement the startup/document-home design above, including restoration of
+   desktop document association and safe handling of detached recovery data.
+5. Revisit Elm beyond DuckDB using concrete unmet operations, then proceed to
+   the remaining desktop distribution milestone.
 
 ### Elm beyond DuckDB — decision reopened
 
