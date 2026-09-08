@@ -443,6 +443,7 @@ access flights ()
        , flights = count g
        })
   |> filter (\\r -> r.flights > 500)
+  |> sortBy .distance
   |> lineChart { x = .distance, y = .avg_delay }
 """
       )

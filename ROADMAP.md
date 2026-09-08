@@ -1581,11 +1581,15 @@ looks like corruption.
 
 Recommended shape:
 
-1. **Desktop:** remember the last successfully associated notebook path and
-   reopen that document on startup. Restore the recovery mirror over it only
-   when it contains newer unsaved work. If the file moved or access fails, show
-   a calm document-home state with `Locate`, `Recover as new`, `New` and `Open`
-   actions; do not execute the detached notebook first.
+1. **Desktop association — done:** remember the last successfully associated
+   notebook path and reopen that document before Elm schedules any cells, so
+   relative data paths have the right base immediately. The recovery mirror
+   carries its modification time and wins only when its different content is
+   newer than the file; external disk edits therefore are not overwritten as
+   “recovery.” `New` and Reset clear the remembered association. If the file
+   moved, startup clears the stale association and retains the recovery copy as
+   an unassociated notebook. The document-home work below should hold that copy
+   without executing it and add `Locate` and `Recover as new` actions.
 2. **Browser:** start at a small document-home/recents page because persistent
    file handles and permissions vary by browser. Offer `New`, `Open`, the last
    recovery snapshot and any handles the browser can still access. A recovery
@@ -1657,8 +1661,9 @@ Recommended sequence from here:
    parity work belongs in Duckpad's dynamic-data adapter.
 3. **Done:** ship the live adapter and Elm-owned SVG rendering, simplify static
    export, and remove the Vega runtime.
-4. **Next:** implement the startup/document-home design above, including restoration of
-   desktop document association and safe handling of detached recovery data.
+4. **In progress:** desktop document association and safe recovery ordering are
+   done. Next add the browser/desktop document-home and recents UI, including
+   `Locate` and `Recover as new` for a moved file.
 5. Revisit Elm beyond DuckDB using concrete unmet operations, then proceed to
    the remaining desktop distribution milestone.
 

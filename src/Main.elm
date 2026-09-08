@@ -56,7 +56,10 @@ import Time
 
 
 type alias Flags =
-    { saved : Maybe String }
+    { saved : Maybe String
+    , associated : Bool
+    , dirty : Bool
+    }
 
 
 type alias Model =
@@ -180,9 +183,29 @@ init flags =
     let
         ( notebook, notice ) =
             restore flags
+
+        associated =
+            flags.associated && notice == Nothing
+
+        saveState =
+            if not associated then
+                Unassociated
+
+            else if flags.dirty then
+                Dirty
+
+            else
+                Saved
+
+        autosave =
+            if associated && flags.dirty then
+                Process.sleep 800 |> Task.perform (\_ -> AutosaveDue 0)
+
+            else
+                Cmd.none
     in
-    ( load notebook { title = notebook.title, cells = [], states = Dict.empty, baseSchema = Dict.empty, queue = [], current = Nothing, db = Booting, nextId = 1, notice = notice, associated = False, revision = 0, saveState = Unassociated, saveBefore = Nothing, history = History.empty, historyEdit = Nothing, insertingAt = Nothing, schemaExpanded = Set.empty, schemaTables = Set.empty, chartHovers = Dict.empty, newArmed = False, resetArmed = False, editing = Nothing, expanded = Set.empty, inputs = Dict.empty, pickers = Dict.empty, today = Nothing }
-    , Task.perform GotToday Date.today
+    ( load notebook { title = notebook.title, cells = [], states = Dict.empty, baseSchema = Dict.empty, queue = [], current = Nothing, db = Booting, nextId = 1, notice = notice, associated = associated, revision = 0, saveState = saveState, saveBefore = Nothing, history = History.empty, historyEdit = Nothing, insertingAt = Nothing, schemaExpanded = Set.empty, schemaTables = Set.empty, chartHovers = Dict.empty, newArmed = False, resetArmed = False, editing = Nothing, expanded = Set.empty, inputs = Dict.empty, pickers = Dict.empty, today = Nothing }
+    , Cmd.batch [ Task.perform GotToday Date.today, autosave ]
     )
 
 

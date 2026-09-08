@@ -66,7 +66,7 @@ seedCells =
       }
     , { id = "delay_by_distance"
       , kind = Query
-      , source = "access flights ()\n  |> groupBy .distance\n  |> reduce (\\g ->\n       { distance = g.distance\n       , avg_delay = roundTo 1 (avg g.delay)\n       , flights = count g\n       })\n  |> filter (\\r -> r.flights > 500)\n  |> lineChart { x = .distance, y = .avg_delay }"
+      , source = "access flights ()\n  |> groupBy .distance\n  |> reduce (\\g ->\n       { distance = g.distance\n       , avg_delay = roundTo 1 (avg g.delay)\n       , flights = count g\n       })\n  |> filter (\\r -> r.flights > 500)\n  |> sortBy .distance\n  |> lineChart { x = .distance, y = .avg_delay }"
       }
     , { id = "airport_map"
       , kind = Query

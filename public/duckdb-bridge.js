@@ -9,6 +9,7 @@
 import * as duckdb from './vendor/duckdb.mjs';
 import { exportStatic } from './export.js';
 import { clearNotebook, openNotebook, saveNotebook } from './files.js';
+import { chooseStartup } from './startup.mjs';
 
 const PREVIEW_ROWS = 200;
 const native = () => window.__TAURI__ && window.__TAURI__.core;
@@ -29,17 +30,37 @@ let conn = null;
 let excelLoaded = false;
 
 const STORAGE_KEY = 'duckpad.notebook';
+const STORAGE_TIME_KEY = 'duckpad.notebook.modified';
+
+const recovered = readSaved();
+const restored = await restoreDocument();
 
 const app = window.Elm.Main.init({
   node: document.getElementById('notebook'),
-  flags: { saved: readSaved() },
+  flags: chooseStartup(recovered, restored),
 });
+
+// Desktop restores the last real document before Elm schedules any data cell,
+// which gives relative paths their notebook directory from the first query.
+// Browser recovery remains unassociated because a stored string is not a file
+// handle and must never pretend that it can be overwritten.
+async function restoreDocument() {
+  if (!native()) return null;
+  try {
+    return await native().invoke('restore_file');
+  } catch (error) {
+    console.warn('[duckpad] could not restore the last document', error);
+    return null;
+  }
+}
 
 // Browser storage can throw outright (private windows, blocked site data), so
 // every access is guarded and a failure simply means starting fresh.
 function readSaved() {
   try {
-    return localStorage.getItem(STORAGE_KEY);
+    const content = localStorage.getItem(STORAGE_KEY);
+    if (content === null) return null;
+    return { content, modified: Number(localStorage.getItem(STORAGE_TIME_KEY) || 0) };
   } catch {
     return null;
   }
@@ -62,6 +83,7 @@ app.ports.exportStatic.subscribe(exportStatic);
 app.ports.persist.subscribe((content) => {
   try {
     localStorage.setItem(STORAGE_KEY, content);
+    localStorage.setItem(STORAGE_TIME_KEY, String(Date.now()));
   } catch {
     // Out of quota or storage disabled. The safety net is gone; the document
     // is still whatever the reader last saved to a file.

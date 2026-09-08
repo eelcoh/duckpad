@@ -4,7 +4,7 @@ use serde_json::{json, Value};
 use std::{
     path::{Path, PathBuf},
     sync::Mutex,
-    time::Instant,
+    time::{Instant, UNIX_EPOCH},
 };
 use tauri::{path::BaseDirectory, Manager};
 
@@ -14,6 +14,7 @@ struct Database {
     notebook_dir: Mutex<Option<PathBuf>>,
     bundled_resource_dir: PathBuf,
     excel_extension: PathBuf,
+    association_file: PathBuf,
 }
 
 #[derive(Deserialize)]
@@ -44,22 +45,78 @@ struct Described {
     nullable: bool,
 }
 
+#[derive(Serialize)]
+struct Restored {
+    content: String,
+    modified: u64,
+}
+
 #[tauri::command(async)]
 fn read_file(path: String, state: tauri::State<'_, Database>) -> Result<String, String> {
     let path = PathBuf::from(path);
     let contents = std::fs::read_to_string(&path).map_err(err)?;
-    *state.document_path.lock().map_err(err)? = Some(path.clone());
-    *state.notebook_dir.lock().map_err(err)? = path.parent().map(Path::to_path_buf);
+    associate_document(&path, &state)?;
     Ok(contents)
 }
 
 #[tauri::command(async)]
-fn write_file(path: String, contents: String, state: tauri::State<'_, Database>) -> Result<(), String> {
+fn write_file(
+    path: String,
+    contents: String,
+    state: tauri::State<'_, Database>,
+) -> Result<(), String> {
     let path = PathBuf::from(path);
     std::fs::write(&path, contents).map_err(err)?;
-    *state.document_path.lock().map_err(err)? = Some(path.clone());
-    *state.notebook_dir.lock().map_err(err)? = path.parent().map(Path::to_path_buf);
+    associate_document(&path, &state)?;
     Ok(())
+}
+
+#[tauri::command(async)]
+fn restore_file(state: tauri::State<'_, Database>) -> Result<Option<Restored>, String> {
+    let remembered = match std::fs::read_to_string(&state.association_file) {
+        Ok(path) => PathBuf::from(path),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(err(error)),
+    };
+    match std::fs::read_to_string(&remembered) {
+        Ok(content) => {
+            let modified = std::fs::metadata(&remembered)
+                .and_then(|metadata| metadata.modified())
+                .and_then(|time| time.duration_since(UNIX_EPOCH).map_err(std::io::Error::other))
+                .map_err(err)?
+                .as_millis() as u64;
+            associate_document(&remembered, &state)?;
+            Ok(Some(Restored { content, modified }))
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            forget_document(&state)?;
+            Ok(None)
+        }
+        Err(error) => Err(err(error)),
+    }
+}
+
+fn associate_document(path: &Path, state: &Database) -> Result<(), String> {
+    *state.document_path.lock().map_err(err)? = Some(path.to_path_buf());
+    *state.notebook_dir.lock().map_err(err)? = path.parent().map(Path::to_path_buf);
+    if let Some(directory) = state.association_file.parent() {
+        std::fs::create_dir_all(directory).map_err(err)?;
+    }
+    std::fs::write(
+        &state.association_file,
+        path.to_string_lossy().as_bytes(),
+    )
+    .map_err(err)
+}
+
+fn forget_document(state: &Database) -> Result<(), String> {
+    *state.document_path.lock().map_err(err)? = None;
+    *state.notebook_dir.lock().map_err(err)? = None;
+    match std::fs::remove_file(&state.association_file) {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(err(error)),
+    }
 }
 
 #[tauri::command(async)]
@@ -80,9 +137,7 @@ fn write_export(path: String, contents: String) -> Result<(), String> {
 
 #[tauri::command(async)]
 fn clear_notebook(state: tauri::State<'_, Database>) -> Result<(), String> {
-    *state.document_path.lock().map_err(err)? = None;
-    *state.notebook_dir.lock().map_err(err)? = None;
-    Ok(())
+    forget_document(&state)
 }
 
 // DuckDB work must never run on Tauri's main thread: opening the tutorial
@@ -336,17 +391,34 @@ fn main() {
                 .join(version)
                 .join(platform)
                 .join("excel.duckdb_extension");
+            let association_file = app
+                .path()
+                .app_data_dir()
+                .map_err(err)?
+                .join("last-notebook");
             app.manage(Database {
                 connection: Mutex::new(connection),
                 document_path: Mutex::new(None),
                 notebook_dir: Mutex::new(None),
                 bundled_resource_dir,
                 excel_extension,
+                association_file,
             });
             Ok(())
         })
         .plugin(tauri_plugin_dialog::init())
-        .invoke_handler(tauri::generate_handler![read_file, write_file, write_current_file, write_export, clear_notebook, db_boot, db_load_source, db_materialize, db_drop_table])
+        .invoke_handler(tauri::generate_handler![
+            read_file,
+            restore_file,
+            write_file,
+            write_current_file,
+            write_export,
+            clear_notebook,
+            db_boot,
+            db_load_source,
+            db_materialize,
+            db_drop_table
+        ])
         .run(tauri::generate_context!())
         .expect("duckpad failed to start");
 }
