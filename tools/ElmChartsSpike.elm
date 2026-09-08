@@ -2,9 +2,9 @@ module ElmChartsSpike exposing (main)
 
 {-| A deliberately separate elm-charts proving ground.
 
-It exercises the three chart shapes Duckpad supports without changing the
-production Vega renderer. Keeping it executable makes the parity decision
-repeatable instead of leaving it as a throwaway experiment.
+It exercises the three chart shapes Duckpad supports independently of the
+dynamic production adapter. Keeping it executable makes the original parity
+decision repeatable instead of leaving it as a throwaway experiment.
 
 -}
 

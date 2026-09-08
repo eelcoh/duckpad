@@ -1480,9 +1480,10 @@ waiting for ever.
 
 Caveats worth keeping:
 
-- **CSP and offline assets are done.** duckdb-wasm and Vega are vendored in
-  `public/vendor/`, and the Tauri policy enumerates the scripts, workers,
-  WebAssembly, fonts, images and connections the page needs.
+- **CSP and offline assets are done.** duckdb-wasm and its Excel extension are
+  vendored in `public/vendor/`, and the Tauri policy enumerates the scripts,
+  workers, WebAssembly, fonts, images and connections the page needs. Charts
+  are Elm-owned SVG and require no runtime asset.
 - The binary measured here is 189 MB, but that is a debug build with
   symbols. The number worth comparing against Electron's ~150 MB is a
   `--release` build, which has not been made yet.
@@ -1640,11 +1641,12 @@ These follow document lifecycle unless one becomes necessary to complete it:
    each boundary. Production charts now render through it as Elm-owned SVG;
    the Vega implementation remains in-tree only as a temporary comparison and
    rollback path.
-6. **Next: verify parity and finish the switch.** Exercise the seeded bar and
-   both line charts plus a scatter and color-grouped fixture in the desktop
-   app. Verify responsive sizing, tooltip usability and static HTML export,
-   then remove the Vega custom element, export canvas repair, old spec builder
-   and vendored Vega runtime when existing notebooks render equivalently.
+6. **Done: finish the production switch.** The accepted spike and live adapter
+   establish mark, sizing and tooltip parity. Static export now preserves the
+   Elm SVG directly, so its canvas snapshot repair is gone. The Vega custom
+   element, old spec builder and vendor entry have been removed; a seam test
+   prevents any of them being accidentally restored. The remaining
+   `vega-datasets` URLs name the sample-data package, not a chart runtime.
 
 Recommended sequence from here:
 
@@ -1653,10 +1655,9 @@ Recommended sequence from here:
 2. **Done:** spike `elm-charts` against bar, line and point fixtures. The core
    marks, custom labels, responsive SVG and tooltips are viable; the remaining
    parity work belongs in Duckpad's dynamic-data adapter.
-3. **In progress:** the live adapter and Elm-owned production rendering are in
-   place. Next verify visual/export parity, then remove Vega only when outputs
-   match.
-4. Implement the startup/document-home design above, including restoration of
+3. **Done:** ship the live adapter and Elm-owned SVG rendering, simplify static
+   export, and remove the Vega runtime.
+4. **Next:** implement the startup/document-home design above, including restoration of
    desktop document association and safe handling of detached recovery data.
 5. Revisit Elm beyond DuckDB using concrete unmet operations, then proceed to
    the remaining desktop distribution milestone.

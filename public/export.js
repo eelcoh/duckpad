@@ -7,10 +7,10 @@
 //
 // It works by snapshotting the rendered page rather than re-deriving it,
 // which is the only way to be sure the export shows what the reader was
-// looking at. Three things have to be repaired in the copy: charts live in a
-// canvas that does not survive serialisation, editors are textareas whose
-// contents are a property rather than markup, and every control is inert once
-// the scripts are gone and so should not be there at all.
+// looking at. Elm charts are SVG and survive DOM cloning as-is. Two things do
+// need repair: editors are textareas whose contents are a property rather than
+// markup, and every control is inert once the scripts are gone and so should
+// not be there at all.
 
 import { saveExport } from './files.js';
 
@@ -26,43 +26,13 @@ export function exportStatic(name) {
 }
 
 function buildPage() {
-  const charts = snapshotCharts();
   const clone = document.documentElement.cloneNode(true);
 
-  restoreCharts(clone, charts);
   freezeEditors(clone);
   removeControls(clone);
   removeScripts(clone);
 
   return '<!doctype html>\n' + clone.outerHTML;
-}
-
-// Canvases are read from the live page, because a cloned canvas is blank: its
-// pixels are not part of the markup.
-function snapshotCharts() {
-  return [...document.querySelectorAll('vega-chart')].map((chart) => {
-    const canvas = chart.querySelector('canvas');
-    return canvas
-      ? { url: canvas.toDataURL('image/png'), width: canvas.clientWidth, height: canvas.clientHeight }
-      : null;
-  });
-}
-
-function restoreCharts(clone, charts) {
-  [...clone.querySelectorAll('vega-chart')].forEach((chart, i) => {
-    const shot = charts[i];
-    chart.replaceChildren();
-    if (!shot) {
-      chart.textContent = 'chart not drawn';
-      return;
-    }
-    const img = document.createElement('img');
-    img.src = shot.url;
-    img.width = shot.width;
-    img.height = shot.height;
-    img.style.maxWidth = '100%';
-    chart.appendChild(img);
-  });
 }
 
 // A textarea's value is a property, so the clone would serialise as empty. For
@@ -103,4 +73,3 @@ function removeControls(clone) {
 function removeScripts(clone) {
   clone.querySelectorAll('script').forEach((el) => el.remove());
 }
-

@@ -4,7 +4,7 @@ elm = { version = "0.19.2", bin = "elm" }
 node = "26"
 
 [tasks.vendor]
-description = "Download DuckDB, its Excel extensions and Vega so the app runs offline"
+description = "Download DuckDB and its Excel extensions so the app runs offline"
 run = """
 node tools/vendor.js
 node tools/vendor-native.js
@@ -29,6 +29,7 @@ run = """
 elm make tests/TestRunner.elm --output=tests/tests.js > /dev/null
 node tests/run.js
 node tests/wiring.js
+node tests/chart-migration.js
 """
 
 [tasks.roundtrip]
@@ -54,6 +55,7 @@ run = "distrobox enter duckpad-tauri -- bash -lc 'cd ~/Code/ideas/duckpad/src-ta
 description = "Vendor the third-party JavaScript if it is not already there"
 hide = true
 run = """
+node tools/clean-retired-vega.js
 test -f public/vendor/duckdb.mjs && test -f public/vendor/extensions/v1.4.3/wasm_eh/excel.duckdb_extension.wasm || node tools/vendor.js
 node tools/vendor-native.js --check || node tools/vendor-native.js
 """

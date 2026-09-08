@@ -1,8 +1,8 @@
 // Downloads the JavaScript duckpad loads at runtime into public/vendor/.
 //
 // A desktop app that needs the network to open a notebook is broken, and until
-// this existed duckpad was one: duckdb-wasm and Vega were fetched from a CDN
-// on first use. Vendoring also lets the packaged build run under a real CSP
+// this existed duckpad was one: duckdb-wasm was fetched from a CDN on first
+// use. Vendoring also lets the packaged build run under a real CSP
 // instead of none, since there is no longer a remote origin to allow.
 //
 // jsDelivr's `+esm` builds are not self-contained — they import further
@@ -23,7 +23,6 @@ const out = path.join(__dirname, '..', 'public', 'vendor');
 // The two entry points, and the names the rest of the app imports them by.
 const ENTRIES = {
   'duckdb.mjs': `/npm/${DUCKDB}/+esm`,
-  'vega-embed.mjs': '/npm/vega-embed@6/+esm',
 };
 
 // DuckDB's worker and WebAssembly are fetched as whole files rather than
