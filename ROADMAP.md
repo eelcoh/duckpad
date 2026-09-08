@@ -1664,9 +1664,10 @@ Recommended sequence from here:
 4. **In progress:** desktop document association and safe recovery ordering are
    done. Next add the browser/desktop document-home and recents UI, including
    `Locate` and `Recover as new` for a moved file.
-   The desktop development task uses Tauri's embedded built assets rather than
-   its live-reload server: notebooks can live under `public/`, and autosaving
-   one must not reload the webview and lose the reader's scroll position.
+   The desktop development task uses Duckpad's plain static server rather than
+   Tauri's recursive live-reload server: notebooks can live under `public/`,
+   and autosaving one must not reload the webview and lose the reader's scroll
+   position. Release builds still use the embedded assets.
 5. Revisit Elm beyond DuckDB using concrete unmet operations, then proceed to
    the remaining desktop distribution milestone.
 

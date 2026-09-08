@@ -4,6 +4,12 @@
   "version": "0.1.0",
   "identifier": "engineering.duckpad.notebook",
   "build": {
+    "beforeDevCommand": {
+      "script": "python3 tools/serve.py 8080 public",
+      "cwd": "..",
+      "wait": false
+    },
+    "devUrl": "http://localhost:8080",
     "frontendDist": "../public"
   },
   "app": {
