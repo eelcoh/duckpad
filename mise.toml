@@ -48,9 +48,9 @@ node tools/emit-seed.js
 """
 
 [tasks.desktop]
-description = "Run duckpad as a desktop app (the Rust side builds in the duckpad-tauri container)"
+description = "Run duckpad as a desktop app without reloading when an open notebook autosaves"
 depends = ["build"]
-run = "distrobox enter duckpad-tauri -- bash -lc 'cd ~/Code/ideas/duckpad/src-tauri && cargo tauri dev'"
+run = "distrobox enter duckpad-tauri -- bash -lc 'cd ~/Code/ideas/duckpad/src-tauri && cargo tauri dev --no-dev-server'"
 
 [tasks.vendored]
 description = "Vendor the third-party JavaScript if it is not already there"
