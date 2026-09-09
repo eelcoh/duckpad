@@ -51,6 +51,21 @@ struct Restored {
     modified: u64,
 }
 
+/// What startup can say about the remembered document.
+///
+/// The two fields are mutually exclusive and both are usually absent. A
+/// `restored` document is one whose file is still there, which is the only
+/// case with a known base directory for relative data paths. A `formerPath`
+/// is the opposite: the association pointed somewhere that no longer exists,
+/// and naming it is the difference between telling the reader their file
+/// moved and implying their work was never saved at all.
+#[derive(Serialize, Default)]
+struct Startup {
+    restored: Option<Restored>,
+    #[serde(rename = "formerPath")]
+    former_path: Option<String>,
+}
+
 #[tauri::command(async)]
 fn read_file(path: String, state: tauri::State<'_, Database>) -> Result<String, String> {
     let path = PathBuf::from(path);
@@ -72,26 +87,43 @@ fn write_file(
 }
 
 #[tauri::command(async)]
-fn restore_file(state: tauri::State<'_, Database>) -> Result<Option<Restored>, String> {
+fn restore_file(state: tauri::State<'_, Database>) -> Result<Startup, String> {
     let remembered = match std::fs::read_to_string(&state.association_file) {
         Ok(path) => PathBuf::from(path),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Startup::default()),
         Err(error) => return Err(err(error)),
     };
-    match std::fs::read_to_string(&remembered) {
+    let startup = read_remembered(&remembered)?;
+    if startup.restored.is_some() {
+        associate_document(&remembered, &state)?;
+    } else {
+        // The association is stale. Dropping it is what keeps the next start
+        // from resolving relative data paths against a directory that is no
+        // longer the document's, but the path itself is reported first so the
+        // home screen can offer to locate the file rather than implying the
+        // recovered edits never belonged to one.
+        forget_document(&state)?;
+    }
+    Ok(startup)
+}
+
+fn read_remembered(remembered: &Path) -> Result<Startup, String> {
+    match std::fs::read_to_string(remembered) {
         Ok(content) => {
-            let modified = std::fs::metadata(&remembered)
+            let modified = std::fs::metadata(remembered)
                 .and_then(|metadata| metadata.modified())
                 .and_then(|time| time.duration_since(UNIX_EPOCH).map_err(std::io::Error::other))
                 .map_err(err)?
                 .as_millis() as u64;
-            associate_document(&remembered, &state)?;
-            Ok(Some(Restored { content, modified }))
+            Ok(Startup {
+                restored: Some(Restored { content, modified }),
+                former_path: None,
+            })
         }
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-            forget_document(&state)?;
-            Ok(None)
-        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(Startup {
+            restored: None,
+            former_path: Some(remembered.to_string_lossy().into_owned()),
+        }),
         Err(error) => Err(err(error)),
     }
 }
@@ -300,6 +332,45 @@ fn load_excel(connection: &Connection, extension: &Path) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // A remembered file that is still there restores; one that has moved
+    // reports where it was. The second case is the whole reason this returns
+    // a struct: the front end has to tell "your file moved" apart from "this
+    // was never saved", and only the discarded path carries that difference.
+    #[test]
+    fn a_moved_document_reports_the_path_it_lost() {
+        let dir = std::env::temp_dir().join(format!("duckpad-startup-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let present = dir.join("here.duckpad.md");
+        std::fs::write(&present, "# here").unwrap();
+
+        let restored = read_remembered(&present).unwrap();
+        assert_eq!(restored.restored.as_ref().map(|r| r.content.as_str()), Some("# here"));
+        assert_eq!(restored.former_path, None);
+
+        let missing = dir.join("gone.duckpad.md");
+        let lost = read_remembered(&missing).unwrap();
+        assert!(lost.restored.is_none());
+        assert_eq!(lost.former_path.as_deref(), Some(missing.to_string_lossy().as_ref()));
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    // The front end reads these by name, so the wire shape is part of the
+    // contract rather than an implementation detail.
+    #[test]
+    fn startup_serialises_the_names_the_front_end_reads() {
+        let empty = serde_json::to_value(Startup::default()).unwrap();
+        assert!(empty["restored"].is_null());
+        assert!(empty["formerPath"].is_null());
+
+        let moved = serde_json::to_value(Startup {
+            restored: None,
+            former_path: Some("/gone/n.duckpad.md".into()),
+        })
+        .unwrap();
+        assert_eq!(moved["formerPath"], "/gone/n.duckpad.md");
+    }
 
     #[test]
     fn native_outcome_matches_the_browser_contract() {

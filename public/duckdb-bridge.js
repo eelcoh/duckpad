@@ -10,6 +10,7 @@ import * as duckdb from './vendor/duckdb.mjs';
 import { exportStatic } from './export.js';
 import { clearNotebook, openNotebook, saveNotebook } from './files.js';
 import { chooseStartup } from './startup.mjs';
+import * as recents from './recents.mjs';
 
 const PREVIEW_ROWS = 200;
 const native = () => window.__TAURI__ && window.__TAURI__.core;
@@ -31,13 +32,50 @@ let excelLoaded = false;
 
 const STORAGE_KEY = 'duckpad.notebook';
 const STORAGE_TIME_KEY = 'duckpad.notebook.modified';
+const FORMER_PATH_KEY = 'duckpad.notebook.formerPath';
 
 const recovered = readSaved();
-const restored = await restoreDocument();
+const startup = await restoreDocument();
+const restored = startup.restored ?? null;
+
+// Where a recovery copy came from, when startup found the remembered file
+// gone. Rust reports it once, on the start that discovers the loss; keeping
+// it means a second start still says the file moved rather than implying the
+// edits were never saved. It is cleared as soon as the copy stops being
+// orphaned — which is any successful open or save.
+const formerPath = rememberFormerPath(startup.formerPath) ?? readFormerPath();
 
 const app = window.Elm.Main.init({
   node: document.getElementById('notebook'),
-  flags: chooseStartup(recovered, restored),
+  flags: chooseStartup(recovered, restored, recents.listRecents(), formerPath),
+});
+
+recents.onRecentsChanged((entries) => app.ports.recentsChanged.send(entries));
+
+app.ports.forgetRecent.subscribe((key) => recents.forgetRecent(key));
+
+// Reopening a recent goes out through the same port an ordinary open returns
+// on, so Elm has one way to receive a document rather than two.
+app.ports.openRecent.subscribe(async ({ key, locate }) => {
+  try {
+    const opened = locate ? await openNotebook() : await recents.openRecent(key, false);
+    if (opened === null) {
+      // A cancelled picker is not a failure; an unreachable entry is, and the
+      // entry has already marked itself so the list can offer Locate.
+      if (!locate) {
+        app.ports.fileOpened.send({
+          ok: false,
+          error: 'That notebook is no longer where it was. Use Locate to point at it again.',
+        });
+      }
+      return;
+    }
+    if (locate && key) recents.forgetRecent(key);
+    clearFormerPath();
+    app.ports.fileOpened.send({ ok: true, ...opened });
+  } catch (error) {
+    app.ports.fileOpened.send({ ok: false, error: String(error) });
+  }
 });
 
 // Desktop restores the last real document before Elm schedules any data cell,
@@ -45,12 +83,40 @@ const app = window.Elm.Main.init({
 // Browser recovery remains unassociated because a stored string is not a file
 // handle and must never pretend that it can be overwritten.
 async function restoreDocument() {
-  if (!native()) return null;
+  if (!native()) return {};
   try {
-    return await native().invoke('restore_file');
+    return (await native().invoke('restore_file')) ?? {};
   } catch (error) {
     console.warn('[duckpad] could not restore the last document', error);
+    return {};
+  }
+}
+
+function readFormerPath() {
+  try {
+    return localStorage.getItem(FORMER_PATH_KEY);
+  } catch {
     return null;
+  }
+}
+
+function rememberFormerPath(path) {
+  if (!path) return null;
+  try {
+    localStorage.setItem(FORMER_PATH_KEY, path);
+  } catch {
+    // Only the second start loses the detail; this one still has the path.
+  }
+  return path;
+}
+
+// A document that opened or saved is no longer an orphaned recovery copy, so
+// the hint has done its job and must not outlive it into an unrelated start.
+function clearFormerPath() {
+  try {
+    localStorage.removeItem(FORMER_PATH_KEY);
+  } catch {
+    // Nothing to do: the hint is cosmetic and a stale one is not harmful.
   }
 }
 
@@ -97,6 +163,8 @@ app.ports.persist.subscribe((content) => {
 app.ports.requestSave.subscribe(async ({ name, content, revision, saveAs }) => {
   try {
     const result = await saveNotebook(name, content, saveAs);
+    if (result.entry) recents.rememberRecent(result.entry);
+    if (!result.cancelled) clearFormerPath();
     app.ports.fileSaved.send({ ok: true, revision, ...result });
   } catch (err) {
     app.ports.fileSaved.send({ ok: false, revision, error: String(err) });
@@ -106,7 +174,10 @@ app.ports.requestSave.subscribe(async ({ name, content, revision, saveAs }) => {
 app.ports.requestOpen.subscribe(async () => {
   try {
     const opened = await openNotebook();
-    if (opened !== null) app.ports.fileOpened.send({ ok: true, ...opened });
+    if (opened === null) return;
+    if (opened.entry) recents.rememberRecent(opened.entry);
+    clearFormerPath();
+    app.ports.fileOpened.send({ ok: true, ...opened });
   } catch (err) {
     app.ports.fileOpened.send({ ok: false, error: String(err) });
   }
@@ -429,6 +500,9 @@ app.ports.dropTable.subscribe(async (cellId) => {
 });
 
 app.ports.clearNotebook.subscribe(async () => {
+  // Saying a document has no file also retires any hint about where a file
+  // used to be, or the next start would describe a situation that is over.
+  clearFormerPath();
   try { await clearNotebook(); } catch (err) { console.warn(err); }
 });
 

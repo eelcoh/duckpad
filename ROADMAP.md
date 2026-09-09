@@ -1569,7 +1569,7 @@ The safety rule tying the three together: `New`, Open and Reset are document
 boundaries; they must not silently destroy the last recoverable state, and an
 autosave failure must leave both undo history and the recovery mirror intact.
 
-### Startup and document home — requested, deferred
+### Startup and document home — done
 
 Startup needs a product decision rather than another unconditional restore.
 The current desktop behavior restores notebook text from the recovery mirror
@@ -1590,18 +1590,40 @@ Recommended shape:
    moved, startup clears the stale association and retains the recovery copy as
    an unassociated notebook. The document-home work below should hold that copy
    without executing it and add `Locate` and `Recover as new` actions.
-2. **Browser:** start at a small document-home/recents page because persistent
-   file handles and permissions vary by browser. Offer `New`, `Open`, the last
-   recovery snapshot and any handles the browser can still access. A recovery
-   snapshot remains explicitly unassociated until the user reconnects it.
-3. Keep `Reset example` available as an intentional action, not the implicit
-   startup document. Recent entries should show name, path where available,
-   last-opened time and whether recoverable unsaved edits exist. Store no file
-   contents in the recents index.
-4. Define execution timing with this work: reopen an associated document only
-   after its location is known; never run relative data cells from an arbitrary
-   process working directory. A blank/home page should therefore start without
-   query errors.
+2. **Browser — done:** startup goes to a document home whenever no file
+   association was restored, which is every browser start and any desktop
+   start whose remembered file has moved. It offers `New`, `Open…`, the
+   example, the recovery copy and the recents list. `chooseStartup` decides
+   this in one place and is tested for it. Browser handles are held in
+   IndexedDB, since they survive a reload but a JSON index cannot carry them;
+   a browser without the File System Access API keeps no entries rather than
+   listing documents it has no way to reopen. A recovery copy stays
+   unassociated until `Recover as new` adopts it without a file or `Locate`
+   reconnects it to one, so its first Save can never overwrite a file the
+   reader did not choose.
+3. **Done:** the example is an action on the home screen, not the implicit
+   startup document. Entries show name, path where the host has one, age, an
+   `unsaved edits` marker and a `missing` marker, with `Open`/`Locate…` and
+   `Forget`. The index holds pointers only; a test asserts that notebook text
+   handed to it is not written, and that an entry carries no field beyond
+   `key`, `name`, `path`, `opened`, `unsaved` and `reachable`.
+4. **Done:** `schedule` refuses to run while the home screen is showing, so a
+   document with no known location cannot dispatch a cell. `tests/home.js`
+   runs the compiled program against a DOM stub and asserts the home screen
+   fires no `loadSource` or `materialize`, with an associated document as the
+   control so the check cannot pass by executing nothing at all.
+
+5. **Done:** the recovery card names the file it lost. `restore_file` returns
+   a `Startup` carrying either the restored document or the path it gave up
+   on, instead of collapsing both to nothing, so the card can say "their file
+   is no longer at *path*" rather than the false "never saved to a file". The
+   hint is kept across restarts and retired the moment the copy stops being
+   orphaned — any successful open or save, and `Recover as new`, which clears
+   the association deliberately. A browser has no equivalent, since a dropped
+   handle has no path to report, so that branch stays correctly unreachable
+   there. Both branches are asserted in `tests/home.js`; the Rust side is
+   covered for the moved and present cases and for the wire names the front
+   end reads.
 
 This follows the chart migration rather than interrupting it, but should land
 before packaging Duckpad as a general desktop release: a trustworthy first
@@ -1661,17 +1683,21 @@ Recommended sequence from here:
    parity work belongs in Duckpad's dynamic-data adapter.
 3. **Done:** ship the live adapter and Elm-owned SVG rendering, simplify static
    export, and remove the Vega runtime.
-4. **In progress:** desktop document association and safe recovery ordering are
-   done. Next add the browser/desktop document-home and recents UI, including
-   `Locate` and `Recover as new` for a moved file.
+4. **Done:** desktop document association, safe recovery ordering, and the
+   document-home and recents UI with `Locate` and `Recover as new`. Reopening a
+   recent under Tauri goes through `read_file`, which already re-establishes
+   the association, so relative data paths resolve against the reopened
+   document rather than the process working directory, and a moved file
+   reports the path it lost so the reader can locate it.
    The desktop development task uses Duckpad's plain static server rather than
    Tauri's recursive live-reload server: notebooks can live under `public/`,
    and autosaving one must not reload the webview and lose the reader's scroll
    position. Release builds still use the embedded assets.
-5. Revisit Elm beyond DuckDB using concrete unmet operations, then proceed to
+5. **Done:** Elm beyond DuckDB was revisited and closed again — see that
+   section for the reasoning and for what the native backend changed. Next is
    the remaining desktop distribution milestone.
 
-### Elm beyond DuckDB — decision reopened
+### Elm beyond DuckDB — reopened, and closed again
 
 The earlier decision was “no escape hatch”: keep transformations in the total
 query language and close to DuckDB. Reopen that decision before implementing
@@ -1701,6 +1727,42 @@ remain offline in both browser and desktop builds, whether arbitrary code may
 block the reactive graph, and which totality/reproducibility guarantees Duckpad
 is willing to relax. Record the decision and a smallest possible spike before
 adding a new cell kind.
+
+**Decided again: no escape hatch, and no user-authored Elm.** The search for
+motivating examples came back empty, which is itself the finding. Every
+numbered item in *Remaining language work* is closed. The one operation still
+recorded as blocked — list aggregates — is blocked by this project's type
+language rather than by DuckDB, which has `list()`: it needs a `TList`
+constructor threaded through the checker, Elm codegen, table rendering and
+chart channels, and no second execution model at all. The operations DuckDB
+genuinely cannot express are the ones already out of scope: hypothesis tests,
+distributions, model fitting.
+
+The real ask behind "be more like Jupyter" is the ecosystem, not a list of
+missing verbs — and Elm is the worst of the three candidates for it. It has no
+numerical libraries, and it is unlikely to grow them: numpy and scipy were
+possible because Python had C extensions, mutable buffers and dynamic
+dispatch, which are exactly the things Elm gives up on purpose. Reopening the
+question on *Elm* could not have produced the ecosystem whatever the answer.
+
+Two facts also changed since the first decision, both from the native-DuckDB
+migration, and both raise the cost of any escape hatch:
+
+- "Arrow crosses from duckdb-wasm cleanly" now holds only in the browser. The
+  desktop backend is native DuckDB with no Arrow dependency; `rows_json` hands
+  back JSON.
+- Neither build has a full-data path to JavaScript. `rows_json` takes a limit
+  and the browser previews 200 rows, so the real table never leaves DuckDB. A
+  cell of arbitrary code would first need a path that does not exist — Arrow
+  IPC out of Rust, and a non-preview path in the browser — before any question
+  about languages arises.
+
+So the first spike was never "run Python"; it was "get a full table out of
+both backends", which is a prerequisite nothing else currently wants. The
+positive statement stands and is now better grounded: the numerical work is
+DuckDB's, Elm is the type system and the interface, and the totality guarantee
+is the property that makes this notebook worth describing at all. An escape
+hatch would trade that for a competition against tools that already exist.
 
 ### Desktop distribution — native backend done
 

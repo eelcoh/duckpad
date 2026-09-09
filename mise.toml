@@ -31,6 +31,8 @@ node tests/run.js
 node tests/wiring.js
 node tests/chart-migration.js
 node tests/startup.mjs
+node tests/recents.mjs
+node tests/home.js
 """
 
 [tasks.roundtrip]

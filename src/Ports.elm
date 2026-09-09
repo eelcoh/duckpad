@@ -1,4 +1,4 @@
-port module Ports exposing (clearNotebook, dbReady, dropTable, exportStatic, fileOpened, fileSaved, loadSource, materialize, persist, queryOutcome, requestOpen, requestSave, setCaret)
+port module Ports exposing (clearNotebook, dbReady, dropTable, exportStatic, fileOpened, fileSaved, forgetRecent, loadSource, materialize, openRecent, persist, queryOutcome, recentsChanged, requestOpen, requestSave, setCaret)
 
 import Json.Decode as D
 
@@ -75,3 +75,36 @@ port setCaret : { id : String, pos : Int } -> Cmd msg
 already in it, no database and no network.
 -}
 port exportStatic : String -> Cmd msg
+
+
+{-| Reopen something the reader picked off the home screen.
+
+The key is the host's own, so this says which entry rather than where it
+lives: a path that Elm never parsed cannot be a path Elm gets wrong. The
+document comes back on `fileOpened` like any other open, which is what keeps
+the home screen from being a second way to load a notebook.
+
+`locate` turns the same call into a picker when the entry has gone missing,
+so reconnecting a moved file reuses the open path rather than a parallel one.
+
+-}
+port openRecent : { key : String, locate : Bool } -> Cmd msg
+
+
+{-| Drop an entry from the index.
+
+Used when the reader dismisses one, and when a `Locate` is abandoned for a
+file that is never coming back. It removes the pointer only; a recovery
+mirror for that document is a separate thing and outlives it.
+
+-}
+port forgetRecent : String -> Cmd msg
+
+
+{-| The index, whenever the host has rewritten it.
+
+Opening, saving and forgetting all change it, and the home screen is often on
+screen while they happen, so the host pushes rather than Elm polling.
+
+-}
+port recentsChanged : (D.Value -> msg) -> Sub msg

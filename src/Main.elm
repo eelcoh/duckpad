@@ -43,9 +43,11 @@ import Indent
 import Json.Decode as D
 import Notebook exposing (Notebook)
 import Seed
+import Tutorial
 import Ports
 import Process
 import Prose
+import Recents
 import Query exposing (Outcome(..), Table)
 import Set
 import Time
@@ -59,6 +61,18 @@ type alias Flags =
     { saved : Maybe String
     , associated : Bool
     , dirty : Bool
+
+    -- Whether to open on the home screen rather than straight into a
+    -- document. The host decides: a desktop build that restored a real file
+    -- association has somewhere to go, a browser holding only an
+    -- unassociated recovery copy does not.
+    , home : Bool
+
+    -- Where the recovery copy used to live, when the host remembered a path
+    -- that has since gone missing. It is the hint `Locate` opens with.
+    , formerPath : Maybe String
+    , recents : D.Value
+    , now : Int
     }
 
 
@@ -82,6 +96,21 @@ type alias Model =
     , schemaExpanded : Set.Set String
     , schemaTables : Set.Set String
     , chartHovers : Dict String ElmChart.Hover
+    , screen : Screen
+    , recents : List Recents.Entry
+
+    -- Whether the buffer came from the recovery mirror. A fresh start holds
+    -- the seeded notebook's cells and has recovered nothing, so the cells
+    -- cannot answer this.
+    , recovered : Bool
+
+    -- Where the recovery copy came from, when it is holding a document whose
+    -- file has gone missing. Only `Locate` reads it.
+    , formerPath : Maybe String
+
+    -- Startup's clock, used to age the recents list. It does not tick: the
+    -- home screen is a doorway, not a display.
+    , now : Int
 
     -- New and Reset cross document boundaries, so they take two clicks: the
     -- first arms the action and the second does it. Anything else disarms it.
@@ -116,6 +145,18 @@ type alias Picker =
     { model : DatePicker.Model
     , text : String
     }
+
+
+{-| Whether a document is open at all.
+
+`Home` is not a document with no cells; it is the absence of one. Keeping it
+out of the model's notebook fields is what lets `schedule` refuse to run
+anything before a document's location is known — a relative data path
+resolved against nothing is the failure this screen exists to prevent.
+-}
+type Screen
+    = Home
+    | Editing
 
 
 type DbStatus
@@ -166,6 +207,14 @@ type Msg
     | PickerEvent String DatePicker.ChangeEvent
     | GotToday Date
     | Focused (Result Browser.Dom.Error ())
+    | StartBlank
+    | StartTutorial
+    | StartExample
+    | RecoverAsNew
+    | OpenRecent String
+    | LocateRecent String
+    | ForgetRecent String
+    | RecentsChanged D.Value
 
 
 main : Program Flags Model Msg
@@ -197,14 +246,21 @@ init flags =
             else
                 Saved
 
+        screen =
+            if flags.home then
+                Home
+
+            else
+                Editing
+
         autosave =
-            if associated && flags.dirty then
+            if associated && flags.dirty && screen == Editing then
                 Process.sleep 800 |> Task.perform (\_ -> AutosaveDue 0)
 
             else
                 Cmd.none
     in
-    ( load notebook { title = notebook.title, cells = [], states = Dict.empty, baseSchema = Dict.empty, queue = [], current = Nothing, db = Booting, nextId = 1, notice = notice, associated = associated, revision = 0, saveState = saveState, saveBefore = Nothing, history = History.empty, historyEdit = Nothing, insertingAt = Nothing, schemaExpanded = Set.empty, schemaTables = Set.empty, chartHovers = Dict.empty, newArmed = False, resetArmed = False, editing = Nothing, expanded = Set.empty, inputs = Dict.empty, pickers = Dict.empty, today = Nothing }
+    ( load notebook { title = notebook.title, cells = [], states = Dict.empty, baseSchema = Dict.empty, queue = [], current = Nothing, db = Booting, nextId = 1, notice = notice, associated = associated, revision = 0, saveState = saveState, saveBefore = Nothing, history = History.empty, historyEdit = Nothing, insertingAt = Nothing, schemaExpanded = Set.empty, schemaTables = Set.empty, chartHovers = Dict.empty, screen = screen, recovered = flags.saved /= Nothing, recents = Result.withDefault [] (D.decodeValue Recents.decoder flags.recents), formerPath = flags.formerPath, now = flags.now, newArmed = False, resetArmed = False, editing = Nothing, expanded = Set.empty, inputs = Dict.empty, pickers = Dict.empty, today = Nothing }
     , Cmd.batch [ Task.perform GotToday Date.today, autosave ]
     )
 
@@ -569,6 +625,8 @@ step msg model =
                                     load notebook
                                         { model
                                             | notice = Nothing
+                                            , screen = Editing
+                                            , formerPath = Nothing
                                             , associated = opened.associated
                                             , revision = model.revision + 1
                                             , saveState =
@@ -751,6 +809,44 @@ step msg model =
                     else
                         Set.insert id model.expanded
               }
+            , Cmd.none
+            )
+
+        StartBlank ->
+            enter Notebook.blank model
+
+        StartTutorial ->
+            enter Tutorial.notebook model
+
+        StartExample ->
+            enter Seed.notebook model
+
+        RecoverAsNew ->
+            -- The recovery copy is already parsed into the model; adopting it
+            -- is only a matter of admitting it has no file. It stays
+            -- unassociated, so its first Save behaves as Save As and cannot
+            -- overwrite whatever now sits at the path it came from.
+            -- Clearing the association is what retires the former-path hint
+            -- in the host: these edits now belong to no file by choice, not
+            -- because one went missing.
+            ( { model | screen = Editing, associated = False, saveState = Unassociated, formerPath = Nothing }
+            , Ports.clearNotebook ()
+            )
+                |> andSchedule
+
+        OpenRecent key ->
+            ( model, Ports.openRecent { key = key, locate = False } )
+
+        LocateRecent key ->
+            ( model, Ports.openRecent { key = key, locate = True } )
+
+        ForgetRecent key ->
+            ( { model | recents = List.filter (\entry -> entry.key /= key) model.recents }
+            , Ports.forgetRecent key
+            )
+
+        RecentsChanged payload ->
+            ( { model | recents = Result.withDefault model.recents (D.decodeValue Recents.decoder payload) }
             , Cmd.none
             )
 
@@ -959,6 +1055,44 @@ finishSave outcome model =
                 ( { model | saveState = Dirty, saveBefore = Nothing }, Cmd.none )
 
 
+{-| Leave the home screen for a document that belongs to no file.
+
+New and the example both start unassociated, so the first Save asks where it
+goes. The old document's tables are dropped and its association cleared
+before the new one runs, or a stale `access` would resolve against a ghost.
+-}
+enter : Notebook.Notebook -> Model -> ( Model, Cmd Msg )
+enter notebook model =
+    let
+        ( entered, run ) =
+            schedule
+                (load notebook
+                    { model
+                        | screen = Editing
+                        , notice = Nothing
+                        , associated = False
+                        , saveState = Unassociated
+                        , saveBefore = Nothing
+                        , history = History.empty
+                        , historyEdit = Nothing
+                        , formerPath = Nothing
+                        , newArmed = False
+                        , resetArmed = False
+                    }
+                )
+    in
+    ( entered, Cmd.batch [ clearDocument model, run ] )
+
+
+andSchedule : ( Model, Cmd Msg ) -> ( Model, Cmd Msg )
+andSchedule ( model, cmd ) =
+    let
+        ( scheduled, run ) =
+            schedule model
+    in
+    ( scheduled, Cmd.batch [ cmd, run ] )
+
+
 clearDocument : Model -> Cmd Msg
 clearDocument model =
     model.cells
@@ -1147,7 +1281,10 @@ invalidate =
 
 schedule : Model -> ( Model, Cmd Msg )
 schedule model =
-    if model.db /= Ready then
+    if model.db /= Ready || model.screen == Home then
+        -- The home screen has no document, so it has no base directory for a
+        -- relative data path to resolve against. Running cells here is what
+        -- produced a page of load failures that looked like corruption.
         ( model, Cmd.none )
 
     else
@@ -1847,6 +1984,7 @@ subscriptions _ =
         , Ports.dbReady DbReady
         , Ports.fileOpened FileOpened
         , Ports.fileSaved FileSaved
+        , Ports.recentsChanged RecentsChanged
         ]
 
 
@@ -1856,6 +1994,16 @@ subscriptions _ =
 
 view : Model -> Html Msg
 view model =
+    case model.screen of
+        Home ->
+            viewHome model
+
+        Editing ->
+            viewEditor model
+
+
+viewEditor : Model -> Html Msg
+viewEditor model =
     let
         graph =
             graphOf model
@@ -1878,6 +2026,172 @@ view model =
                 ++ viewNotebookCells model graph
             )
         )
+
+
+
+-- HOME
+
+
+{-| The first screen when there is no document to open.
+
+It exists because the alternative was worse: restoring a buffer without its
+file association ran every relative data path against whatever directory the
+process happened to start in, and presented the resulting load failures as if
+the notebook were corrupt. A doorway that names what it has is more honest
+than a document that cannot say where it came from.
+-}
+viewHome : Model -> Html Msg
+viewHome model =
+    Element.layout
+        [ Background.color Ui.bg
+        , Font.family Ui.sans
+        , Font.size 14
+        , Font.color Ui.ink
+        ]
+        (column
+            [ width (fill |> maximum 720)
+            , centerX
+            , paddingXY 20 64
+            , spacing 28
+            ]
+            ([ column [ spacing 6 ]
+                [ el [ Font.size 26 ] (text "duckpad")
+                , el [ Font.size 13, Font.color Ui.muted ]
+                    (text "A reactive notebook over DuckDB.")
+                ]
+             , Element.wrappedRow [ spacing 10 ]
+                [ homeButton "New notebook" (Just StartBlank)
+                , homeButton "Open…" (Just OpenFile)
+                , homeButton "Open the tutorial" (Just StartTutorial)
+                , homeButton "Open the example" (Just StartExample)
+                ]
+             , el [ Font.size 12, Font.color Ui.muted ]
+                (text "The tutorial reads two small files that ship with duckpad. The example reads three million rows over the network.")
+             ]
+                ++ viewRecovery model
+                ++ viewRecents model
+            )
+        )
+
+
+{-| The recovery copy, offered as itself rather than as a document.
+
+It has content and no file, and the two things worth doing with it are
+opposites: reconnect it to the file it came from, or accept that it has none.
+Neither is chosen for the reader, because guessing wrong overwrites a file
+they never opened.
+-}
+viewRecovery : Model -> List (Element Msg)
+viewRecovery model =
+    if not model.recovered then
+        []
+
+    else
+        [ column [ width fill, spacing 10 ]
+            [ el [ Font.size 12, Font.color Ui.muted ] (text "UNSAVED WORK")
+            , column
+                [ width fill
+                , spacing 8
+                , padding 14
+                , Background.color Ui.card
+                , Border.width 1
+                , Border.color Ui.line
+                , Border.rounded 6
+                ]
+                [ el [ Font.size 15 ] (text model.title)
+                , el [ Font.size 12, Font.color Ui.muted ]
+                    (text
+                        (case model.formerPath of
+                            Just path ->
+                                "Recovered edits. Their file is no longer at " ++ path ++ "."
+
+                            Nothing ->
+                                "Recovered edits that were never saved to a file."
+                        )
+                    )
+                , Element.wrappedRow [ spacing 10, paddingXY 0 4 ]
+                    [ homeButton "Recover as new" (Just RecoverAsNew)
+                    , homeButton "Locate its file…" (Just (LocateRecent ""))
+                    ]
+                ]
+            ]
+        ]
+
+
+viewRecents : Model -> List (Element Msg)
+viewRecents model =
+    if List.isEmpty model.recents then
+        []
+
+    else
+        [ column [ width fill, spacing 10 ]
+            (el [ Font.size 12, Font.color Ui.muted ] (text "RECENT")
+                :: List.map (viewRecent model.now) model.recents
+            )
+        ]
+
+
+viewRecent : Int -> Recents.Entry -> Element Msg
+viewRecent now entry =
+    row
+        [ width fill
+        , spacing 12
+        , padding 12
+        , Background.color Ui.card
+        , Border.width 1
+        , Border.color Ui.line
+        , Border.rounded 6
+        ]
+        [ column [ spacing 4, width fill ]
+            [ Element.wrappedRow [ spacing 8 ]
+                (el [ Font.size 15 ] (text entry.name)
+                    :: (if entry.unsaved then
+                            [ Ui.pill Ui.stale "unsaved edits" ]
+
+                        else
+                            []
+                       )
+                    ++ (if entry.reachable then
+                            []
+
+                        else
+                            [ Ui.pill Ui.bad "missing" ]
+                       )
+                )
+            , el [ Font.size 12, Font.color Ui.muted ]
+                (text
+                    (String.join " · "
+                        (List.filterMap identity
+                            [ entry.path
+                            , Just (Recents.describeAge now entry.opened)
+                            ]
+                        )
+                    )
+                )
+            ]
+        , Element.wrappedRow [ alignRight, spacing 8 ]
+            [ if entry.reachable then
+                homeButton "Open" (Just (OpenRecent entry.key))
+
+              else
+                homeButton "Locate…" (Just (LocateRecent entry.key))
+            , homeButton "Forget" (Just (ForgetRecent entry.key))
+            ]
+        ]
+
+
+homeButton : String -> Maybe Msg -> Element Msg
+homeButton label onPress =
+    Input.button
+        [ Font.size 13
+        , Border.width 1
+        , Border.color Ui.line
+        , Border.rounded 5
+        , Background.color Ui.card
+        , paddingXY 14 8
+        , Element.mouseOver [ Border.color Ui.accent, Font.color Ui.accent ]
+        ]
+        { onPress = onPress, label = text label }
 
 
 

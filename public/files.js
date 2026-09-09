@@ -22,7 +22,7 @@ export async function openNotebook() {
     const path = await tauri().dialog.open({ multiple: false, filters: [NOTEBOOK] });
     if (!path) return null;
     const content = await tauri().core.invoke('read_file', { path });
-    return { content, associated: true };
+    return { content, associated: true, entry: entryForPath(path) };
   }
 
   if (window.showOpenFilePicker) {
@@ -31,7 +31,11 @@ export async function openNotebook() {
         types: [{ description: NOTEBOOK.name, accept: { 'text/markdown': ['.md'] } }],
       });
       notebookHandle = handle;
-      return { content: await (await handle.getFile()).text(), associated: true };
+      return {
+        content: await (await handle.getFile()).text(),
+        associated: true,
+        entry: entryForHandle(handle),
+      };
     } catch (err) {
       if (err && err.name === 'AbortError') return null;
       throw err;
@@ -51,7 +55,7 @@ export async function saveNotebook(name, content, saveAs) {
     const path = await tauri().dialog.save({ defaultPath: name, filters: [NOTEBOOK] });
     if (!path) return { cancelled: true };
     await tauri().core.invoke('write_file', { path, contents: content });
-    return { associated: true };
+    return { associated: true, entry: entryForPath(path) };
   }
 
   if (window.showSaveFilePicker) {
@@ -67,7 +71,7 @@ export async function saveNotebook(name, content, saveAs) {
       await writable.write(content);
       await writable.close();
       notebookHandle = handle;
-      return { associated: true };
+      return { associated: true, entry: entryForHandle(handle) };
     } catch (err) {
       if (err && err.name === 'AbortError') return { cancelled: true };
       throw err;
@@ -76,6 +80,22 @@ export async function saveNotebook(name, content, saveAs) {
 
   download(name, content, 'text/markdown');
   return { associated: false };
+}
+
+// What the recents index should record about a document just opened or saved.
+//
+// A path is its own key, because that is exactly what reopening it needs. A
+// browser handle has no path to show, so it gets a key of its own and the
+// handle rides along to be held in IndexedDB; the entry then shows a name and
+// a time and honestly offers no location.
+
+function entryForPath(path) {
+  const parts = String(path).split(/[\\/]/);
+  return { key: path, name: parts[parts.length - 1] || path, path };
+}
+
+function entryForHandle(handle) {
+  return { key: `handle:${handle.name}`, name: handle.name, handle };
 }
 
 export async function clearNotebook() {
