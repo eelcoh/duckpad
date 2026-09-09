@@ -41,7 +41,7 @@ node tests/roundtrip.js
 """
 
 [tasks.seed]
-description = "Write the seeded notebook out to public/notebooks/"
+description = "Write the seeded notebook out to public/"
 run = """
 elm make tools/EmitSeed.elm --output=tools/seed.js > /dev/null
 node tools/emit-seed.js

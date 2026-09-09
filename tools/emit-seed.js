@@ -1,10 +1,12 @@
-// Writes the seeded notebook to public/notebooks/ so it can be opened as a
-// file, and so the repository carries a worked example of the file format.
+// Writes the seeded notebook to public/ so it can be opened as a file, and so
+// the repository carries a worked example of the file format. It sits beside
+// public/data/ deliberately: a relative data path in the notebook then means
+// the same directory whether the notebook is seeded, bundled or opened.
 const fs = require('fs');
 const path = require('path');
 const { Elm } = require('./seed.js');
 
-const DIR = path.resolve(__dirname, '..', 'public', 'notebooks');
+const DIR = path.resolve(__dirname, '..', 'public');
 
 Elm.EmitSeed.init().ports.emit.subscribe((notebooks) => {
   for (const { name, markdown, roundTripped } of notebooks) {

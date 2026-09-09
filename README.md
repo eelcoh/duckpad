@@ -43,7 +43,7 @@ globally.
     mise run test      # 436 checks
     mise run roundtrip # every fixture's SQL run against a real DuckDB
 
-`public/notebooks/tutorial.duckpad.md` is ten worked queries with prose between
+`public/tutorial.duckpad.md` is ten worked queries with prose between
 them, and needs no network. Open it with the **Open** button.
 
 There is also a desktop build, using [Tauri](https://tauri.app) — see the

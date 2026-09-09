@@ -479,7 +479,7 @@ roundtrip fixture, checked against local stand-in tables whose schemas
 match what DuckDB infers from the real files, so the tests stay offline.
 
 The notebook lives in `src/Seed.elm` and is written out to
-`public/notebooks/flights.duckpad.md` by `mise run seed`, which `build`
+`public/flights.duckpad.md` by `mise run seed`, which `build`
 depends on. The shipped example is therefore the starting notebook
 rather than a copy that has to be kept in step, and it is the only
 worked example of the file format outside the tests. The emitter also
@@ -1327,7 +1327,7 @@ move.
 
 ## A tutorial  [DONE]
 
-`public/notebooks/tutorial.duckpad.md`, openable with the Open button.
+`public/tutorial.duckpad.md`, openable with the Open button.
 Ten worked queries with prose between them, building from `access`
 through filtering, projection, grouping, HAVING, combining, declared
 types, a chart and a control.

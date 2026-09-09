@@ -4,7 +4,7 @@ module Tutorial exposing (notebook)
 
 Prose between worked queries, each one live and editable, building from
 `access` to a chart and a control. It rides the same machinery as the seeded
-notebook — emitted to `public/notebooks/` and checked cell by cell — so the
+notebook — emitted to `public/` and checked cell by cell — so the
 teaching material cannot go stale without a test failing.
 
 It uses the two CSV files that ship with duckpad rather than anything remote:
