@@ -86,6 +86,26 @@ jobs:
       - name: Install the Tauri CLI
         run: cargo install tauri-cli --version "^2.0" --locked
 
+      # mise installs elm-0.19.2-windows-x64 and lists it, but tasks run through
+      # cmd there and cmd will not execute an extensionless file — so `elm make`
+      # reports "not recognized as an internal or external command" while node,
+      # which the runner supplies with a .exe, works fine.
+      #
+      # This prints what mise actually resolved before working around it, so if
+      # the diagnosis is wrong the log says so rather than the build failing the
+      # same way twice. Non-fatal: a wrong guess must not mask the real error.
+      - name: Give cmd an executable elm on Windows
+        if: runner.os == 'Windows'
+        shell: bash
+        run: |
+          mise ls || true
+          elm_path=$(mise which elm 2>/dev/null || true)
+          echo "mise which elm -> ${elm_path:-<unresolved>}"
+          if [ -n "$elm_path" ] && [ -f "$elm_path" ] && [ ! -f "${elm_path}.exe" ]; then
+            cp "$elm_path" "${elm_path}.exe" && echo "copied to ${elm_path}.exe"
+          fi
+          ls -la "$(dirname "${elm_path:-.}")" || true
+
       - name: Vendor DuckDB for this host
         run: mise run vendor
 
@@ -105,19 +125,28 @@ jobs:
 
       # `cargo tauri build` reports success even when a bundler failed, so the
       # artefacts themselves are the only trustworthy evidence.
+      # `cargo tauri build` reports success even when a bundler failed, so the
+      # artefacts themselves are the only trustworthy evidence.
+      #
+      # Uses find rather than a glob: macOS runners still ship bash 3.2, which
+      # has no globstar, and `shell: bash` runs with -e — so `shopt -s globstar`
+      # aborts the step on the one platform this most needed to check. `.app` is
+      # a directory, hence -prune and du rather than stat.
       - name: Check that bundles were produced
         shell: bash
         run: |
-          shopt -s nullglob globstar
-          found=(src-tauri/target/release/bundle/**/*.{deb,rpm,AppImage,dmg,app,msi,exe})
-          if [ ${#found[@]} -eq 0 ]; then
+          root=src-tauri/target/release/bundle
+          found=$(find "$root" \
+            \( -name '*.deb' -o -name '*.rpm' -o -name '*.AppImage' \
+               -o -name '*.dmg' -o -name '*.msi' -o -name '*.exe' \
+               -o -name '*.app' \) -prune -print 2>/dev/null)
+          if [ -z "$found" ]; then
             echo "::error::cargo tauri build exited 0 but produced no bundle"
-            find src-tauri/target/release/bundle -maxdepth 2 || true
+            find "$root" -maxdepth 2 2>/dev/null || true
             exit 1
           fi
-          for f in "${found[@]}"; do
-            size=$(stat -c%s "$f" 2>/dev/null || stat -f%z "$f")
-            awk -v s="$size" -v n="$f" 'BEGIN{printf "%8.1f MB  %s\n", s/1048576, n}'
+          echo "$found" | while IFS= read -r f; do
+            printf '%8s  %s\n' "$(du -sh "$f" | cut -f1)" "$f"
           done
 
       - uses: actions/upload-artifact@v4

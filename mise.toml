@@ -26,7 +26,7 @@ run = "python3 tools/serve.py 8080 public"
 [tasks.test]
 description = "Compile and run the engine test suite under node"
 run = """
-elm make tests/TestRunner.elm --output=tests/tests.js > /dev/null
+elm make tests/TestRunner.elm --output=tests/tests.js
 node tests/run.js
 node tests/wiring.js
 node tests/chart-migration.js
@@ -38,14 +38,14 @@ node tests/home.js
 [tasks.roundtrip]
 description = "Execute every fixture's generated SQL in DuckDB and compile its generated Elm"
 run = """
-elm make tests/Fixtures.elm --output=tests/fixtures.js > /dev/null
+elm make tests/Fixtures.elm --output=tests/fixtures.js
 node tests/roundtrip.js
 """
 
 [tasks.seed]
 description = "Write the seeded notebook out to public/"
 run = """
-elm make tools/EmitSeed.elm --output=tools/seed.js > /dev/null
+elm make tools/EmitSeed.elm --output=tools/seed.js
 node tools/emit-seed.js
 """
 
