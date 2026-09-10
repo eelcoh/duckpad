@@ -49,6 +49,20 @@ async function fetchText(url) {
   return res.text();
 }
 
+// Whether everything this would download is already there.
+//
+// The guard lives here rather than in the mise task so it is one `node` call
+// on every host: a shell `test -f` is not portable to a Windows CI runner, and
+// the list of what counts as vendored belongs beside the list that produces it.
+if (process.argv.includes('--check')) {
+  const wanted = [
+    ...Object.keys(ENTRIES),
+    ...ASSETS,
+    ...EXTENSION_ASSETS.map((asset) => path.join('extensions', asset)),
+  ];
+  process.exit(wanted.every((file) => fs.existsSync(path.join(out, file))) ? 0 : 1);
+}
+
 async function main() {
   fs.mkdirSync(out, { recursive: true });
 

@@ -1,0 +1,134 @@
+# Build the desktop app on the three platforms it claims to support.
+#
+# The roadmap's packaging milestone asks to exercise Windows and macOS before
+# deciding what gets signed, and this is that exercise: it proves the native
+# DuckDB backend compiles, that each host can vendor its own ABI-specific Excel
+# extension, and that Tauri produces the bundles. Signing and notarisation are
+# deliberately absent — they are worth adding only for platforms that will
+# actually be distributed.
+#
+# Note the explicit artefact check at the end of the bundle step. `cargo tauri
+# build` exits 0 even when a bundler fails, which is how a missing AppImage
+# went unnoticed locally, so the exit status alone is not evidence of a build.
+
+name: desktop
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+  workflow_dispatch:
+
+# A new push makes an in-flight build for the same ref pointless.
+concurrency:
+  group: desktop-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # The engine tests are platform-independent and much faster than a bundle,
+  # so they run once and gate the three builds rather than repeating in each.
+  checks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: jdx/mise-action@v2
+        with:
+          experimental: true
+      - name: Vendor DuckDB
+        run: mise run vendor
+      - name: Compile the notebook shell
+        run: mise run build
+      - name: Engine tests
+        run: mise run test
+      - name: Fixtures against a real DuckDB
+        run: mise run roundtrip
+
+  bundle:
+    needs: checks
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            name: linux-x86_64
+          - os: macos-latest
+            name: macos-arm64
+          - os: macos-13
+            name: macos-x86_64
+          - os: windows-latest
+            name: windows-x86_64
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      # Tauri needs the system webview and its build headers. macOS and Windows
+      # ship theirs; only Linux has to be told.
+      - name: Linux system dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev \
+            libxdo-dev libssl-dev patchelf file
+
+      - uses: jdx/mise-action@v2
+        with:
+          experimental: true
+
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri -> target
+          key: ${{ matrix.name }}
+
+      # Not through mise: the local `release` task shells into the distrobox
+      # container this project builds in, which does not exist on a runner.
+      - name: Install the Tauri CLI
+        run: cargo install tauri-cli --version "^2.0" --locked
+
+      - name: Vendor DuckDB for this host
+        run: mise run vendor
+
+      - name: Compile the notebook shell
+        run: mise run build
+
+      - name: Bundle
+        working-directory: src-tauri
+        # Both variables are for linuxdeploy rather than Tauri, and both are
+        # no-ops off Linux. APPIMAGE_EXTRACT_AND_RUN lets an AppImage run where
+        # FUSE 2 is absent; NO_STRIP stops linuxdeploy's bundled strip choking
+        # on the `.relr.dyn` sections current Linux libraries carry.
+        env:
+          APPIMAGE_EXTRACT_AND_RUN: 1
+          NO_STRIP: 1
+        run: cargo tauri build
+
+      # `cargo tauri build` reports success even when a bundler failed, so the
+      # artefacts themselves are the only trustworthy evidence.
+      - name: Check that bundles were produced
+        shell: bash
+        run: |
+          shopt -s nullglob globstar
+          found=(src-tauri/target/release/bundle/**/*.{deb,rpm,AppImage,dmg,app,msi,exe})
+          if [ ${#found[@]} -eq 0 ]; then
+            echo "::error::cargo tauri build exited 0 but produced no bundle"
+            find src-tauri/target/release/bundle -maxdepth 2 || true
+            exit 1
+          fi
+          for f in "${found[@]}"; do
+            size=$(stat -c%s "$f" 2>/dev/null || stat -f%z "$f")
+            awk -v s="$size" -v n="$f" 'BEGIN{printf "%8.1f MB  %s\n", s/1048576, n}'
+          done
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: duckpad-${{ matrix.name }}
+          path: |
+            src-tauri/target/release/bundle/**/*.deb
+            src-tauri/target/release/bundle/**/*.rpm
+            src-tauri/target/release/bundle/**/*.AppImage
+            src-tauri/target/release/bundle/**/*.dmg
+            src-tauri/target/release/bundle/**/*.msi
+            src-tauri/target/release/bundle/**/*.exe
+          if-no-files-found: error
+          retention-days: 14

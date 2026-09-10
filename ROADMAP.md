@@ -1802,8 +1802,24 @@ hatch would trade that for a competition against tools that already exist.
    and making the `duckdb.mjs` import dynamic so the desktop build stops
    fetching 242 KB of JS it cannot use, is the obvious size work when it is
    wanted. Deliberately not done yet.
-3. Exercise Windows and macOS, then add signing/notarisation only for platforms
-   that will actually be distributed.
+3. **Set up, not yet exercised.** `.github/workflows/desktop.yml` builds on
+   Linux, macOS arm64, macOS x86_64 and Windows. The engine tests and fixtures
+   run once on Linux and gate the four bundle jobs, each of which vendors its
+   own ABI-specific Excel extension — `tools/vendor-native.js` already covers
+   all six platform ABIs — and uploads whatever bundles it produced.
+
+   It does not use `mise run release`, which shells into the distrobox
+   container this project builds in locally. It carries the two linuxdeploy
+   variables, and it checks that artefacts exist rather than trusting the exit
+   status, for the reason recorded above.
+
+   **Windows and macOS have still never built duckpad.** The workflow is the
+   experiment, not the result; the first run is what actually exercises them.
+   Expect the native DuckDB compile and the platform bundlers (WiX/NSIS on
+   Windows, dmg on macOS) to be where it breaks first.
+
+4. Add signing and notarisation only for platforms that will actually be
+   distributed, once the builds above are known to work.
 
 List-valued aggregates remain lower priority: they require a new type
 throughout the stack, while the current roadmap has no concrete notebook that
