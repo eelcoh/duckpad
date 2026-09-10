@@ -54,6 +54,22 @@ description = "Run duckpad as a desktop app (the Rust side builds in the duckpad
 depends = ["build"]
 run = "distrobox enter duckpad-tauri -- bash -lc 'cd ~/Code/ideas/duckpad/src-tauri && cargo tauri dev'"
 
+# Two environment variables are load-bearing, both for linuxdeploy rather
+# than for Tauri. APPIMAGE_EXTRACT_AND_RUN lets an AppImage run without FUSE 2,
+# which the toolbox container does not have. NO_STRIP stops linuxdeploy calling
+# its own 2024-vintage strip, which does not understand the `.relr.dyn`
+# sections modern Fedora libraries carry and fails the bundle outright.
+#
+# Note that `cargo tauri build` exits 0 even when a bundle fails, so a broken
+# AppImage is silent: check that all three artefacts exist rather than the
+# exit status.
+[tasks.release]
+description = "Build the desktop release bundles (deb, rpm, AppImage)"
+depends = ["build"]
+run = """
+distrobox enter duckpad-tauri -- bash -lc 'cd ~/Code/ideas/duckpad/src-tauri && APPIMAGE_EXTRACT_AND_RUN=1 NO_STRIP=1 cargo tauri build'
+"""
+
 [tasks.vendored]
 description = "Vendor the third-party JavaScript if it is not already there"
 hide = true

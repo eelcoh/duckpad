@@ -1772,7 +1772,36 @@ hatch would trade that for a competition against tools that already exist.
    DuckDB's signed Excel extension for the build host's version and platform;
    Tauri packages it and the backend loads its explicit resource path, so an
    `.xlsx` source never triggers a runtime download or depends on `~/.duckdb`.
-2. Make and measure a release build.
+2. **Done: made and measured.** `mise run release` produces all three Linux
+   bundles. On x86_64, release profile, 17m22s wall (59m user) for the cold
+   build:
+
+   | artefact | size |
+   | --- | --- |
+   | `.deb` / `.rpm` | 36.8 MB each |
+   | installed binary | 72.6 MB |
+   | `.AppImage` | 134 MB |
+
+   The binary is `.text` 37.1 MB and `.rodata` 15.7 MB — overwhelmingly the
+   statically linked DuckDB, not this project's code. The AppImage is larger
+   because it carries GTK, WebKit and their dependencies, unstripped for the
+   reason below.
+
+   Two environment variables are required, both for linuxdeploy.
+   `APPIMAGE_EXTRACT_AND_RUN=1` lets an AppImage run without FUSE 2, which the
+   toolbox container does not provide; `NO_STRIP=1` stops linuxdeploy invoking
+   its own bundled strip, which does not understand the `.relr.dyn` sections
+   Fedora 44's libraries carry and fails the bundle. Without them the AppImage
+   step fails — and `cargo tauri build` still exits 0, so the failure is
+   silent. Check that three artefacts exist rather than trusting the status.
+
+   The browser engine is shipped inside the desktop app and never runs there:
+   `public/vendor/` holds 70.2 MB of duckdb-wasm which `frontendDist` embeds.
+   Compressed that is about 11 MB — roughly a sixth of the binary and a third
+   of the installer, not the 70 MB the working tree suggests. Excluding it,
+   and making the `duckdb.mjs` import dynamic so the desktop build stops
+   fetching 242 KB of JS it cannot use, is the obvious size work when it is
+   wanted. Deliberately not done yet.
 3. Exercise Windows and macOS, then add signing/notarisation only for platforms
    that will actually be distributed.
 
