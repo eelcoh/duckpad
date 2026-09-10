@@ -86,25 +86,50 @@ jobs:
       - name: Install the Tauri CLI
         run: cargo install tauri-cli --version "^2.0" --locked
 
-      # mise installs elm-0.19.2-windows-x64 and lists it, but tasks run through
-      # cmd there and cmd will not execute an extensionless file — so `elm make`
-      # reports "not recognized as an internal or external command" while node,
-      # which the runner supplies with a .exe, works fine.
+      # mise unpacks elm-0.19.2-windows-x64.gz to a file named `elm`, with no
+      # extension, and `mise ls` duly lists the tool as installed. Windows only
+      # treats a file as executable if its extension says so, so nothing can
+      # actually run it: `mise which elm` (which looks for elm.exe) reports
+      # nothing, and cmd, which the mise tasks shell out to, answers every
+      # `elm make` with "not recognized as an internal or external command".
       #
-      # This prints what mise actually resolved before working around it, so if
-      # the diagnosis is wrong the log says so rather than the build failing the
-      # same way twice. Non-fatal: a wrong guess must not mask the real error.
-      - name: Give cmd an executable elm on Windows
+      # Copying it to elm.exe satisfies both, and putting that directory on
+      # PATH means the tasks resolve elm even though mise's own lookup cannot.
+      # The install tree is printed first so that a wrong diagnosis shows up in
+      # the log rather than failing the build the same way a third time.
+      - name: Give Windows an executable elm
         if: runner.os == 'Windows'
         shell: bash
         run: |
-          mise ls || true
-          elm_path=$(mise which elm 2>/dev/null || true)
-          echo "mise which elm -> ${elm_path:-<unresolved>}"
-          if [ -n "$elm_path" ] && [ -f "$elm_path" ] && [ ! -f "${elm_path}.exe" ]; then
-            cp "$elm_path" "${elm_path}.exe" && echo "copied to ${elm_path}.exe"
+          set -uo pipefail
+          root=$(mise where elm 2>/dev/null || true)
+          if [ -z "$root" ] || [ ! -d "$root" ]; then
+            root=$(mise ls --json | node -e "
+              let raw = '';
+              process.stdin.on('data', chunk => raw += chunk);
+              process.stdin.on('end', () => {
+                const [elm] = JSON.parse(raw).elm || [];
+                process.stdout.write(elm ? elm.install_path : '');
+              });
+            ")
           fi
-          ls -la "$(dirname "${elm_path:-.}")" || true
+          echo "elm install path -> ${root:-<unresolved>}"
+          if [ -z "$root" ] || [ ! -d "$root" ]; then
+            echo "::error::mise lists elm as installed but reports no path for it"
+            mise ls || true
+            exit 1
+          fi
+          find "$root" -maxdepth 3
+          binary=$(find "$root" -maxdepth 3 -type f \( -name elm -o -name elm.exe \) \
+            | head -n 1)
+          if [ -z "$binary" ]; then
+            echo "::error::mise installed elm but no elm binary exists under $root"
+            exit 1
+          fi
+          dir=$(dirname "$binary")
+          [ -f "$dir/elm.exe" ] || cp "$binary" "$dir/elm.exe"
+          echo "$dir" >> "$GITHUB_PATH"
+          "$dir/elm.exe" --version || true
 
       - name: Vendor DuckDB for this host
         run: mise run vendor
@@ -123,8 +148,6 @@ jobs:
           NO_STRIP: 1
         run: cargo tauri build
 
-      # `cargo tauri build` reports success even when a bundler failed, so the
-      # artefacts themselves are the only trustworthy evidence.
       # `cargo tauri build` reports success even when a bundler failed, so the
       # artefacts themselves are the only trustworthy evidence.
       #
