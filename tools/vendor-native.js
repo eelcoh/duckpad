@@ -8,27 +8,12 @@
 const fs = require('fs');
 const path = require('path');
 const zlib = require('zlib');
+const { VERSION, platform, extensionPath: destination } = require('./native-extension');
 
-const VERSION = 'v1.5.5';
-const PLATFORMS = {
-  'darwin-arm64': 'osx_arm64',
-  'darwin-x64': 'osx_amd64',
-  'linux-arm64': 'linux_arm64',
-  'linux-x64': 'linux_amd64',
-  'win32-arm64': 'windows_arm64',
-  'win32-x64': 'windows_amd64',
-};
-
-const platform = PLATFORMS[`${process.platform}-${process.arch}`];
 if (!platform) {
   console.error(`native DuckDB Excel is not configured for ${process.platform}-${process.arch}`);
   process.exit(1);
 }
-
-const destination = path.join(
-  __dirname, '..', 'src-tauri', 'resources', 'extensions', VERSION, platform,
-  'excel.duckdb_extension'
-);
 
 if (process.argv.includes('--check')) {
   process.exit(fs.existsSync(destination) ? 0 : 1);

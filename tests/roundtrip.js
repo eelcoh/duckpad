@@ -9,6 +9,7 @@
 const { execFileSync } = require('child_process');
 const fs = require('fs');
 const path = require('path');
+const { extensionPath } = require('../tools/native-extension');
 
 const { Elm } = require('./fixtures.js');
 
@@ -104,11 +105,24 @@ app.ports.emit.subscribe((fixtures) => {
 });
 
 function checkExcelSource() {
+  if (!extensionPath || !fs.existsSync(extensionPath)) {
+    return [{
+      name: 'xlsx_source',
+      stage: 'source',
+      error: `no vendored Excel extension at ${extensionPath}; run \`mise run vendor\` first`,
+    }];
+  }
   try {
+    // Loaded by explicit path, the way the application loads it. `LOAD excel`
+    // would look in ~/.duckdb and fall back to DuckDB's downloader, so it
+    // passes only on a machine that happens to have installed the extension
+    // already — which is why this went green locally and red on a fresh CI
+    // runner. The vendored file is the one Tauri packages, so the harness now
+    // exercises the same extension the app ships.
     const output = run('duckdb', [
       '-csv',
       '-c',
-      `LOAD excel; SELECT category, amount, booked FROM read_xlsx('${WORKBOOK}', sheet='Forecast', range='A1:C4', header=true) ORDER BY category;`,
+      `LOAD '${sqlPath(extensionPath)}'; SELECT category, amount, booked FROM read_xlsx('${WORKBOOK}', sheet='Forecast', range='A1:C4', header=true) ORDER BY category;`,
     ]);
     if (!output.includes('alpha,10.5,2026-01-02') || !output.includes('gamma,NULL,2026-01-04')) {
       throw new Error(`unexpected workbook rows:\n${output}`);
@@ -117,6 +131,12 @@ function checkExcelSource() {
   } catch (err) {
     return [{ name: 'xlsx_source', stage: 'source', error: err.stderr || err.message }];
   }
+}
+
+// DuckDB accepts forward slashes on every platform; Node hands back backslashes
+// on Windows, which a single-quoted SQL string would treat as escapes.
+function sqlPath(value) {
+  return String(value).replace(/\\/g, '/').replace(/'/g, "''");
 }
 
 function checkSql(fixture) {
