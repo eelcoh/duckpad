@@ -84,6 +84,34 @@ run = """
 distrobox enter duckpad-tauri -- bash -lc 'cd ~/Code/ideas/duckpad/src-tauri && APPIMAGE_EXTRACT_AND_RUN=1 NO_STRIP=1 cargo tauri build'
 """
 
+# `desktop` and `release` enter the duckpad-tauri distrobox because the Fedora
+# host this project is developed on has no webkit2gtk development headers and
+# is not going to grow them. macOS and Windows need no such container: their
+# webview ships with the OS, so cargo tauri runs straight against the host
+# toolchain. These two tasks are that path, and they are the builds CI runs —
+# which is why CI invokes cargo tauri itself rather than going through mise.
+#
+# The exit-status warning above applies here too: a bundler can fail while
+# `cargo tauri build` still exits 0. Checking for the artefacts is left to CI
+# rather than inlined, because a task body runs under sh on macOS and cmd on
+# Windows and no one spelling of the check works on both.
+
+[tasks.desktop-native]
+description = "Run duckpad as a desktop app against the host toolchain (macOS, Windows)"
+depends = ["build"]
+dir = "src-tauri"
+run = "cargo tauri dev"
+
+[tasks.release-native]
+description = "Build the desktop release bundles against the host toolchain (macOS, Windows)"
+depends = ["build"]
+dir = "src-tauri"
+# The two linuxdeploy variables `release` documents above. They are no-ops on
+# the platforms this task targets, and carrying them means it also works on a
+# Linux host that has the headers installed and so skips the container.
+env = { APPIMAGE_EXTRACT_AND_RUN = "1", NO_STRIP = "1" }
+run = "cargo tauri build"
+
 [tasks.vendored]
 description = "Vendor the third-party JavaScript if it is not already there"
 hide = true
