@@ -1,3 +1,17 @@
+# `elm make` keeps its build cache in a single elm-stuff/ directory derived from
+# elm.json, and two compilers racing on it corrupt it — "CORRUPT CACHE ... not
+# enough bytes", intermittently, on a cold cache. `build` fans out to seed,
+# chart-spike and vendored, two of which compile Elm, so mise's default
+# parallelism made that race reachable on every clean checkout, which is to say
+# on every CI run. Elm offers no way to relocate elm-stuff per invocation, so
+# the only fix is not to run two of them at once.
+#
+# Serialising every task rather than just the Elm ones costs nothing here — the
+# whole graph is a couple of seconds — and it stays correct when someone adds a
+# fourth task that shells into elm without remembering this.
+[settings]
+jobs = 1
+
 [tools]
 duckdb = "latest"
 elm = { version = "0.19.2", bin = "elm" }
