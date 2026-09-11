@@ -60,6 +60,14 @@ cells =
       , kind = Query
       , source = "access orders ()\n  |> map (\\o ->\n       { who = o.owner\n       , where_from = o.region\n       , amount = o.total\n       })\n  |> selectAll"
       }
+    , { id = "p_functions"
+      , kind = Prose
+      , source = "## Computing on values\n\nThe right-hand side of a field can compute, and a handful of scalar functions are built in. They apply by **juxtaposition** — `roundTo 2 o.total`, not `roundTo(2, o.total)` — and bind tighter than any operator, so `round o.total + 1` rounds first and then adds.\n\n| Function | What you get |\n|---|---|\n| `round x` | nearest whole number — an **Int** |\n| `floor x`, `ceiling x` | down, up — also **Int** |\n| `roundTo n x` | `n` decimal places, still a Float. Digits first |\n| `abs x` | keeps the type it was given |\n| `year x`, `month x`, `dayOfWeek x` | a component of a timestamp, as an Int |\n| `startOfDay x`, `startOfMonth x`, `startOfYear x` | truncate a timestamp, still a Timestamp |\n| `lower s`, `upper s` | text |\n\nThe result types are not incidental. `round` is typed as an integer and `roundTo` as a float, so the column header tells you which you got, and a rounded number is accepted where a whole one is required.\n\nThere are no user-defined functions, which is what lets a column called `round` or `month` still work: a name is only a call when something follows it."
+      }
+    , { id = "computed"
+      , kind = Query
+      , source = "access orders ()\n  |> map (\\o ->\n       { who = upper o.owner\n       , exact = o.total\n       , rounded = roundTo 2 o.total\n       , whole = round o.total\n       })\n  |> limit 8\n  |> selectAll"
+      }
     , { id = "p_group"
       , kind = Prose
       , source = "## Summarising\n\n`groupBy` picks the key, `reduce` says what each group becomes. Inside `reduce`, a bare column is only allowed if it *is* the key — anything else has to be aggregated, because a group has many values for it. Try changing `g.region` to `g.owner` to see the error that rule gives you."
