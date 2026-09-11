@@ -1359,6 +1359,7 @@ dispatchTypes cell rest model =
                     , reads = []
                     , cardinality = Many
                     , display = AsRows
+                    , decimals = Dict.empty
                     , orderSignificant = False
                     }
             in
@@ -3428,7 +3429,7 @@ viewScalar shape t =
         ( [ ( name, columnType ) ], firstRow :: _ ) ->
             div [ class "scalar" ]
                 [ div [ class "scalar-value" ]
-                    [ Html.text (renderValue shape.declarations columnType name firstRow) ]
+                    [ Html.text (renderValue shape.declarations (Dict.get name shape.decimals) columnType name firstRow) ]
                 , div [ class "scalar-label" ] [ Html.text name ]
                 ]
 
@@ -3462,7 +3463,7 @@ viewRows shape t =
                                     (shape.rowType
                                         |> List.map
                                             (\( name, columnType ) ->
-                                                td [] [ Html.text (renderValue shape.declarations columnType name rowValue) ]
+                                                td [] [ Html.text (renderValue shape.declarations (Dict.get name shape.decimals) columnType name rowValue) ]
                                             )
                                     )
                             )
@@ -3577,15 +3578,18 @@ artefact label body =
 happens to arrive, so a timestamp shows as a date and a custom type shows as
 its constructor.
 -}
-renderValue : List TypeDecl -> Type -> String -> D.Value -> String
-renderValue decls columnType column rowValue =
+renderValue : List TypeDecl -> Maybe Int -> Type -> String -> D.Value -> String
+renderValue decls places columnType column rowValue =
     case columnType of
         TMaybe inner ->
             if isNull column rowValue then
                 "—"
 
             else
-                renderValue decls inner column rowValue
+                renderValue decls places inner column rowValue
+
+        TFloat ->
+            Query.padDecimals places (Query.cellText column rowValue)
 
         TTimestamp ->
             decodeField column D.float rowValue
@@ -3599,6 +3603,7 @@ renderValue decls columnType column rowValue =
                 -- type.
                 Just (Wraps _ wrapped) ->
                     renderValue decls
+                        places
                         (Schema.primitive wrapped |> Maybe.withDefault TString)
                         column
                         rowValue

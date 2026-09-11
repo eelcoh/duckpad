@@ -10,7 +10,8 @@ guess can be retired for those cells.
 
 -}
 
-import Dsl.Ast exposing (Expr(..), Field, GroupKeys(..), Lambda, Pattern(..), Pipeline, Stage(..), TypeDecl)
+import Dict exposing (Dict)
+import Dsl.Ast exposing (Expr(..), Field, GroupKeys(..), Lambda, Literal(..), Pattern(..), Pipeline, Stage(..), TypeDecl)
 import Set exposing (Set)
 import Dsl.Check as Check exposing (Cardinality, Checked, Display)
 import Dsl.ElmGen
@@ -30,6 +31,10 @@ type alias Compiled =
     , reads : List String
     , cardinality : Cardinality
     , display : Display
+
+    -- How many decimal places each rounded column asked for. See
+    -- `declaredDecimals`: the value cannot carry this, so the table does.
+    , decimals : Dict String Int
 
     -- Whether this cell asked for a row order. The value cache's content hash
     -- is order-insensitive, so only a cell that sorts or limits needs the
@@ -57,8 +62,57 @@ assemble moduleName ast checked =
     , reads = checked.reads ++ Set.toList (freeVars ast)
     , cardinality = checked.cardinality
     , display = checked.display
+    , decimals = declaredDecimals checked
     , orderSignificant = checked.orderSignificant
     }
+
+
+{-| Columns that asked to be rounded to a fixed number of decimal places, and
+how many they asked for.
+
+A double has no scale: 12.50 and 12.5 are one value, so `roundTo 2` loses its
+trailing zero the moment the last digit is one, long before anything renders
+it. Nothing downstream can recover that from the number — but the checker
+knows what was asked for, and this carries the intent to the table so it can
+put the zeros back.
+
+Only a `roundTo` that *is* the whole field counts. `roundTo 2 g.total + 1` is
+not a two-decimal quantity, and padding it would advertise a precision the
+arithmetic does not have.
+
+-}
+declaredDecimals : Checked -> Dict String Int
+declaredDecimals checked =
+    let
+        fields =
+            case checked.projection of
+                Check.All ->
+                    []
+
+                Check.Fields declared ->
+                    declared
+
+                Check.Extended declared ->
+                    declared
+    in
+    fields
+        |> List.filterMap
+            (\( name, expr ) ->
+                case expr of
+                    Check.TCall "roundTo" [ Check.TLit (LInt places) _, _ ] _ ->
+                        if places > 0 then
+                            Just ( name, places )
+
+                        else
+                            -- `roundTo 0` and the negative "round to tens"
+                            -- spellings produce whole numbers; there is no
+                            -- fractional part to pad.
+                            Nothing
+
+                    _ ->
+                        Nothing
+            )
+        |> Dict.fromList
 
 
 {-| The tables a cell reads, from the parse alone.

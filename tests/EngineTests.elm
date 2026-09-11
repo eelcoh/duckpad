@@ -149,6 +149,7 @@ compiledWith rowType =
     , reads = [ "a" ]
     , cardinality = Many
     , display = Dsl.Check.AsRows
+    , decimals = Dict.empty
     , orderSignificant = False
     }
 
