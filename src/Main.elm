@@ -2012,7 +2012,7 @@ viewEditor model =
     Element.layout
         [ Background.color Ui.bg
         , Font.family Ui.sans
-        , Font.size 14
+        , Font.size 15
         , Font.color Ui.ink
         , Element.htmlAttribute (Html.Events.custom "keydown" historyKey)
         ]
@@ -2046,7 +2046,7 @@ viewHome model =
     Element.layout
         [ Background.color Ui.bg
         , Font.family Ui.sans
-        , Font.size 14
+        , Font.size 15
         , Font.color Ui.ink
         ]
         (column
@@ -2057,7 +2057,7 @@ viewHome model =
             ]
             ([ column [ spacing 6 ]
                 [ el [ Font.size 26 ] (text "duckpad")
-                , el [ Font.size 13, Font.color Ui.muted ]
+                , el [ Font.size 14, Font.color Ui.muted ]
                     (text "A reactive notebook over DuckDB.")
                 ]
              , Element.wrappedRow [ spacing 10 ]
@@ -2066,7 +2066,7 @@ viewHome model =
                 , homeButton "Open the tutorial" (Just StartTutorial)
                 , homeButton "Open the example" (Just StartExample)
                 ]
-             , el [ Font.size 12, Font.color Ui.muted ]
+             , el [ Font.size 13, Font.color Ui.muted ]
                 (text "The tutorial reads two small files that ship with duckpad. The example reads three million rows over the network.")
              ]
                 ++ viewRecovery model
@@ -2089,7 +2089,7 @@ viewRecovery model =
 
     else
         [ column [ width fill, spacing 10 ]
-            [ el [ Font.size 12, Font.color Ui.muted ] (text "UNSAVED WORK")
+            [ el [ Font.size 13, Font.color Ui.muted ] (text "UNSAVED WORK")
             , column
                 [ width fill
                 , spacing 8
@@ -2099,8 +2099,8 @@ viewRecovery model =
                 , Border.color Ui.line
                 , Border.rounded 6
                 ]
-                [ el [ Font.size 15 ] (text model.title)
-                , el [ Font.size 12, Font.color Ui.muted ]
+                [ el [ Font.size 16 ] (text model.title)
+                , el [ Font.size 13, Font.color Ui.muted ]
                     (text
                         (case model.formerPath of
                             Just path ->
@@ -2126,7 +2126,7 @@ viewRecents model =
 
     else
         [ column [ width fill, spacing 10 ]
-            (el [ Font.size 12, Font.color Ui.muted ] (text "RECENT")
+            (el [ Font.size 13, Font.color Ui.muted ] (text "RECENT")
                 :: List.map (viewRecent model.now) model.recents
             )
         ]
@@ -2145,7 +2145,7 @@ viewRecent now entry =
         ]
         [ column [ spacing 4, width fill ]
             [ Element.wrappedRow [ spacing 8 ]
-                (el [ Font.size 15 ] (text entry.name)
+                (el [ Font.size 16 ] (text entry.name)
                     :: (if entry.unsaved then
                             [ Ui.pill Ui.stale "unsaved edits" ]
 
@@ -2159,7 +2159,7 @@ viewRecent now entry =
                             [ Ui.pill Ui.bad "missing" ]
                        )
                 )
-            , el [ Font.size 12, Font.color Ui.muted ]
+            , el [ Font.size 13, Font.color Ui.muted ]
                 (text
                     (String.join " · "
                         (List.filterMap identity
@@ -2184,7 +2184,7 @@ viewRecent now entry =
 homeButton : String -> Maybe Msg -> Element Msg
 homeButton label onPress =
     Input.button
-        [ Font.size 13
+        [ Font.size 14
         , Border.width 1
         , Border.color Ui.line
         , Border.rounded 5
@@ -2205,7 +2205,7 @@ viewHeader model graph =
         [ Element.wrappedRow [ width fill, spacing 20 ]
             [ column [ spacing 4, width fill ]
                 [ titleField model.title
-                , el [ Font.size 12, Font.color Ui.muted ]
+                , el [ Font.size 13, Font.color Ui.muted ]
                     (text "reactive graph · DSL compiled in-browser · DuckDB-wasm")
                 ]
             , Element.wrappedRow [ alignRight, spacing 10, Ui.dropOnExport ]
@@ -2285,7 +2285,7 @@ plainButton label armed onPress =
                 Ui.ink
     in
     Input.button
-        [ Font.size 12
+        [ Font.size 14
         , Font.color colour
         , Border.width 1
         , Border.color
@@ -2342,7 +2342,7 @@ viewNotice notice =
                 [ width fill
                 , spacing 12
                 , padding 10
-                , Font.size 12
+                , Font.size 13
                 , Font.color Ui.stale
                 , Background.color (Element.rgb255 0xFF 0xFB 0xF0)
                 , Border.width 1
@@ -2350,7 +2350,7 @@ viewNotice notice =
                 , Border.rounded 6
                 ]
                 [ Element.paragraph [ width fill ] [ text message ]
-                , Input.button [ alignRight, Font.color Ui.muted, Font.size 16, Ui.dropOnExport ]
+                , Input.button [ alignRight, Font.color Ui.muted, Font.size 18, Ui.dropOnExport ]
                     { onPress = Just DismissNotice, label = text "×" }
                 ]
             ]
@@ -2395,7 +2395,7 @@ viewExecutionOrder graph =
             Element.paragraph
                 [ width fill
                 , Font.family Ui.mono
-                , Font.size 11
+                , Font.size 12
                 , Font.color colour
                 , spacing 4
                 ]
@@ -2443,7 +2443,7 @@ viewAddRow model position =
         Input.button
             [ centerX
             , paddingXY 10 2
-            , Font.size 11
+            , Font.size 12
             , Font.color Ui.muted
             , Ui.dropOnExport
             , Element.alpha 0.45
@@ -2511,7 +2511,7 @@ viewDataSchema model cell state =
 
                     toggle =
                         Input.button
-                            [ Font.size 11
+                            [ Font.size 12
                             , Font.color Ui.muted
                             , Element.mouseOver [ Font.color Ui.accent ]
                             , Ui.dropOnExport
@@ -2551,7 +2551,7 @@ schemaTable columns =
             el [ paddingXY 6 4 ] (Ui.tinyCaps Ui.muted label)
 
         value body =
-            el [ paddingXY 6 5, Font.family Ui.mono, Font.size 11 ] (text body)
+            el [ paddingXY 6 5, Font.family Ui.mono, Font.size 12 ] (text body)
 
     in
     Element.table
@@ -2575,7 +2575,7 @@ schemaModeButton : Bool -> String -> Msg -> Element Msg
 schemaModeButton selected label message =
     Input.button
         [ paddingXY 7 3
-        , Font.size 10
+        , Font.size 12
         , Font.color
             (if selected then
                 Ui.accent
@@ -2631,7 +2631,7 @@ schemaElmModelView columns =
                             el
                                 [ width fill
                                 , Font.family Ui.mono
-                                , Font.size 11
+                                , Font.size 12
                                 , Font.color Ui.ink
                                 ]
                                 (text line)
@@ -2708,7 +2708,7 @@ viewCellHead model graph cell state =
 
                  else
                     runButton model cell
-               , Input.button [ Font.color Ui.muted, Font.size 16, alignRight, Ui.dropOnExport ]
+               , Input.button [ Font.color Ui.muted, Font.size 18, alignRight, Ui.dropOnExport ]
                     { onPress = Just (DeleteCell cell.id), label = text "×" }
                ]
         )
@@ -2721,7 +2721,7 @@ watch a single cell go again after changing it back.
 runButton : Model -> Cell -> Element Msg
 runButton model cell =
     Input.button
-        [ Font.size 10
+        [ Font.size 12
         , Font.family Ui.sans
         , Font.letterSpacing 0.6
         , Font.color Ui.muted
@@ -2759,7 +2759,7 @@ nameField : Cell -> Element Msg
 nameField cell =
     Input.text
         [ Font.family Ui.mono
-        , Font.size 13
+        , Font.size 14
         , Font.semiBold
         , Font.color Ui.accent
         , Border.width 1
@@ -2827,7 +2827,7 @@ viewSignature state =
         Just compiled ->
             [ el
                 [ Font.family Ui.mono
-                , Font.size 11
+                , Font.size 12
                 , Font.color Ui.muted
                 , Element.htmlAttribute (Html.Attributes.title (describeRow compiled.rowType))
                 ]
@@ -2862,7 +2862,7 @@ viewEdges graph cell =
             else
                 [ row [ spacing 4 ]
                     [ Ui.tinyCaps Ui.muted label
-                    , el [ Font.family Ui.mono, Font.size 11, Font.color Ui.muted ]
+                    , el [ Font.family Ui.mono, Font.size 12, Font.color Ui.muted ]
                         (text (String.join ", " items))
                     ]
                 ]
@@ -3219,7 +3219,7 @@ calendar settings =
             , Border.rounded 4
             , Font.center
             , Font.family Ui.mono
-            , Font.size 11
+            , Font.size 12
             ]
     in
     { settings
@@ -3236,7 +3236,7 @@ calendar settings =
             [ width fill
             , paddingXY 2 4
             , Font.family Ui.sans
-            , Font.size 12
+            , Font.size 13
             , Font.semiBold
             , Font.color Ui.ink
             ]
@@ -3248,7 +3248,7 @@ calendar settings =
             ]
         , monthYearAttribute =
             [ Font.family Ui.sans
-            , Font.size 12
+            , Font.size 13
             , Font.color Ui.ink
             , Element.pointer
             ]
@@ -3257,7 +3257,7 @@ calendar settings =
         , yearsTableAttributes = [ spacing 4 ]
         , weekdayAttributes =
             [ Font.family Ui.sans
-            , Font.size 9
+            , Font.size 11
             , Font.color Ui.muted
             , Font.center
             , paddingXY 0 4
