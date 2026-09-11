@@ -47,6 +47,7 @@ node tests/chart-migration.js
 node tests/startup.mjs
 node tests/recents.mjs
 node tests/home.js
+node tests/zoom.mjs
 """
 
 [tasks.roundtrip]

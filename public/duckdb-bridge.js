@@ -11,6 +11,7 @@ import { exportStatic } from './export.js';
 import { clearNotebook, openNotebook, saveNotebook } from './files.js';
 import { chooseStartup } from './startup.mjs';
 import * as recents from './recents.mjs';
+import { install as installZoom } from './zoom.mjs';
 
 const PREVIEW_ROWS = 200;
 const native = () => window.__TAURI__ && window.__TAURI__.core;
@@ -143,6 +144,8 @@ app.ports.setCaret.subscribe(({ id, pos }) => {
     el.setSelectionRange(pos, pos);
   });
 });
+
+installZoom();
 
 app.ports.exportStatic.subscribe(exportStatic);
 
