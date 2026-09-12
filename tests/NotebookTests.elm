@@ -11,7 +11,44 @@ import Notebook exposing (Notebook)
 
 checks : List Check
 checks =
-    formatChecks ++ diffChecks
+    formatChecks ++ diffChecks ++ moveChecks
+
+
+{-| Order on the page is presentation only — the graph is built from names —
+so a move has to rearrange the list and change nothing else about it.
+-}
+moveChecks : List Check
+moveChecks =
+    [ equal "move: a cell swaps with the one above it"
+        [ "aacc", "Int", "Mid", "bacc" ]
+        (order (Notebook.moveCell "a" -1 sample))
+    , equal "move: a cell swaps with the one below it"
+        [ "Int", "Mid", "aacc", "bacc" ]
+        (order (Notebook.moveCell "a" 1 sample))
+    , equal "move: a cell already at the top will not move off it"
+        [ "aacc", "Int", "Mid", "bacc" ]
+        (order (Notebook.moveCell "a" -1 (Notebook.moveCell "a" -1 sample)))
+    , equal "move: the last cell will not move off the bottom"
+        (order sample)
+        (order (Notebook.moveCell "b" 1 sample))
+    , equal "move: a name that is not in the notebook changes nothing"
+        (order sample)
+        (order (Notebook.moveCell "absent" 1 sample))
+    , equal "move: moving keeps every cell"
+        (List.length sample.cells)
+        (List.length (Notebook.moveCell "b" -1 sample).cells)
+    , equal "move: down then up returns the notebook it started as"
+        (order sample)
+        (order (Notebook.moveCell "a" -1 (Notebook.moveCell "a" 1 sample)))
+    ]
+
+
+{-| Identifies each cell by position. The prose cells share the empty name, so
+the head of the source is what tells them apart.
+-}
+order : Notebook -> List String
+order notebook =
+    notebook.cells |> List.map (\cell -> cell.id ++ String.left 3 cell.source)
 
 
 sample : Notebook

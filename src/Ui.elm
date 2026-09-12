@@ -9,6 +9,7 @@ module Ui exposing
     , mono
     , monoSize
     , muted
+    , disabled
     , dropOnExport
     , pill
     , sans
@@ -70,6 +71,19 @@ card =
 accent : Element.Color
 accent =
     Element.rgb255 0x2F 0x5D 0x8A
+
+
+{-| A control that is present but cannot be used — the move arrows on the
+first and last cell. Light enough to read as inert, dark enough to still be
+seen: `line` at 1.2:1 against the page would make the control look missing
+rather than disabled, which is worse than showing it.
+
+Disabled controls are exempt from the contrast minimum, which is why this one
+number sits below it deliberately rather than by oversight.
+-}
+disabled : Element.Color
+disabled =
+    Element.rgb255 0xA8 0xAD 0xB4
 
 
 {-| The old gold failed AA outright at 3.1:1, in a 9px pill of all places.

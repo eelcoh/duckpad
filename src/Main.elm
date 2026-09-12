@@ -185,6 +185,7 @@ type Msg
     | ShowSchemaAsTable String Bool
     | ChartHovered String ElmChart.Hover
     | DeleteCell String
+    | MoveCell String Int
     | RunAll
     | TitleEdited String
     | SaveFile
@@ -598,6 +599,14 @@ step msg model =
                             updated.states
                   }
                 , Ports.dropTable id
+                )
+
+        MoveCell id direction ->
+            -- Nothing is recomputed: order on the page is not order of
+            -- execution, so the values and their staleness are untouched.
+            recordDocumentEdit model
+                ( { model | cells = (Notebook.moveCell id direction (toNotebook model)).cells }
+                , Cmd.none
                 )
 
         RunAll ->
@@ -2304,13 +2313,6 @@ plainButton label armed onPress =
                 Ui.card
             )
         , paddingXY 12 6
-        , Element.alpha
-            (if onPress == Nothing then
-                0.45
-
-             else
-                1
-            )
         , Element.mouseOver
             (if onPress == Nothing then
                 []
@@ -2443,11 +2445,18 @@ viewAddRow model position =
         Input.button
             [ centerX
             , paddingXY 10 2
-            , Font.size 12
+            , Font.size 13
             , Font.color Ui.muted
             , Ui.dropOnExport
-            , Element.alpha 0.45
-            , Element.mouseOver [ Element.alpha 1, Font.color Ui.accent ]
+
+            -- Not alpha. Fading muted to 0.45 rendered this at 2:1 against
+            -- the page, which made the one control that adds a cell the least
+            -- readable thing on it. A dashed hairline keeps it quiet without
+            -- taking the text down with it.
+            , Border.widthEach { top = 1, bottom = 0, left = 0, right = 0 }
+            , Border.dashed
+            , Border.color Ui.line
+            , Element.mouseOver [ Font.color Ui.accent, Border.color Ui.accent ]
             ]
             { onPress = Just (ToggleInsert position), label = text "+ insert cell" }
 
@@ -2708,10 +2717,68 @@ viewCellHead model graph cell state =
 
                  else
                     runButton model cell
-               , Input.button [ Font.color Ui.muted, Font.size 18, alignRight, Ui.dropOnExport ]
+               ]
+            ++ moveButtons model cell
+            ++ [ Input.button [ Font.color Ui.muted, Font.size 18, alignRight, Ui.dropOnExport ]
                     { onPress = Just (DeleteCell cell.id), label = text "×" }
                ]
         )
+
+
+{-| Move this cell up or down the page.
+
+Disabled at the ends rather than hidden. A control that vanishes makes the
+first and last cells look structurally different from the rest, and leaves the
+reader working out why; one that greys out says the same thing without the
+layout shifting under them.
+-}
+moveButtons : Model -> Cell -> List (Element Msg)
+moveButtons model cell =
+    let
+        index =
+            model.cells
+                |> List.indexedMap (\i c -> ( i, c.id ))
+                |> List.filter (\( _, id ) -> id == cell.id)
+                |> List.head
+                |> Maybe.map Tuple.first
+                |> Maybe.withDefault 0
+    in
+    [ moveButton "\u{2191}" "Move this cell up" (index > 0) (MoveCell cell.id -1)
+    , moveButton "\u{2193}" "Move this cell down" (index < List.length model.cells - 1) (MoveCell cell.id 1)
+    ]
+
+
+moveButton : String -> String -> Bool -> Msg -> Element Msg
+moveButton glyph description enabled msg =
+    Input.button
+        [ Font.size 16
+        , Font.color
+            (if enabled then
+                Ui.muted
+
+             else
+                Ui.disabled
+            )
+        , paddingXY 3 0
+        , alignRight
+        , Ui.dropOnExport
+        , Element.htmlAttribute (Html.Attributes.title description)
+        , Element.mouseOver
+            (if enabled then
+                [ Font.color Ui.accent ]
+
+             else
+                []
+            )
+        ]
+        { onPress =
+            if enabled then
+                Just msg
+
+            else
+                Nothing
+        , label = text glyph
+        }
 
 
 {-| Re-run one cell. Useful while reading a notebook rather than writing one:
