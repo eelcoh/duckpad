@@ -30,24 +30,61 @@ access orders ()
   which is not an omission: it means the 1+N query problem cannot be expressed
   and every query terminates in time polynomial to the data. That idea is
   borrowed, via Acadia, from Datalog.
-- **No server.** DuckDB runs in WebAssembly, the compiler is compiled Elm, and
-  a notebook is a Markdown file that diffs cleanly.
+- **No server.** DuckDB runs in WebAssembly in the browser and natively in the
+  desktop build, the compiler is compiled Elm, and a notebook is a Markdown
+  file that diffs cleanly. Nothing round-trips through a backend either way.
 
 ## Running it
 
 Tools are pinned with [mise](https://mise.jdx.dev); nothing is installed
-globally.
+globally. The first build also vendors DuckDB and its Excel extension, so
+everything afterwards works offline.
 
     mise run build     # compile the notebook shell
     mise run serve     # http://localhost:8080
-    mise run test      # 436 checks
+    mise run test      # 497 checks
     mise run roundtrip # every fixture's SQL run against a real DuckDB
 
 `public/tutorial.duckpad.md` is ten worked queries with prose between
 them, and needs no network. Open it with the **Open** button.
 
-There is also a desktop build, using [Tauri](https://tauri.app) — see the
-packaging section of [ROADMAP.md](ROADMAP.md) for what it needs.
+### In the browser
+
+`mise run serve` is the whole of it. DuckDB runs in WebAssembly, so the page
+is the database — but a browser cannot silently overwrite a file it did not
+open, so Save downloads a new copy unless the browser has the File System
+Access API. `localStorage` holds a recovery copy either way.
+
+### On the desktop
+
+The desktop build wraps the same page in [Tauri](https://tauri.app) and swaps
+WebAssembly for a native DuckDB, which is what lets it read a file path rather
+than a URL. Which task to use depends on how the Rust side gets built:
+
+    mise run desktop         # Linux, via the duckpad-tauri container
+    mise run desktop-native  # macOS and Windows, against the host toolchain
+
+    mise run release         # Linux bundles: deb, rpm, AppImage
+    mise run release-native  # macOS and Windows bundles
+
+The split exists because this project is developed on a Fedora host with no
+webkit2gtk development headers, so the Linux tasks enter a distrobox container
+that has them. macOS and Windows need no container — their webview ships with
+the OS — so the `-native` tasks call `cargo tauri` directly. They need a Rust
+toolchain and `cargo install tauri-cli --version "^2.0"`, which mise does not
+pin.
+
+Prebuilt bundles for all four targets are attached to every CI run on `master`
+under **Artifacts**, and expire after two weeks. They are unsigned: macOS
+reports an un-notarized app as *damaged* rather than as unsigned, and
+`xattr -dr com.apple.quarantine` is the local workaround where policy allows
+it. Building on the machine itself avoids the question — nothing compiled
+locally is ever quarantined.
+
+### Making the text bigger
+
+Ctrl or Cmd with `+`, `-` and `0` scales the interface, and the level is
+remembered between launches.
 
 ## Credit where it is due
 
