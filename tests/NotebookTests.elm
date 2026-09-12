@@ -11,7 +11,7 @@ import Notebook exposing (Notebook)
 
 checks : List Check
 checks =
-    formatChecks ++ diffChecks ++ moveChecks
+    formatChecks ++ diffChecks ++ moveChecks ++ tableChecks
 
 
 {-| Order on the page is presentation only — the graph is built from names —
@@ -40,6 +40,41 @@ moveChecks =
     , equal "move: down then up returns the notebook it started as"
         (order sample)
         (order (Notebook.moveCell "a" -1 (Notebook.moveCell "a" 1 sample)))
+    ]
+
+
+{-| A new query cell should land on a name that exists. `sample` has one data
+cell — `a` — and a query cell `b` reading it.
+-}
+tableChecks : List Check
+tableChecks =
+    [ equal "nearest: takes the closest readable cell above the insertion point"
+        "a"
+        (Notebook.nearestTable 2 sample.cells)
+    , equal "nearest: prefers the nearer of two above"
+        "b"
+        (Notebook.nearestTable 4 sample.cells)
+    , equal "nearest: looks below when there is nothing above"
+        "a"
+        (Notebook.nearestTable 0 sample.cells)
+    , equal "nearest: prose is not a table"
+        "a"
+        (Notebook.nearestTable 1 sample.cells)
+    , equal "nearest: an empty notebook falls back rather than inventing a name"
+        "orders"
+        (Notebook.nearestTable 0 [])
+    , equal "nearest: a notebook of prose alone has no table to offer"
+        "orders"
+        (Notebook.nearestTable 1
+            [ { id = "", kind = Prose, source = "Just words." } ]
+        )
+    , equal "nearest: an input cell is not a table either"
+        "orders"
+        (Notebook.nearestTable 2
+            [ { id = "", kind = Prose, source = "Words." }
+            , { id = "n", kind = Input, source = "range 0 10 default 5" }
+            ]
+        )
     ]
 
 
