@@ -18,6 +18,7 @@ import IndentTests
 import InputTests
 import LexerTests
 import NotebookTests
+import ProseTests
 import QueryTests
 import RecentsTests
 import SourceTests
@@ -38,7 +39,7 @@ main =
 
 allChecks : List Check
 allChecks =
-    EngineTests.checks ++ DslTests.checks ++ NotebookTests.checks ++ SourceTests.checks ++ IndentTests.checks ++ LexerTests.checks ++ InputTests.checks ++ HistoryTests.checks ++ QueryTests.checks ++ ChartTests.checks ++ RecentsTests.checks
+    EngineTests.checks ++ DslTests.checks ++ NotebookTests.checks ++ SourceTests.checks ++ IndentTests.checks ++ LexerTests.checks ++ InputTests.checks ++ HistoryTests.checks ++ QueryTests.checks ++ ChartTests.checks ++ RecentsTests.checks ++ ProseTests.checks
 
 
 encode : Check -> E.Value

@@ -114,6 +114,22 @@ access orders ()
   |> selectAll
 """
       )
+
+    -- The tutorial's scalar-function cell, so the teaching material is proved
+    -- against a real DuckDB rather than only asserted to parse.
+    , ( "scalar_functions"
+      , """
+access orders ()
+  |> map (\\o ->
+       { who = upper o.owner
+       , exact = o.total
+       , rounded = roundTo 2 o.total
+       , whole = round o.total
+       })
+  |> limit 8
+  |> selectAll
+"""
+      )
       -- What it produces is an ordinary row, so the rest of the language
       -- works over it.
     , ( "summarized_filtered"

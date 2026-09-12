@@ -1,4 +1,4 @@
-module Notebook exposing (Notebook, blank, insertCell, parse, serialize)
+module Notebook exposing (Notebook, blank, insertCell, moveCell, nearestTable, parse, serialize)
 
 {-| The on-disk format: Markdown with the query cells in fenced blocks.
 
@@ -40,6 +40,95 @@ insertCell position cell notebook =
                 ++ [ cell ]
                 ++ List.drop position notebook.cells
     }
+
+
+{-| Move one cell up or down the page.
+
+Order here is presentation only. The dependency graph is built from the names
+a cell reads, and `Dag.topoSort` decides what runs when, so a cell may sit
+below something that depends on it and still run first. Moving one therefore
+changes nothing about the results — no staleness to propagate, no re-run.
+
+A move off either end is not an error, it is simply not a move: the buttons
+are disabled there, and this agrees with them rather than wrapping around.
+
+-}
+moveCell : String -> Int -> Notebook -> Notebook
+moveCell id direction notebook =
+    let
+        index =
+            notebook.cells
+                |> List.indexedMap (\i cell -> ( i, cell ))
+                |> List.filter (\( _, cell ) -> cell.id == id)
+                |> List.head
+                |> Maybe.map Tuple.first
+    in
+    case index of
+        Nothing ->
+            notebook
+
+        Just from ->
+            let
+                to =
+                    from + direction
+            in
+            if to < 0 || to >= List.length notebook.cells then
+                notebook
+
+            else
+                case List.drop from notebook.cells |> List.head of
+                    Nothing ->
+                        notebook
+
+                    Just moving ->
+                        let
+                            without =
+                                List.take from notebook.cells
+                                    ++ List.drop (from + 1) notebook.cells
+                        in
+                        { notebook
+                            | cells =
+                                List.take to without ++ [ moving ] ++ List.drop to without
+                        }
+
+
+{-| A table name a new query cell at this position can actually read.
+
+`access orders ()` was the default, and the notebook duckpad ships has
+`flights` and `airports` — so adding a cell to the example put a compile error
+on screen before anything had been typed. Preferring the nearest source above
+the insertion point means a new cell usually lands already working, and reads
+like the cell it was added beneath.
+
+Only data and query cells can be read: an input, a types block and prose are
+not tables. Falling back to `orders` keeps the old behaviour for the one case
+nothing can help — a notebook with no table in it yet, where any name is
+equally wrong.
+
+-}
+nearestTable : Int -> List Cell -> String
+nearestTable position cells =
+    let
+        readable =
+            cells
+                |> List.indexedMap (\index cell -> ( index, cell ))
+                |> List.filter
+                    (\( _, cell ) ->
+                        (cell.kind == Data || cell.kind == Query) && cell.id /= ""
+                    )
+
+        above =
+            readable |> List.filter (\( index, _ ) -> index < position) |> List.reverse
+
+        below =
+            readable |> List.filter (\( index, _ ) -> index >= position)
+    in
+    case above ++ below of
+        ( _, cell ) :: _ ->
+            cell.id
+
+        [] ->
+            "orders"
 
 
 fence : String

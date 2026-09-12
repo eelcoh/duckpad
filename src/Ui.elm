@@ -9,6 +9,7 @@ module Ui exposing
     , mono
     , monoSize
     , muted
+    , disabled
     , dropOnExport
     , pill
     , sans
@@ -43,9 +44,13 @@ ink =
     Element.rgb255 0x1B 0x1F 0x23
 
 
+{-| Secondary text. Dark enough to be read at the sizes it is actually used
+at: WCAG's 4.5:1 assumes body text around 16px, and nothing here is, so this
+sits at 6.4:1 against the page rather than scraping the threshold.
+-}
 muted : Element.Color
 muted =
-    Element.rgb255 0x6B 0x72 0x80
+    Element.rgb255 0x56 0x5D 0x68
 
 
 line : Element.Color
@@ -68,9 +73,24 @@ accent =
     Element.rgb255 0x2F 0x5D 0x8A
 
 
+{-| A control that is present but cannot be used — the move arrows on the
+first and last cell. Light enough to read as inert, dark enough to still be
+seen: `line` at 1.2:1 against the page would make the control look missing
+rather than disabled, which is worse than showing it.
+
+Disabled controls are exempt from the contrast minimum, which is why this one
+number sits below it deliberately rather than by oversight.
+-}
+disabled : Element.Color
+disabled =
+    Element.rgb255 0xA8 0xAD 0xB4
+
+
+{-| The old gold failed AA outright at 3.1:1, in a 9px pill of all places.
+-}
 stale : Element.Color
 stale =
-    Element.rgb255 0xB8 0x86 0x0B
+    Element.rgb255 0x8A 0x65 0x08
 
 
 bad : Element.Color
@@ -99,7 +119,7 @@ mono =
 
 monoSize : Int
 monoSize =
-    12
+    13
 
 
 
@@ -111,7 +131,7 @@ monoSize =
 tinyCaps : Element.Color -> String -> Element msg
 tinyCaps colour label =
     Element.el
-        [ Font.size 9
+        [ Font.size 11
         , Font.color colour
         , Font.letterSpacing 0.8
         , Font.family sans
@@ -125,7 +145,7 @@ annotation and not as a row of buttons.
 pill : Element.Color -> String -> Element msg
 pill colour label =
     Element.el
-        [ Font.size 9
+        [ Font.size 11
         , Font.color colour
         , Font.letterSpacing 0.6
         , Font.family sans

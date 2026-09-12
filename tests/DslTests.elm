@@ -93,6 +93,11 @@ rowTypeOf source =
         |> Result.map (.rowType >> List.map (\( n, t ) -> ( n, Dsl.Schema.typeName t )))
 
 
+decimalsOf : String -> Result String (List ( String, Int ))
+decimalsOf source =
+    compile source |> Result.map (.decimals >> Dict.toList)
+
+
 sqlOf : String -> Result String String
 sqlOf source =
     compile source |> Result.map .sql
@@ -1204,6 +1209,21 @@ functionChecks =
     , equal "fn: ++ joins text"
         (Ok [ ( "label", "String" ) ])
         (rowTypeOf "access orders () |> map (\\o -> { label = o.owner ++ \" · \" ++ o.region }) |> selectAll")
+
+    -- A double cannot hold a trailing zero, so the places a column asked for
+    -- are recorded beside it and the table pads them back on.
+    , equal "fn: roundTo records the decimal places its column asked for"
+        (Ok [ ( "b", 1 ) ])
+        (decimalsOf "access orders () |> map (\\o -> { a = o.total, b = roundTo 1 o.total }) |> selectAll")
+    , equal "fn: roundTo through a reduce records them too"
+        (Ok [ ( "revenue", 2 ) ])
+        (decimalsOf "access orders () |> groupBy .region |> reduce (\\g -> { region = g.region, revenue = roundTo 2 (sum g.total) }) |> selectAll")
+    , equal "fn: arithmetic on a rounded value is no longer fixed to those places"
+        (Ok [])
+        (decimalsOf "access orders () |> map (\\o -> { a = roundTo 2 o.total + 1.0 }) |> selectAll")
+    , equal "fn: rounding to whole numbers leaves nothing to pad"
+        (Ok [])
+        (decimalsOf "access orders () |> map (\\o -> { a = roundTo 0 o.total }) |> selectAll")
 
     -- Refusals.
     , isErr "fn: a timestamp function needs a timestamp"

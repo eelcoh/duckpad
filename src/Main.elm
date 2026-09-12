@@ -117,6 +117,10 @@ type alias Model =
     , newArmed : Bool
     , resetArmed : Bool
 
+    -- Deleting a cell takes two clicks for the same reason, and holds the id
+    -- rather than a flag so arming one cell disarms any other.
+    , deleteArmed : Maybe String
+
     -- Which prose cell is being edited, if any. Prose shows as rendered
     -- Markdown until it is clicked, which is the only way for a heading to
     -- look like a heading and still be editable in place.
@@ -185,6 +189,7 @@ type Msg
     | ShowSchemaAsTable String Bool
     | ChartHovered String ElmChart.Hover
     | DeleteCell String
+    | MoveCell String Int
     | RunAll
     | TitleEdited String
     | SaveFile
@@ -260,7 +265,7 @@ init flags =
             else
                 Cmd.none
     in
-    ( load notebook { title = notebook.title, cells = [], states = Dict.empty, baseSchema = Dict.empty, queue = [], current = Nothing, db = Booting, nextId = 1, notice = notice, associated = associated, revision = 0, saveState = saveState, saveBefore = Nothing, history = History.empty, historyEdit = Nothing, insertingAt = Nothing, schemaExpanded = Set.empty, schemaTables = Set.empty, chartHovers = Dict.empty, screen = screen, recovered = flags.saved /= Nothing, recents = Result.withDefault [] (D.decodeValue Recents.decoder flags.recents), formerPath = flags.formerPath, now = flags.now, newArmed = False, resetArmed = False, editing = Nothing, expanded = Set.empty, inputs = Dict.empty, pickers = Dict.empty, today = Nothing }
+    ( load notebook { title = notebook.title, cells = [], states = Dict.empty, baseSchema = Dict.empty, queue = [], current = Nothing, db = Booting, nextId = 1, notice = notice, associated = associated, revision = 0, saveState = saveState, saveBefore = Nothing, history = History.empty, historyEdit = Nothing, insertingAt = Nothing, schemaExpanded = Set.empty, schemaTables = Set.empty, chartHovers = Dict.empty, screen = screen, recovered = flags.saved /= Nothing, recents = Result.withDefault [] (D.decodeValue Recents.decoder flags.recents), formerPath = flags.formerPath, now = flags.now, newArmed = False, resetArmed = False, deleteArmed = Nothing, editing = Nothing, expanded = Set.empty, inputs = Dict.empty, pickers = Dict.empty, today = Nothing }
     , Cmd.batch [ Task.perform GotToday Date.today, autosave ]
     )
 
@@ -435,7 +440,7 @@ update msg model =
                 model
 
             _ ->
-                { model | newArmed = False, resetArmed = False }
+                { model | newArmed = False, resetArmed = False, deleteArmed = Nothing }
         )
 
 
@@ -509,10 +514,10 @@ step msg model =
                     , source =
                         case kind of
                             Query ->
-                                "access orders ()\n  |> selectAll"
+                                "access " ++ Notebook.nearestTable position model.cells ++ " ()\n  |> selectAll"
 
                             Data ->
-                                "csv \"https://cdn.jsdelivr.net/npm/vega-datasets@2/data/seattle-weather.csv\""
+                                "csv \"data/orders.csv\""
 
                             Input ->
                                 "range 0 100 default 50"
@@ -582,6 +587,13 @@ step msg model =
             )
 
         DeleteCell id ->
+            if model.deleteArmed /= Just id then
+                -- First click arms. Undo would bring the cell back, but
+                -- recovering in front of someone still reads as a stumble, and
+                -- the document-boundary buttons already work this way.
+                ( { model | deleteArmed = Just id, newArmed = False, resetArmed = False }, Cmd.none )
+
+            else
             let
                 updated =
                     { model
@@ -591,13 +603,22 @@ step msg model =
             in
             recordDocumentEdit model
                 ( { updated
-                    | states =
+                    | deleteArmed = Nothing
+                    , states =
                         Engine.markStale
                             (Dag.dependentsOf id (graphOf model))
                             (graphOf updated)
                             updated.states
                   }
                 , Ports.dropTable id
+                )
+
+        MoveCell id direction ->
+            -- Nothing is recomputed: order on the page is not order of
+            -- execution, so the values and their staleness are untouched.
+            recordDocumentEdit model
+                ( { model | cells = (Notebook.moveCell id direction (toNotebook model)).cells }
+                , Cmd.none
                 )
 
         RunAll ->
@@ -960,7 +981,7 @@ restoreHistory notebook history model =
     withPersist ( scheduled, Cmd.batch (run :: drops) )
 
 
-type alias HistoryKey =
+type alias Shortcut =
     { key : String
     , control : Bool
     , meta : Bool
@@ -968,9 +989,13 @@ type alias HistoryKey =
     }
 
 
-historyKey : D.Decoder { message : Msg, stopPropagation : Bool, preventDefault : Bool }
-historyKey =
-    D.map4 HistoryKey
+{-| The shortcuts that belong to the document rather than to a cell. Undo and
+redo were here first; Save joined them because reaching for it and getting the
+browser's own save dialog is worse than it not being bound at all.
+-}
+shortcutKey : D.Decoder { message : Msg, stopPropagation : Bool, preventDefault : Bool }
+shortcutKey =
+    D.map4 Shortcut
         (D.field "key" D.string)
         (D.field "ctrlKey" D.bool)
         (D.field "metaKey" D.bool)
@@ -997,8 +1022,17 @@ historyKey =
                 else if key.control && String.toLower key.key == "y" then
                     handled Redo
 
+                else if (key.control || key.meta) && String.toLower key.key == "s" then
+                    handled
+                        (if key.shift then
+                            SaveAsFile
+
+                         else
+                            SaveFile
+                        )
+
                 else
-                    D.fail "not a history shortcut"
+                    D.fail "not a shortcut"
             )
 
 
@@ -1359,6 +1393,7 @@ dispatchTypes cell rest model =
                     , reads = []
                     , cardinality = Many
                     , display = AsRows
+                    , decimals = Dict.empty
                     , orderSignificant = False
                     }
             in
@@ -2011,9 +2046,9 @@ viewEditor model =
     Element.layout
         [ Background.color Ui.bg
         , Font.family Ui.sans
-        , Font.size 14
+        , Font.size 15
         , Font.color Ui.ink
-        , Element.htmlAttribute (Html.Events.custom "keydown" historyKey)
+        , Element.htmlAttribute (Html.Events.custom "keydown" shortcutKey)
         ]
         (column
             [ width (fill |> maximum 1040)
@@ -2045,7 +2080,7 @@ viewHome model =
     Element.layout
         [ Background.color Ui.bg
         , Font.family Ui.sans
-        , Font.size 14
+        , Font.size 15
         , Font.color Ui.ink
         ]
         (column
@@ -2056,7 +2091,7 @@ viewHome model =
             ]
             ([ column [ spacing 6 ]
                 [ el [ Font.size 26 ] (text "duckpad")
-                , el [ Font.size 13, Font.color Ui.muted ]
+                , el [ Font.size 14, Font.color Ui.muted ]
                     (text "A reactive notebook over DuckDB.")
                 ]
              , Element.wrappedRow [ spacing 10 ]
@@ -2065,7 +2100,7 @@ viewHome model =
                 , homeButton "Open the tutorial" (Just StartTutorial)
                 , homeButton "Open the example" (Just StartExample)
                 ]
-             , el [ Font.size 12, Font.color Ui.muted ]
+             , el [ Font.size 13, Font.color Ui.muted ]
                 (text "The tutorial reads two small files that ship with duckpad. The example reads three million rows over the network.")
              ]
                 ++ viewRecovery model
@@ -2088,7 +2123,7 @@ viewRecovery model =
 
     else
         [ column [ width fill, spacing 10 ]
-            [ el [ Font.size 12, Font.color Ui.muted ] (text "UNSAVED WORK")
+            [ el [ Font.size 13, Font.color Ui.muted ] (text "UNSAVED WORK")
             , column
                 [ width fill
                 , spacing 8
@@ -2098,8 +2133,8 @@ viewRecovery model =
                 , Border.color Ui.line
                 , Border.rounded 6
                 ]
-                [ el [ Font.size 15 ] (text model.title)
-                , el [ Font.size 12, Font.color Ui.muted ]
+                [ el [ Font.size 16 ] (text model.title)
+                , el [ Font.size 13, Font.color Ui.muted ]
                     (text
                         (case model.formerPath of
                             Just path ->
@@ -2125,7 +2160,7 @@ viewRecents model =
 
     else
         [ column [ width fill, spacing 10 ]
-            (el [ Font.size 12, Font.color Ui.muted ] (text "RECENT")
+            (el [ Font.size 13, Font.color Ui.muted ] (text "RECENT")
                 :: List.map (viewRecent model.now) model.recents
             )
         ]
@@ -2144,7 +2179,7 @@ viewRecent now entry =
         ]
         [ column [ spacing 4, width fill ]
             [ Element.wrappedRow [ spacing 8 ]
-                (el [ Font.size 15 ] (text entry.name)
+                (el [ Font.size 16 ] (text entry.name)
                     :: (if entry.unsaved then
                             [ Ui.pill Ui.stale "unsaved edits" ]
 
@@ -2158,7 +2193,7 @@ viewRecent now entry =
                             [ Ui.pill Ui.bad "missing" ]
                        )
                 )
-            , el [ Font.size 12, Font.color Ui.muted ]
+            , el [ Font.size 13, Font.color Ui.muted ]
                 (text
                     (String.join " · "
                         (List.filterMap identity
@@ -2183,7 +2218,7 @@ viewRecent now entry =
 homeButton : String -> Maybe Msg -> Element Msg
 homeButton label onPress =
     Input.button
-        [ Font.size 13
+        [ Font.size 14
         , Border.width 1
         , Border.color Ui.line
         , Border.rounded 5
@@ -2204,7 +2239,7 @@ viewHeader model graph =
         [ Element.wrappedRow [ width fill, spacing 20 ]
             [ column [ spacing 4, width fill ]
                 [ titleField model.title
-                , el [ Font.size 12, Font.color Ui.muted ]
+                , el [ Font.size 13, Font.color Ui.muted ]
                     (text "reactive graph · DSL compiled in-browser · DuckDB-wasm")
                 ]
             , Element.wrappedRow [ alignRight, spacing 10, Ui.dropOnExport ]
@@ -2284,7 +2319,7 @@ plainButton label armed onPress =
                 Ui.ink
     in
     Input.button
-        [ Font.size 12
+        [ Font.size 14
         , Font.color colour
         , Border.width 1
         , Border.color
@@ -2303,13 +2338,6 @@ plainButton label armed onPress =
                 Ui.card
             )
         , paddingXY 12 6
-        , Element.alpha
-            (if onPress == Nothing then
-                0.45
-
-             else
-                1
-            )
         , Element.mouseOver
             (if onPress == Nothing then
                 []
@@ -2341,7 +2369,7 @@ viewNotice notice =
                 [ width fill
                 , spacing 12
                 , padding 10
-                , Font.size 12
+                , Font.size 13
                 , Font.color Ui.stale
                 , Background.color (Element.rgb255 0xFF 0xFB 0xF0)
                 , Border.width 1
@@ -2349,7 +2377,7 @@ viewNotice notice =
                 , Border.rounded 6
                 ]
                 [ Element.paragraph [ width fill ] [ text message ]
-                , Input.button [ alignRight, Font.color Ui.muted, Font.size 16, Ui.dropOnExport ]
+                , Input.button [ alignRight, Font.color Ui.muted, Font.size 18, Ui.dropOnExport ]
                     { onPress = Just DismissNotice, label = text "×" }
                 ]
             ]
@@ -2394,7 +2422,7 @@ viewExecutionOrder graph =
             Element.paragraph
                 [ width fill
                 , Font.family Ui.mono
-                , Font.size 11
+                , Font.size 12
                 , Font.color colour
                 , spacing 4
                 ]
@@ -2442,11 +2470,18 @@ viewAddRow model position =
         Input.button
             [ centerX
             , paddingXY 10 2
-            , Font.size 11
+            , Font.size 13
             , Font.color Ui.muted
             , Ui.dropOnExport
-            , Element.alpha 0.45
-            , Element.mouseOver [ Element.alpha 1, Font.color Ui.accent ]
+
+            -- Not alpha. Fading muted to 0.45 rendered this at 2:1 against
+            -- the page, which made the one control that adds a cell the least
+            -- readable thing on it. A dashed hairline keeps it quiet without
+            -- taking the text down with it.
+            , Border.widthEach { top = 1, bottom = 0, left = 0, right = 0 }
+            , Border.dashed
+            , Border.color Ui.line
+            , Element.mouseOver [ Font.color Ui.accent, Border.color Ui.accent ]
             ]
             { onPress = Just (ToggleInsert position), label = text "+ insert cell" }
 
@@ -2510,7 +2545,7 @@ viewDataSchema model cell state =
 
                     toggle =
                         Input.button
-                            [ Font.size 11
+                            [ Font.size 12
                             , Font.color Ui.muted
                             , Element.mouseOver [ Font.color Ui.accent ]
                             , Ui.dropOnExport
@@ -2550,7 +2585,7 @@ schemaTable columns =
             el [ paddingXY 6 4 ] (Ui.tinyCaps Ui.muted label)
 
         value body =
-            el [ paddingXY 6 5, Font.family Ui.mono, Font.size 11 ] (text body)
+            el [ paddingXY 6 5, Font.family Ui.mono, Font.size 12 ] (text body)
 
     in
     Element.table
@@ -2574,7 +2609,7 @@ schemaModeButton : Bool -> String -> Msg -> Element Msg
 schemaModeButton selected label message =
     Input.button
         [ paddingXY 7 3
-        , Font.size 10
+        , Font.size 12
         , Font.color
             (if selected then
                 Ui.accent
@@ -2630,7 +2665,7 @@ schemaElmModelView columns =
                             el
                                 [ width fill
                                 , Font.family Ui.mono
-                                , Font.size 11
+                                , Font.size 12
                                 , Font.color Ui.ink
                                 ]
                                 (text line)
@@ -2707,10 +2742,118 @@ viewCellHead model graph cell state =
 
                  else
                     runButton model cell
-               , Input.button [ Font.color Ui.muted, Font.size 16, alignRight, Ui.dropOnExport ]
-                    { onPress = Just (DeleteCell cell.id), label = text "×" }
                ]
+            ++ moveButtons model cell
+            ++ [ deleteButton model cell ]
         )
+
+
+{-| Remove this cell, on the second click.
+
+The armed state says so in words rather than by turning the cross red: a
+reader who has just clicked something destructive should not have to know what
+the colour means.
+-}
+deleteButton : Model -> Cell -> Element Msg
+deleteButton model cell =
+    let
+        armed =
+            model.deleteArmed == Just cell.id
+    in
+    Input.button
+        [ Font.color
+            (if armed then
+                Ui.bad
+
+             else
+                Ui.muted
+            )
+        , Font.size
+            (if armed then
+                13
+
+             else
+                18
+            )
+        , alignRight
+        , Ui.dropOnExport
+        , Element.htmlAttribute
+            (Html.Attributes.title
+                (if armed then
+                    "Click again to delete this cell"
+
+                 else
+                    "Delete this cell"
+                )
+            )
+        , Element.mouseOver [ Font.color Ui.bad ]
+        ]
+        { onPress = Just (DeleteCell cell.id)
+        , label =
+            text
+                (if armed then
+                    "delete?"
+
+                 else
+                    "×"
+                )
+        }
+
+
+{-| Move this cell up or down the page.
+
+Disabled at the ends rather than hidden. A control that vanishes makes the
+first and last cells look structurally different from the rest, and leaves the
+reader working out why; one that greys out says the same thing without the
+layout shifting under them.
+-}
+moveButtons : Model -> Cell -> List (Element Msg)
+moveButtons model cell =
+    let
+        index =
+            model.cells
+                |> List.indexedMap (\i c -> ( i, c.id ))
+                |> List.filter (\( _, id ) -> id == cell.id)
+                |> List.head
+                |> Maybe.map Tuple.first
+                |> Maybe.withDefault 0
+    in
+    [ moveButton "\u{2191}" "Move this cell up" (index > 0) (MoveCell cell.id -1)
+    , moveButton "\u{2193}" "Move this cell down" (index < List.length model.cells - 1) (MoveCell cell.id 1)
+    ]
+
+
+moveButton : String -> String -> Bool -> Msg -> Element Msg
+moveButton glyph description enabled msg =
+    Input.button
+        [ Font.size 16
+        , Font.color
+            (if enabled then
+                Ui.muted
+
+             else
+                Ui.disabled
+            )
+        , paddingXY 3 0
+        , alignRight
+        , Ui.dropOnExport
+        , Element.htmlAttribute (Html.Attributes.title description)
+        , Element.mouseOver
+            (if enabled then
+                [ Font.color Ui.accent ]
+
+             else
+                []
+            )
+        ]
+        { onPress =
+            if enabled then
+                Just msg
+
+            else
+                Nothing
+        , label = text glyph
+        }
 
 
 {-| Re-run one cell. Useful while reading a notebook rather than writing one:
@@ -2720,22 +2863,21 @@ watch a single cell go again after changing it back.
 runButton : Model -> Cell -> Element Msg
 runButton model cell =
     Input.button
-        [ Font.size 10
+        [ Font.size 12
         , Font.family Ui.sans
         , Font.letterSpacing 0.6
-        , Font.color Ui.muted
+        , Font.color
+            (if model.db == Ready then
+                Ui.muted
+
+             else
+                Ui.disabled
+            )
         , Border.width 1
         , Border.color Ui.line
         , Border.rounded 4
         , paddingXY 7 3
         , Ui.dropOnExport
-        , Element.alpha
-            (if model.db == Ready then
-                1
-
-             else
-                0.4
-            )
         , Element.mouseOver
             (if model.db == Ready then
                 [ Font.color Ui.accent, Border.color Ui.accent ]
@@ -2758,7 +2900,7 @@ nameField : Cell -> Element Msg
 nameField cell =
     Input.text
         [ Font.family Ui.mono
-        , Font.size 13
+        , Font.size 14
         , Font.semiBold
         , Font.color Ui.accent
         , Border.width 1
@@ -2826,7 +2968,7 @@ viewSignature state =
         Just compiled ->
             [ el
                 [ Font.family Ui.mono
-                , Font.size 11
+                , Font.size 12
                 , Font.color Ui.muted
                 , Element.htmlAttribute (Html.Attributes.title (describeRow compiled.rowType))
                 ]
@@ -2861,7 +3003,7 @@ viewEdges graph cell =
             else
                 [ row [ spacing 4 ]
                     [ Ui.tinyCaps Ui.muted label
-                    , el [ Font.family Ui.mono, Font.size 11, Font.color Ui.muted ]
+                    , el [ Font.family Ui.mono, Font.size 12, Font.color Ui.muted ]
                         (text (String.join ", " items))
                     ]
                 ]
@@ -2973,6 +3115,7 @@ onKeyDown cellId =
 type alias KeyContext =
     { key : String
     , shift : Bool
+    , accel : Bool
     , value : String
     , start : Int
     , end : Int
@@ -2981,9 +3124,10 @@ type alias KeyContext =
 
 keyContext : D.Decoder KeyContext
 keyContext =
-    D.map5 KeyContext
+    D.map6 KeyContext
         (D.field "key" D.string)
         (D.field "shiftKey" D.bool)
+        (D.map2 (||) (D.field "ctrlKey" D.bool) (D.field "metaKey" D.bool))
         (D.at [ "target", "value" ] D.string)
         (D.at [ "target", "selectionStart" ] D.int)
         (D.at [ "target", "selectionEnd" ] D.int)
@@ -2999,18 +3143,28 @@ keyEdit cellId ctx =
                 , preventDefault = True
                 }
     in
-    case ( ctx.key, ctx.shift ) of
-        ( "Enter", False ) ->
-            handled (Indent.enter ctx.value ctx.start ctx.end)
+    if ctx.accel && ctx.key == "Enter" then
+        -- The notebook convention, and the one shortcut a reader coming from
+        -- Jupyter or Observable will try without being told.
+        D.succeed
+            { message = RunCell cellId
+            , stopPropagation = True
+            , preventDefault = True
+            }
 
-        ( "Tab", False ) ->
-            handled (Indent.tab ctx.value ctx.start ctx.end)
+    else
+        case ( ctx.key, ctx.shift ) of
+            ( "Enter", False ) ->
+                handled (Indent.enter ctx.value ctx.start ctx.end)
 
-        ( "Tab", True ) ->
-            handled (Indent.shiftTab ctx.value ctx.start ctx.end)
+            ( "Tab", False ) ->
+                handled (Indent.tab ctx.value ctx.start ctx.end)
 
-        _ ->
-            D.fail "not an editing key"
+            ( "Tab", True ) ->
+                handled (Indent.shiftTab ctx.value ctx.start ctx.end)
+
+            _ ->
+                D.fail "not an editing key"
 
 
 
@@ -3072,7 +3226,12 @@ viewOutput model cell state =
                     ( Just t, Just shape ) ->
                         column [ width fill ]
                             [ message_ Ui.stale "Stale — showing the previous result until this re-runs."
-                            , el [ width fill, Element.alpha 0.45 ] (Element.html (viewTable cell.id model shape t))
+
+                            -- Faded, but still a table someone might read a
+                            -- number off. 0.45 put its text at 2.8:1; the
+                            -- banner above already says what the fade means,
+                            -- so the fade does not have to carry it alone.
+                            , el [ width fill, Element.alpha 0.7 ] (Element.html (viewTable cell.id model shape t))
                             ]
 
                     _ ->
@@ -3218,7 +3377,7 @@ calendar settings =
             , Border.rounded 4
             , Font.center
             , Font.family Ui.mono
-            , Font.size 11
+            , Font.size 12
             ]
     in
     { settings
@@ -3235,7 +3394,7 @@ calendar settings =
             [ width fill
             , paddingXY 2 4
             , Font.family Ui.sans
-            , Font.size 12
+            , Font.size 13
             , Font.semiBold
             , Font.color Ui.ink
             ]
@@ -3247,7 +3406,7 @@ calendar settings =
             ]
         , monthYearAttribute =
             [ Font.family Ui.sans
-            , Font.size 12
+            , Font.size 13
             , Font.color Ui.ink
             , Element.pointer
             ]
@@ -3256,7 +3415,7 @@ calendar settings =
         , yearsTableAttributes = [ spacing 4 ]
         , weekdayAttributes =
             [ Font.family Ui.sans
-            , Font.size 9
+            , Font.size 11
             , Font.color Ui.muted
             , Font.center
             , paddingXY 0 4
@@ -3428,7 +3587,7 @@ viewScalar shape t =
         ( [ ( name, columnType ) ], firstRow :: _ ) ->
             div [ class "scalar" ]
                 [ div [ class "scalar-value" ]
-                    [ Html.text (renderValue shape.declarations columnType name firstRow) ]
+                    [ Html.text (renderValue shape.declarations (Dict.get name shape.decimals) columnType name firstRow) ]
                 , div [ class "scalar-label" ] [ Html.text name ]
                 ]
 
@@ -3462,7 +3621,7 @@ viewRows shape t =
                                     (shape.rowType
                                         |> List.map
                                             (\( name, columnType ) ->
-                                                td [] [ Html.text (renderValue shape.declarations columnType name rowValue) ]
+                                                td [] [ Html.text (renderValue shape.declarations (Dict.get name shape.decimals) columnType name rowValue) ]
                                             )
                                     )
                             )
@@ -3577,15 +3736,18 @@ artefact label body =
 happens to arrive, so a timestamp shows as a date and a custom type shows as
 its constructor.
 -}
-renderValue : List TypeDecl -> Type -> String -> D.Value -> String
-renderValue decls columnType column rowValue =
+renderValue : List TypeDecl -> Maybe Int -> Type -> String -> D.Value -> String
+renderValue decls places columnType column rowValue =
     case columnType of
         TMaybe inner ->
             if isNull column rowValue then
                 "—"
 
             else
-                renderValue decls inner column rowValue
+                renderValue decls places inner column rowValue
+
+        TFloat ->
+            Query.padDecimals places (Query.cellText column rowValue)
 
         TTimestamp ->
             decodeField column D.float rowValue
@@ -3599,6 +3761,7 @@ renderValue decls columnType column rowValue =
                 -- type.
                 Just (Wraps _ wrapped) ->
                     renderValue decls
+                        places
                         (Schema.primitive wrapped |> Maybe.withDefault TString)
                         column
                         rowValue

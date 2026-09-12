@@ -17,7 +17,7 @@
      rendered Markdown, and a table with a sticky header. */
   :root {
     --ink: #1b1f23;
-    --muted: #6b7280;
+    --muted: #565d68;
     --line: #e3e6ea;
     --card: #ffffff;
     --accent: #2f5d8a;
@@ -42,7 +42,7 @@
     margin: 0;
     padding: 12px;
     font-family: var(--mono);
-    font-size: 12.5px;
+    font-size: 13.5px;
     line-height: 1.55;
     letter-spacing: normal;
     tab-size: 2;
@@ -72,21 +72,21 @@
   .tok-field    { color: #17706e; }
   .tok-string   { color: #a3543a; }
   .tok-number   { color: #a3543a; }
-  .tok-operator { color: #8a919a; }
-  .tok-comment  { color: #9aa3ac; font-style: italic; }
+  .tok-operator { color: #656c75; }
+  .tok-comment  { color: #6f7782; font-style: italic; }
   .tok-plain    { color: var(--ink); }
 
   /* PROSE: rendered Markdown, and the textarea it becomes when clicked. The
      two need the same box or the cell jumps as it switches. */
   textarea.cell-source {
     width: 100%; border: 0; padding: 12px; background: transparent;
-    font-family: var(--sans); font-size: 13.5px; line-height: 1.6; color: var(--ink);
+    font-family: var(--sans); font-size: 14.5px; line-height: 1.6; color: var(--ink);
     resize: vertical;
   }
   textarea.cell-source:focus { outline: none; }
   .prose-body { padding: 12px; cursor: text; min-height: 46px; }
   .prose-body:hover { background: #fcfdff; }
-  .prose-empty { color: var(--muted); font-size: 13.5px; font-family: var(--sans); }
+  .prose-empty { color: var(--muted); font-size: 14.5px; font-family: var(--sans); }
 
   /* elm-ui sets `white-space: pre` on its own elements, and anything embedded
      through Element.html inherits it — so Markdown paragraphs did not wrap,
@@ -96,7 +96,7 @@
   .prose-rendered, .prose-rendered * { white-space: normal; overflow-wrap: break-word; }
   .prose-rendered pre, .prose-rendered pre code { white-space: pre; }
 
-  .prose-rendered { font-family: var(--sans); font-size: 14px; line-height: 1.65; color: #33393f; }
+  .prose-rendered { font-family: var(--sans); font-size: 15px; line-height: 1.65; color: #33393f; }
   .prose-rendered > *:first-child { margin-top: 0; }
   .prose-rendered > *:last-child { margin-bottom: 0; }
   .prose-rendered h1, .prose-rendered h2, .prose-rendered h3,
@@ -104,15 +104,15 @@
     color: var(--ink); font-weight: 600; line-height: 1.3; margin: 1.1em 0 0.45em;
     letter-spacing: -0.01em;
   }
-  .prose-rendered h1 { font-size: 22px; }
-  .prose-rendered h2 { font-size: 18px; }
-  .prose-rendered h3 { font-size: 15.5px; }
-  .prose-rendered h4, .prose-rendered h5, .prose-rendered h6 { font-size: 14px; }
+  .prose-rendered h1 { font-size: 23px; }
+  .prose-rendered h2 { font-size: 19px; }
+  .prose-rendered h3 { font-size: 16.5px; }
+  .prose-rendered h4, .prose-rendered h5, .prose-rendered h6 { font-size: 15px; }
   .prose-rendered p { margin: 0 0 0.75em; }
   .prose-rendered ul, .prose-rendered ol { margin: 0 0 0.75em; padding-left: 1.4em; }
   .prose-rendered li { margin: 0.15em 0; }
   .prose-rendered code {
-    font-family: var(--mono); font-size: 12.5px; background: #f2f4f6;
+    font-family: var(--mono); font-size: 13.5px; background: #f2f4f6;
     padding: 1px 4px; border-radius: 3px;
   }
   .prose-rendered pre { background: #f7f8f9; padding: 10px 12px; border-radius: 5px; overflow-x: auto; }
@@ -123,31 +123,31 @@
   }
   .prose-rendered a { color: var(--accent); }
   .prose-rendered hr { border: none; border-top: 1px solid var(--line); margin: 1.2em 0; }
-  .prose-raw { white-space: pre-wrap; font-family: var(--mono); font-size: 12.5px; color: var(--muted); }
+  .prose-raw { white-space: pre-wrap; font-family: var(--mono); font-size: 13.5px; color: var(--muted); }
 
   /* THE RESULT TABLE: a sticky header over a scrolling body. */
   .result-meta {
-    padding: 8px 12px; font-size: 11px; color: var(--muted); font-family: var(--mono);
+    padding: 8px 12px; font-size: 12px; color: var(--muted); font-family: var(--mono);
     border-top: 1px solid var(--line);
   }
   .table-scroll { overflow-x: auto; max-height: 320px; overflow-y: auto; border-top: 1px solid var(--line); }
-  .table-scroll table { border-collapse: collapse; width: 100%; font-family: var(--mono); font-size: 11.5px; }
+  .table-scroll table { border-collapse: collapse; width: 100%; font-family: var(--mono); font-size: 12.5px; }
   .table-scroll th {
     text-align: left; padding: 6px 12px; border-bottom: 1px solid var(--line);
     position: sticky; top: 0; background: var(--card); font-weight: 600; white-space: nowrap;
   }
-  .coltype { display: block; font-size: 9px; color: var(--muted); font-weight: 400; text-transform: lowercase; }
+  .coltype { display: block; font-size: 11px; color: var(--muted); font-weight: 400; text-transform: lowercase; }
   .table-scroll td { padding: 4px 12px; border-bottom: 1px solid #f3f4f6; white-space: nowrap; }
   .table-scroll tbody tr:hover { background: #fafbfc; }
 
   .elm-chart {
     box-sizing: border-box; width: 100%; height: 300px; padding: 12px 12px 4px;
-    border-top: 1px solid var(--line); font-family: var(--sans); font-size: 12px;
+    border-top: 1px solid var(--line); font-family: var(--sans); font-size: 13px;
     color: var(--muted);
   }
   .elm-chart-error { height: auto; min-height: 48px; color: #b42318; }
 
-  .choice-select { font-family: var(--mono); font-size: 12.5px; color: var(--ink);
+  .choice-select { font-family: var(--mono); font-size: 13.5px; color: var(--ink);
                    border: 1px solid var(--line); border-radius: 5px; padding: 5px 8px;
                    background: var(--card); min-width: 200px; }
   .choice-select:focus { outline: none; border-color: var(--accent); }
@@ -155,11 +155,11 @@
   .scalar { padding: 18px 12px 20px; border-top: 1px solid var(--line); }
   .scalar-value { font-family: var(--mono); font-size: 34px; font-weight: 500; color: var(--ink);
                   line-height: 1.1; letter-spacing: -0.02em; }
-  .scalar-label { font-family: var(--sans); font-size: 11px; color: var(--muted); margin-top: 4px;
+  .scalar-label { font-family: var(--sans); font-size: 12px; color: var(--muted); margin-top: 4px;
                   text-transform: uppercase; letter-spacing: 0.08em; }
 
   .artefact-pre {
-    margin: 0; font-family: var(--mono); font-size: 11px; line-height: 1.5;
+    margin: 0; font-family: var(--mono); font-size: 12px; line-height: 1.5;
     white-space: pre; overflow-x: auto; max-width: 100%; color: var(--ink);
   }
 </style>

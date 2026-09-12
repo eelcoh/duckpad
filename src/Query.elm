@@ -6,6 +6,7 @@ module Query exposing
     , cellText
     , describedDecoder
     , outcomeDecoder
+    , padDecimals
     )
 
 {-| What comes back across the port from DuckDB-wasm.
@@ -108,6 +109,51 @@ cellText : String -> D.Value -> String
 cellText column row =
     D.decodeValue (D.field column looseString) row
         |> Result.withDefault "?"
+
+
+{-| Put back the trailing zeros a double cannot hold.
+
+`roundTo 2` asks for two decimal places, but the value returns as a double and
+12.50 *is* 12.5 there — so a column comes back a ragged mixture of two places,
+one, and none at all where the value landed on a whole number. The places
+asked for travel beside the value rather than in it (see
+`Dsl.Compile.declaredDecimals`); this pads the rendered number out to them.
+
+Only ever pads. A value with more decimals than were asked for is left alone,
+because that means it did not come from the `roundTo` its column was credited
+with, and trimming it here would claim a rounding that never happened.
+Anything that is not a plain decimal numeral is passed through untouched — a
+null's em dash, an exponent. A bare integer *is* padded, which is the point:
+a whole number in a two-decimal column should read 8.00. That is safe because
+the caller only reaches here for a Float column; the big integers DuckDB
+sends as text rather than lose them to a JavaScript number never carry a
+decimal place to pad to.
+
+-}
+padDecimals : Maybe Int -> String -> String
+padDecimals places text =
+    case places of
+        Nothing ->
+            text
+
+        Just wanted ->
+            if wanted <= 0 || String.any (\c -> c == 'e' || c == 'E') text || String.toFloat text == Nothing then
+                text
+
+            else
+                case String.split "." text of
+                    [ whole ] ->
+                        whole ++ "." ++ String.repeat wanted "0"
+
+                    [ whole, fraction ] ->
+                        if String.length fraction >= wanted then
+                            text
+
+                        else
+                            whole ++ "." ++ String.padRight wanted '0' fraction
+
+                    _ ->
+                        text
 
 
 looseString : Decoder String

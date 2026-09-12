@@ -264,6 +264,11 @@ type alias Shape =
     , ordered : Bool
     , chart : Maybe ChartSpec
     , scalar : Bool
+
+    -- Decimal places per column, for the ones a `roundTo` asked to fix. A
+    -- data cell has none: DuckDB describes its columns, and nothing there
+    -- said how the numbers should read.
+    , decimals : Dict String Int
     }
 
 
@@ -283,6 +288,7 @@ display state =
                         _ ->
                             Nothing
                 , scalar = compiled.display == AsScalar
+                , decimals = compiled.decimals
                 }
 
         Nothing ->
@@ -294,5 +300,6 @@ display state =
                         , ordered = False
                         , chart = Nothing
                         , scalar = False
+                        , decimals = Dict.empty
                         }
                     )
