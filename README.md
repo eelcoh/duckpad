@@ -42,8 +42,6 @@ everything afterwards works offline.
 
     mise run build     # compile the notebook shell
     mise run serve     # http://localhost:8080
-    mise run test      # 497 checks
-    mise run roundtrip # every fixture's SQL run against a real DuckDB
 
 `public/tutorial.duckpad.md` is ten worked queries with prose between
 them, and needs no network. Open it with the **Open** button.
@@ -85,6 +83,28 @@ locally is ever quarantined.
 
 Ctrl or Cmd with `+`, `-` and `0` scales the interface, and the level is
 remembered between launches.
+
+## Changing it
+
+Two commands, and neither is needed to *use* duckpad — they are here for
+working on the compiler.
+
+    mise run test      # 497 checks: parser, checker, engine, file format
+    mise run roundtrip # proves the generated SQL and Elm are real
+
+`test` is the ordinary suite. It has no npm toolchain behind it — the modules
+under test have no effects, so a `Platform.worker` reporting a list of checks
+is enough — and it runs under node in seconds.
+
+`roundtrip` closes a gap the suite cannot reach. A query cell compiles to SQL
+*and* to an Elm module, and a test comparing strings can tell you the compiler
+emitted the text you expected but never that the text is valid — a suite can
+be entirely green over a compiler emitting `SELCET`. So `roundtrip` takes 43
+fixture cells, one per language feature, executes each one's SQL against a
+real DuckDB and puts each one's generated module through `elm make`. Run it
+after touching `Dsl/Sql.elm` or `Dsl/ElmGen.elm`: that is exactly where a
+change can keep every string assertion passing while producing something
+neither DuckDB nor Elm will accept.
 
 ## Credit where it is due
 
